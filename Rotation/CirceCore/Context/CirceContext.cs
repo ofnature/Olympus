@@ -227,7 +227,12 @@ public sealed class CirceContext : ICirceContext
         AbsoluteManaImbalance = Math.Abs(ManaImbalance);
         IsManaBalanced = AbsoluteManaImbalance < 30;
         ManaStacks = manaStacks;
-        CanStartMeleeCombo = blackMana >= 50 && whiteMana >= 50;
+        var hasMeleeMana = blackMana >= configuration.RedMage.MeleeComboMinMana
+                        && whiteMana >= configuration.RedMage.MeleeComboMinMana;
+        var combatElapsed = inCombat ? combatEventService.GetCombatDurationSeconds() : 0f;
+        CanStartMeleeCombo = inCombat
+            && hasMeleeMana
+            && combatElapsed >= configuration.RedMage.MeleeComboMinCombatSeconds;
         LowerMana = Math.Min(blackMana, whiteMana);
 
         // Dualcast state
@@ -261,7 +266,7 @@ public sealed class CirceContext : ICirceContext
         IsGrandImpactReady = statusHelper.HasGrandImpactReady(player);
         HasMagickBarrier = statusHelper.HasMagickBarrier(player);
 
-        // Melee combo state - determined by action replacement + mana stacks + game combo field
+        // Melee combo state - determined by mana stacks + game combo field
         // (computed upstream in Circe.UpdateMeleeComboStep and passed in as meleeComboStep)
         DetermineComboState(meleeComboStep, player.Level, out var inCombo, out var comboStep,
             out var finisherReady, out var scorchReady, out var resolutionReady);

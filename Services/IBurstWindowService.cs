@@ -17,7 +17,14 @@ public interface IBurstWindowService
     /// When <paramref name="currentTarget"/> is provided, also checks the target's
     /// status list for raid debuffs (Chain Stratagem, Dokumori, VulnerabilityUp).
     /// </summary>
-    void Update(IPlayerCharacter player, IBattleChara? currentTarget = null);
+    void Update(IPlayerCharacter player, IBattleChara? currentTarget = null, bool inCombat = true);
+
+    /// <summary>
+    /// True when coordinated IPC burst data is absent long enough that rotations
+    /// should use local 2-minute burst timing instead of holding for party alignment.
+    /// Computed on read from live combat elapsed (same source as burst-window logging).
+    /// </summary>
+    bool UseSoloBurstFallback { get; }
 
     /// <summary>
     /// Whether party raid buffs are currently active on the player.

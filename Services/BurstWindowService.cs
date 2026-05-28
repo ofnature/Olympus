@@ -61,12 +61,23 @@ public sealed class BurstWindowService : IBurstWindowService, IDisposable
     // Most raid buffs: 120s CD, ~20s duration → gap between windows ≈ 100s.
     private const float BurstCycleGapSeconds = 100f;
 
+    /// <summary>
+    /// After this many seconds in combat without coordinated IPC burst signals,
+    /// stop holding for party burst and use local raid-buff detection only.
+    /// Tuned for solo/trust and short dungeon pulls where 30s was too late.
+    /// </summary>
+    private const float SoloBurstFallbackCombatSeconds = 8f;
+
     // Cached per-frame state
     private bool _isInBurstWindow;
     private float _secondsRemainingInBurst;
 
     // Tracks when the most recent burst window ended for timer-based prediction
     private DateTime? _lastBurstWindowEnd;
+
+    // Combat timing for solo burst fallback
+    private DateTime? _combatStartUtc;
+    private DateTime? _lastCoordinatedBurstSignalUtc;
 
     // Burst window history tracking
     private readonly List<(DateTime Start, DateTime End)> _burstWindowHistory = new();
@@ -145,11 +156,22 @@ public sealed class BurstWindowService : IBurstWindowService, IDisposable
 
     public float SecondsRemainingInBurst => _secondsRemainingInBurst;
 
+    /// <inheritdoc />
+    /// <remarks>
+    /// Computed on read from live combat elapsed (not cached at <see cref="Update"/>)
+    /// so rotation modules and burst scanning agree within the same frame.
+    /// </remarks>
+    public bool UseSoloBurstFallback => ComputeUseSoloBurstFallback();
+
     public IReadOnlyList<(DateTime Start, DateTime End)> BurstWindowHistory => _burstWindowHistory;
 
     public bool IsBurstImminent(float thresholdSeconds = 5f)
     {
         if (_isInBurstWindow)
+            return false;
+
+        // Solo/trust: do not hold spenders waiting for party IPC or NPC debuff windows.
+        if (UseSoloBurstFallback)
             return false;
 
         // IPC: another Olympus instance announced incoming raid buff
@@ -186,24 +208,30 @@ public sealed class BurstWindowService : IBurstWindowService, IDisposable
         }
     }
 
-    public void Update(IPlayerCharacter player, IBattleChara? currentTarget = null)
+    public void Update(IPlayerCharacter player, IBattleChara? currentTarget = null, bool inCombat = true)
     {
+        UpdateCombatAndFallbackState(inCombat);
+
         // Scan player status list for active party raid buffs
         _isInBurstWindow = false;
         _secondsRemainingInBurst = 0f;
 
-        foreach (var status in player.StatusList)
+        if (player.StatusList != null)
         {
-            if (!RaidBuffStatusIds.Contains(status.StatusId))
-                continue;
+            foreach (var status in player.StatusList)
+            {
+                if (!RaidBuffStatusIds.Contains(status.StatusId))
+                    continue;
 
-            _isInBurstWindow = true;
-            if (status.RemainingTime > _secondsRemainingInBurst)
-                _secondsRemainingInBurst = status.RemainingTime;
+                _isInBurstWindow = true;
+                if (status.RemainingTime > _secondsRemainingInBurst)
+                    _secondsRemainingInBurst = status.RemainingTime;
+            }
         }
 
-        // Scan current target for raid debuffs (Chain Stratagem, Dokumori, VulnerabilityUp)
-        if (currentTarget?.StatusList != null)
+        // Trust/NPC debuffs are not the player's burst cycle — skip in solo fallback so
+        // analytics and pooling align with locally cast raid buffs (Embolden, Litany, etc.).
+        if (!UseSoloBurstFallback && currentTarget?.StatusList != null)
         {
             foreach (var status in currentTarget.StatusList)
             {
@@ -217,7 +245,7 @@ public sealed class BurstWindowService : IBurstWindowService, IDisposable
         }
 
         // Also check IPC burst state (multi-instance scenario)
-        if (!_isInBurstWindow && _partyCoordinationService?.IsInBurstWindow() == true)
+        if (!UseSoloBurstFallback && !_isInBurstWindow && _partyCoordinationService?.IsInBurstWindow() == true)
         {
             _isInBurstWindow = true;
             _secondsRemainingInBurst = _partyCoordinationService?.GetBurstWindowRemaining() ?? 0f;
@@ -239,11 +267,104 @@ public sealed class BurstWindowService : IBurstWindowService, IDisposable
     {
         _burstWindowHistory.Clear();
         _wasInBurst = false;
+        _combatStartUtc = null;
+        _lastCoordinatedBurstSignalUtc = null;
+        _lastBurstWindowEnd = null;
     }
 
     #endregion
 
     #region Private Helpers
+
+    private void UpdateCombatAndFallbackState(bool inCombat)
+    {
+        if (!inCombat)
+        {
+            _combatStartUtc = null;
+            _lastCoordinatedBurstSignalUtc = null;
+            return;
+        }
+
+        _combatStartUtc ??= DateTime.UtcNow;
+        RefreshCoordinatedBurstSignalTimestamp();
+    }
+
+    /// <summary>
+    /// Shared combat elapsed for solo-burst fallback. Uses CombatEventService when the
+    /// local timer is unset so rotation reads match Plugin combat duration before the
+    /// first <see cref="Update"/> in a pull.
+    /// </summary>
+    private float GetCombatElapsedSeconds()
+    {
+        var serviceCombatDuration = _combatEventService?.GetCombatDurationSeconds() ?? 0f;
+        if (!_combatStartUtc.HasValue)
+            return serviceCombatDuration;
+
+        var localCombatElapsed = (float)(DateTime.UtcNow - _combatStartUtc.Value).TotalSeconds;
+        return Math.Max(serviceCombatDuration, localCombatElapsed);
+    }
+
+    private bool ComputeUseSoloBurstFallback()
+    {
+        var combatElapsed = GetCombatElapsedSeconds();
+        if (combatElapsed < SoloBurstFallbackCombatSeconds)
+            return false;
+
+        if (_combatStartUtc.HasValue || (_combatEventService?.IsInCombat ?? false))
+            RefreshCoordinatedBurstSignalTimestamp();
+
+        return !IsPartyBurstCoordinationActive();
+    }
+
+    /// <summary>
+    /// True while another Olympus DPS is actively coordinating burst via IPC
+    /// (or we saw a coordinated signal within the fallback grace window).
+    /// </summary>
+    private bool IsPartyBurstCoordinationActive()
+    {
+        var coord = _partyCoordinationService;
+        if (coord is not { IsPartyCoordinationEnabled: true })
+            return false;
+
+        if (!coord.HasRemoteDps)
+            return false;
+
+        if (coord.HasPendingRaidBuffIntent(SoloBurstFallbackCombatSeconds))
+            return true;
+
+        if (coord.IsInBurstWindow())
+            return true;
+
+        var state = coord.GetBurstWindowState();
+        if (state is { HasBurstInfo: true, IsActive: true })
+            return true;
+
+        if (state is { HasBurstInfo: true, IsImminent: true })
+            return true;
+
+        return _lastCoordinatedBurstSignalUtc.HasValue
+               && (DateTime.UtcNow - _lastCoordinatedBurstSignalUtc.Value).TotalSeconds
+               < SoloBurstFallbackCombatSeconds;
+    }
+
+    private void RefreshCoordinatedBurstSignalTimestamp()
+    {
+        var coord = _partyCoordinationService;
+        if (coord is not { IsPartyCoordinationEnabled: true, HasRemoteDps: true })
+            return;
+
+        if (coord.HasPendingRaidBuffIntent(SoloBurstFallbackCombatSeconds)
+            || coord.IsInBurstWindow())
+        {
+            _lastCoordinatedBurstSignalUtc = DateTime.UtcNow;
+            return;
+        }
+
+        var state = coord.GetBurstWindowState();
+        if (state is { HasBurstInfo: true, IsActive: true }
+            or { HasBurstInfo: true, IsImminent: true })
+            _lastCoordinatedBurstSignalUtc = DateTime.UtcNow;
+    }
 
     /// <summary>
     /// Estimates seconds until the next burst using the ~100s cycle gap from the last known end.

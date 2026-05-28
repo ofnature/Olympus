@@ -1,11 +1,16 @@
+using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Objects.Types;
+using System;
+using Olympus.Models;
 using Olympus.Data;
 using Olympus.Rotation.CirceCore.Abilities;
 using Olympus.Rotation.CirceCore.Context;
+using Olympus.Rotation.CirceCore.Helpers;
 using Olympus.Rotation.Common.Helpers;
 using Olympus.Rotation.Common.RoleActionHelpers;
 using Olympus.Rotation.Common.Scheduling;
 using Olympus.Services;
+using Olympus.Services.Party;
 using Olympus.Services.Training;
 
 namespace Olympus.Rotation.CirceCore.Modules;
@@ -52,8 +57,9 @@ public sealed class BuffModule : ICirceModule
         TryPushContreSixte(context, scheduler, target);
         TryPushViceOfThorns(context, scheduler, target);
         TryPushPrefulgence(context, scheduler, target);
-        TryPushEmbolden(context, scheduler);
-        TryPushManafication(context, scheduler);
+        TryPushManafication(context, scheduler, target);
+        TryPushEmbolden(context, scheduler, target);
+        TryPushPostComboRetreat(context, scheduler, target);
         TryPushCorpsACorps(context, scheduler, target);
         TryPushEngagement(context, scheduler, target);
         TryPushAcceleration(context, scheduler);
@@ -167,7 +173,7 @@ public sealed class BuffModule : ICirceModule
             });
     }
 
-    private void TryPushEmbolden(ICirceContext context, RotationScheduler scheduler)
+    private void TryPushEmbolden(ICirceContext context, RotationScheduler scheduler, IBattleChara? target)
     {
         if (!context.Configuration.RedMage.EnableEmbolden) return;
         var player = context.Player;
@@ -179,7 +185,23 @@ public sealed class BuffModule : ICirceModule
             context.Debug.BuffState = "Holding Embolden (phase soon)";
             return;
         }
-        if (ShouldHoldForBurst(context.Configuration.RedMage.EmboldenHoldTime))
+
+        var rdmCfg = context.Configuration.RedMage;
+        var soloBurst = RdmSoloBurstHelper.IsSoloBurstMode(_burstWindowService);
+
+        if (soloBurst)
+        {
+            if (!RdmSoloBurstHelper.IsBurstPackViable(context, target, player))
+            {
+                context.Debug.BuffState = "Hold Embolden (pack dying/small)";
+                return;
+            }
+
+            PushEmbolden(context, scheduler, player, priority: 3, partyCoord: null);
+            return;
+        }
+
+        if (ShouldHoldForBurst(rdmCfg.EmboldenHoldTime))
         {
             context.Debug.BuffState = "Holding Embolden for burst";
             return;
@@ -205,7 +227,17 @@ public sealed class BuffModule : ICirceModule
             partyCoord.AnnounceRaidBuffIntent(RDMActions.Embolden.ActionId);
         }
 
-        scheduler.PushOgcd(CirceAbilities.Embolden, player.GameObjectId, priority: 2,
+        PushEmbolden(context, scheduler, player, priority: 2, partyCoord);
+    }
+
+    private void PushEmbolden(
+        ICirceContext context,
+        RotationScheduler scheduler,
+        IPlayerCharacter player,
+        int priority,
+        IPartyCoordinationService? partyCoord)
+    {
+        scheduler.PushOgcd(CirceAbilities.Embolden, player.GameObjectId, priority,
             onDispatched: _ =>
             {
                 context.Debug.PlannedAction = RDMActions.Embolden.Name;
@@ -227,7 +259,7 @@ public sealed class BuffModule : ICirceModule
             });
     }
 
-    private void TryPushManafication(ICirceContext context, RotationScheduler scheduler)
+    private void TryPushManafication(ICirceContext context, RotationScheduler scheduler, IBattleChara? target)
     {
         if (!context.Configuration.RedMage.EnableManafication) return;
         var player = context.Player;
@@ -235,14 +267,43 @@ public sealed class BuffModule : ICirceModule
         if (!context.ManaficationReady) return;
         if (context.HasManafication) return;
         if (context.IsInMeleeCombo) return;
-        // With UseManaficationWithMelee=true, hold until melee combo can start (existing behavior)
-        // With UseManaficationWithMelee=false, fire on cooldown without waiting for melee context
-        if (context.Configuration.RedMage.UseManaficationWithMelee && context.CanStartMeleeCombo) return;
         if (BurstHoldHelper.ShouldHoldForPhaseTransition(context.TimelineService))
         {
             context.Debug.BuffState = "Holding Manafication (phase soon)";
             return;
         }
+
+        var rdmCfg = context.Configuration.RedMage;
+        var soloBurst = RdmSoloBurstHelper.IsSoloBurstMode(_burstWindowService);
+
+        if (soloBurst)
+        {
+            if (!RdmSoloBurstHelper.IsBurstPackViable(context, target, player))
+            {
+                context.Debug.BuffState = "Hold Manafication (pack dying/small)";
+                return;
+            }
+
+            if (!RdmSoloBurstHelper.AreBurstCooldownsPaired(context, rdmCfg.SoloBurstPairCooldownSeconds))
+            {
+                context.Debug.BuffState = "Hold Manafication for Embolden CD";
+                return;
+            }
+
+            if (!RdmSoloBurstHelper.IsSoloBurstManaReadyForPairStart(context))
+            {
+                context.Debug.BuffState = $"Hold Manafication for mana ({context.LowerMana}/{rdmCfg.SoloBurstIdealMinMana})";
+                return;
+            }
+
+            scheduler.PushOgcd(CirceAbilities.Manafication, player.GameObjectId, priority: 2,
+                onDispatched: _ => OnManaficationDispatched(context));
+            return;
+        }
+
+        // With UseManaficationWithMelee=true, hold until melee combo can start (existing behavior)
+        // With UseManaficationWithMelee=false, fire on cooldown without waiting for melee context
+        if (rdmCfg.UseManaficationWithMelee && context.CanStartMeleeCombo) return;
         if (context.LowerMana < 25) return;
         if (context.EmboldenReady && context.LowerMana < 40)
         {
@@ -251,24 +312,26 @@ public sealed class BuffModule : ICirceModule
         }
 
         scheduler.PushOgcd(CirceAbilities.Manafication, player.GameObjectId, priority: 3,
-            onDispatched: _ =>
-            {
-                context.Debug.PlannedAction = RDMActions.Manafication.Name;
-                context.Debug.BuffState = $"Manafication (mana: {context.BlackMana}|{context.WhiteMana})";
-                TrainingHelper.Decision(context.TrainingService)
-                    .Action(RDMActions.Manafication.ActionId, RDMActions.Manafication.Name)
-                    .AsCasterResource("Mana", context.LowerMana)
-                    .Reason("Manafication - mana boost + damage buff",
-                        "Manafication adds 50 to both Black and White Mana and grants 6 Manafication stacks " +
-                        "that empower your melee combo.")
-                    .Factors($"Black Mana: {context.BlackMana}", $"White Mana: {context.WhiteMana}",
-                            $"Lower Mana: {context.LowerMana}", "Will add 50|50")
-                    .Alternatives("Wait for more mana", "Align with Embolden")
-                    .Tip("Use Manafication at 40-50 mana for optimal value.")
-                    .Concept(RdmConcepts.Manafication)
-                    .Record();
-                context.TrainingService?.RecordConceptApplication(RdmConcepts.Manafication, true, "Mana boosted for melee combo");
-            });
+            onDispatched: _ => OnManaficationDispatched(context));
+    }
+
+    private static void OnManaficationDispatched(ICirceContext context)
+    {
+        context.Debug.PlannedAction = RDMActions.Manafication.Name;
+        context.Debug.BuffState = $"Manafication (mana: {context.BlackMana}|{context.WhiteMana})";
+        TrainingHelper.Decision(context.TrainingService)
+            .Action(RDMActions.Manafication.ActionId, RDMActions.Manafication.Name)
+            .AsCasterResource("Mana", context.LowerMana)
+            .Reason("Manafication - mana boost + damage buff",
+                "Manafication adds 50 to both Black and White Mana and grants 6 Manafication stacks " +
+                "that empower your melee combo.")
+            .Factors($"Black Mana: {context.BlackMana}", $"White Mana: {context.WhiteMana}",
+                $"Lower Mana: {context.LowerMana}", "Will add 50|50")
+            .Alternatives("Wait for more mana", "Align with Embolden")
+            .Tip("Use Manafication at 40-50 mana for optimal value.")
+            .Concept(RdmConcepts.Manafication)
+            .Record();
+        context.TrainingService?.RecordConceptApplication(RdmConcepts.Manafication, true, "Mana boosted for melee combo");
     }
 
     private void TryPushCorpsACorps(ICirceContext context, RotationScheduler scheduler, IBattleChara? target)
@@ -283,6 +346,18 @@ public sealed class BuffModule : ICirceModule
         if (hpPercent < context.Configuration.RedMage.MeleeDashMinHpPercent)
         {
             context.Debug.BuffState = $"Hold Corps-a-corps (HP {hpPercent:P0} low)";
+            return;
+        }
+
+        if (RdmSoloBurstHelper.ShouldGapCloseForMeleeEntry(context, _burstWindowService, target))
+        {
+            scheduler.PushOgcd(CirceAbilities.CorpsACorps, target.GameObjectId, priority: 2,
+                onDispatched: _ =>
+                {
+                    context.Debug.PlannedAction = RDMActions.CorpsACorps.Name;
+                    context.Debug.BuffState = "Corps-a-corps (gap close)";
+                    context.Debug.DamageState = "Gap close for melee entry (Corps-a-corps)";
+                });
             return;
         }
 
@@ -353,6 +428,45 @@ public sealed class BuffModule : ICirceModule
                     .Record();
                 context.TrainingService?.RecordConceptApplication(RdmConcepts.MeleePositioning, true, "Engagement used safely");
             });
+    }
+
+    private void TryPushPostComboRetreat(ICirceContext context, RotationScheduler scheduler, IBattleChara? target)
+    {
+        if (target == null || !context.Configuration.RedMage.EnableEngagement)
+            return;
+
+        if (!WasResolutionJustUsed(context, withinSeconds: 4f))
+            return;
+
+        if (!context.Configuration.RedMage.PreferEngagementOverDisplacement
+            && context.Player.Level >= RDMActions.Displacement.MinLevel
+            && context.EngagementCharges > 0
+            && context.ActionService.IsActionReady(RDMActions.Displacement.ActionId))
+        {
+            scheduler.PushOgcd(CirceAbilities.Displacement, target.GameObjectId, priority: 4,
+                onDispatched: _ =>
+                {
+                    context.Debug.PlannedAction = RDMActions.Displacement.Name;
+                    context.Debug.BuffState = "Displacement (retreat)";
+                    context.Debug.DamageState = "Displacement retreat post-combo";
+                });
+        }
+    }
+
+    private static bool WasResolutionJustUsed(ICirceContext context, float withinSeconds)
+    {
+        var history = context.ActionTracker.GetHistory();
+        if (history.Count == 0)
+            return false;
+
+        var latest = history[^1];
+        if (latest.Result != ActionResult.Success)
+            return false;
+
+        if (latest.ActionId != RDMActions.Resolution.ActionId)
+            return false;
+
+        return (DateTime.UtcNow - latest.Timestamp).TotalSeconds <= withinSeconds;
     }
 
     private void TryPushAcceleration(ICirceContext context, RotationScheduler scheduler)

@@ -24,6 +24,13 @@ public interface ITargetingService
     int CountEnemiesInRange(float radius, IPlayerCharacter player);
 
     /// <summary>
+    /// Counts valid enemies within <paramref name="radius"/> of <paramref name="target"/>'s position.
+    /// Used for targeted AoE (e.g. Impact's circle on the target) while the player stands at cast range.
+    /// Candidates are gathered within range of the player, then filtered by distance to the anchor target.
+    /// </summary>
+    int CountEnemiesInRangeOfTarget(float radius, IBattleNpc target, IPlayerCharacter player);
+
+    /// <summary>
     /// Finds the enemy that has the most other enemies within the specified radius.
     /// </summary>
     (IBattleNpc? target, int hitCount) FindBestAoETarget(float aoeRadius, float maxRange, IPlayerCharacter player);

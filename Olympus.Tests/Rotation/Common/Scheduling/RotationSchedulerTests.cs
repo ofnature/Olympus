@@ -64,6 +64,21 @@ public class RotationSchedulerTests
     }
 
     [Fact]
+    public void PushGcd_DuplicateActionId_InSameCycle_IsIgnored()
+    {
+        var scheduler = Build();
+        var behavior = TestBehaviors.InstantGcd(actionId: 91001);
+
+        scheduler.PushGcd(behavior, targetId: 111, priority: 5);
+        scheduler.PushGcd(behavior, targetId: 222, priority: 1);
+
+        var gcdQueue = scheduler.InspectGcdQueue();
+        Assert.Single(gcdQueue);
+        Assert.Equal(111ul, gcdQueue[0].TargetId);
+        Assert.Equal(91001u, gcdQueue[0].Behavior.Action.ActionId);
+    }
+
+    [Fact]
     public void Dispatch_LevelTooLow_SkipsCandidate()
     {
         var actionService = new Mock<IActionService>();
@@ -459,45 +474,45 @@ public class RotationSchedulerTests
     }
 
     [Fact]
-    public void Dispatch_TopPriorityFails_NextCandidateWins()
+    public void Dispatch_Ogcd_TopPriorityFails_NextCandidateWins()
     {
         var actionService = new Mock<IActionService>();
         actionService.Setup(x => x.IsActionReady(11001u)).Returns(false); // first one on cooldown
         actionService.Setup(x => x.IsActionReady(11002u)).Returns(true);  // second one ready
         actionService.Setup(x => x.GetCooldownRemaining(11001u)).Returns(5f);
-        actionService.Setup(x => x.ExecuteGcd(
+        actionService.Setup(x => x.ExecuteOgcd(
             It.Is<ActionDefinition>(a => a.ActionId == 11002),
             It.IsAny<ulong>())).Returns(true);
         var scheduler = Build(actionService);
 
         var ctx = CreateContextWithPlayerLevel(80);
-        scheduler.PushGcd(TestBehaviors.InstantGcd(actionId: 11001), 0, priority: 1);
-        scheduler.PushGcd(TestBehaviors.InstantGcd(actionId: 11002), 0, priority: 2);
+        scheduler.PushOgcd(TestBehaviors.InstantOgcd(actionId: 11001), 0, priority: 1);
+        scheduler.PushOgcd(TestBehaviors.InstantOgcd(actionId: 11002), 0, priority: 2);
 
-        var result = scheduler.DispatchGcd(ctx);
+        var result = scheduler.DispatchOgcd(ctx);
 
         Assert.True(result.Dispatched);
         Assert.Equal(11002u, result.Winner!.Action.ActionId);
     }
 
     [Fact]
-    public void Dispatch_ActionServiceRejects_TriesNextCandidate()
+    public void Dispatch_Ogcd_ActionServiceRejects_TriesNextCandidate()
     {
         var actionService = new Mock<IActionService>();
         actionService.Setup(x => x.IsActionReady(It.IsAny<uint>())).Returns(true);
-        actionService.Setup(x => x.ExecuteGcd(
+        actionService.Setup(x => x.ExecuteOgcd(
             It.Is<ActionDefinition>(a => a.ActionId == 12001),
             It.IsAny<ulong>())).Returns(false); // first one rejected
-        actionService.Setup(x => x.ExecuteGcd(
+        actionService.Setup(x => x.ExecuteOgcd(
             It.Is<ActionDefinition>(a => a.ActionId == 12002),
             It.IsAny<ulong>())).Returns(true);
         var scheduler = Build(actionService);
 
         var ctx = CreateContextWithPlayerLevel(80);
-        scheduler.PushGcd(TestBehaviors.InstantGcd(actionId: 12001), 0, priority: 1);
-        scheduler.PushGcd(TestBehaviors.InstantGcd(actionId: 12002), 0, priority: 2);
+        scheduler.PushOgcd(TestBehaviors.InstantOgcd(actionId: 12001), 0, priority: 1);
+        scheduler.PushOgcd(TestBehaviors.InstantOgcd(actionId: 12002), 0, priority: 2);
 
-        var result = scheduler.DispatchGcd(ctx);
+        var result = scheduler.DispatchOgcd(ctx);
 
         Assert.True(result.Dispatched);
         Assert.Equal(12002u, result.Winner!.Action.ActionId);

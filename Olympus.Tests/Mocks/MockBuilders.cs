@@ -322,6 +322,9 @@ public static class MockBuilders
         mock.Setup(x => x.CountEnemiesInRange(It.IsAny<float>(), It.IsAny<IPlayerCharacter>()))
             .Returns(countEnemiesInRange);
 
+        mock.Setup(x => x.CountEnemiesInRangeOfTarget(It.IsAny<float>(), It.IsAny<IBattleNpc>(), It.IsAny<IPlayerCharacter>()))
+            .Returns(countEnemiesInRange);
+
         mock.Setup(x => x.FindBestAoETarget(It.IsAny<float>(), It.IsAny<float>(), It.IsAny<IPlayerCharacter>()))
             .Returns(((IBattleNpc?)null, countEnemiesInRange));
 

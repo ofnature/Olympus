@@ -50,6 +50,7 @@ public static class CirceAbilities
     public static readonly AbilityBehavior ContreSixte = new() { Action = RDMActions.ContreSixte, Toggle = cfg => cfg.RedMage.EnableContreSixte };
     public static readonly AbilityBehavior CorpsACorps = new() { Action = RDMActions.CorpsACorps, Toggle = cfg => cfg.RedMage.EnableCorpsACorps };
     public static readonly AbilityBehavior Engagement = new() { Action = RDMActions.Engagement, Toggle = cfg => cfg.RedMage.EnableEngagement };
+    public static readonly AbilityBehavior Displacement = new() { Action = RDMActions.Displacement, Toggle = cfg => cfg.RedMage.EnableEngagement };
     public static readonly AbilityBehavior ViceOfThorns = new() { Action = RDMActions.ViceOfThorns, Toggle = cfg => cfg.RedMage.EnableViceOfThorns };
     public static readonly AbilityBehavior Prefulgence = new() { Action = RDMActions.Prefulgence, Toggle = cfg => cfg.RedMage.EnablePrefulgence };
 

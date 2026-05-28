@@ -7,6 +7,7 @@ using Dalamud.Game.ClientState.Party;
 using Dalamud.Plugin.Services;
 using Olympus.Rotation.Common;
 using Olympus.Rotation.Common.Helpers;
+using Olympus.Services.Targeting;
 using Olympus.Services;
 using Olympus.Services.Action;
 using Olympus.Services.Cooldown;
@@ -15,7 +16,6 @@ using Olympus.Services.Healing;
 using Olympus.Services.Party;
 using Olympus.Services.Prediction;
 using Olympus.Services.Stats;
-using Olympus.Services.Targeting;
 
 namespace Olympus.Rotation.Base;
 
@@ -176,6 +176,17 @@ public abstract class BaseHealerRotation<TContext, TModule> : BaseRotation<TCont
     #endregion
 
     #region Override Base Methods
+
+    /// <inheritdoc />
+    protected override void UpdateModuleDebugStates(TContext context)
+    {
+        base.UpdateModuleDebugStates(context);
+
+        if (Configuration.IsDebugWindowOpen)
+        {
+            DebugState.TargetInfo = TargetingDebugHelper.FormatTargetInfo(null, context.TargetingService);
+        }
+    }
 
     /// <summary>
     /// Override to add healer-specific service updates.

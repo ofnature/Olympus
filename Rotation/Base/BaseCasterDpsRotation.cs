@@ -114,7 +114,7 @@ public abstract class BaseCasterDpsRotation<TContext, TModule> : BaseRotation<TC
         ReadGaugeValues();
 
         // Update burst window tracking (pass current target for raid debuff detection)
-        BurstWindowService?.Update(player, TargetingService.GetUserEnemyTarget());
+        BurstWindowService?.Update(player, TargetingService.GetUserEnemyTarget(), inCombat);
 
         // Update damage trend service with player entity ID
         if (inCombat)

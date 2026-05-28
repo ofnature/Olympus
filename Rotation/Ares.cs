@@ -195,5 +195,6 @@ public sealed class Ares : BaseTankRotation<IAresContext, IAresModule>
         _debugState.DefensiveState = _aresDebugState.MitigationState;
         _debugState.PlayerHpPercent = (float)context.Player.CurrentHp / context.Player.MaxHp;
         _debugState.PartyListCount = context.PartyList.Length;
+        _debugState.TargetInfo = TargetingDebugHelper.FormatTargetInfo(context.CurrentTarget, context.TargetingService);
     }
 }

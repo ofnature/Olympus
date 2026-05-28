@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Reflection;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Plugin.Services;
 using Moq;
@@ -301,5 +304,105 @@ public class BurstWindowServiceTests
         Assert.False(service.IsInBurstWindow);
 
         service.Dispose(); // Should not throw.
+    }
+
+    // -------------------------------------------------------------------------
+    // Solo burst fallback
+    // -------------------------------------------------------------------------
+
+    private static void SetCombatStarted(BurstWindowService service, DateTime combatStartUtc)
+    {
+        var field = typeof(BurstWindowService).GetField("_combatStartUtc", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field.SetValue(service, combatStartUtc);
+    }
+
+    private static Mock<IPlayerCharacter> PlayerWithNoStatuses()
+    {
+        var player = new Mock<IPlayerCharacter>();
+        player.Setup(p => p.StatusList).Returns((Dalamud.Game.ClientState.Statuses.StatusList?)null);
+        return player;
+    }
+
+    [Fact]
+    public void UseSoloBurstFallback_TrueFromCombatEventService_WithoutCallingUpdate()
+    {
+        var partyCoord = new Mock<IPartyCoordinationService>();
+        partyCoord.Setup(x => x.IsPartyCoordinationEnabled).Returns(true);
+        partyCoord.Setup(x => x.HasRemoteDps).Returns(false);
+
+        var combatEvents = new Mock<ICombatEventService>();
+        combatEvents.Setup(x => x.GetCombatDurationSeconds()).Returns(8f);
+        combatEvents.Setup(x => x.IsInCombat).Returns(true);
+
+        var service = new BurstWindowService(partyCoord.Object, combatEvents.Object);
+
+        Assert.True(service.UseSoloBurstFallback);
+    }
+
+    [Fact]
+    public void UseSoloBurstFallback_UsesCombatEventServiceDuration_WhenAheadOfLocalTimer()
+    {
+        var partyCoord = new Mock<IPartyCoordinationService>();
+        partyCoord.Setup(x => x.IsPartyCoordinationEnabled).Returns(true);
+        partyCoord.Setup(x => x.HasRemoteDps).Returns(false);
+
+        var combatEvents = new Mock<ICombatEventService>();
+        combatEvents.Setup(x => x.GetCombatDurationSeconds()).Returns(15f);
+        combatEvents.Setup(x => x.IsInCombat).Returns(true);
+
+        var service = new BurstWindowService(partyCoord.Object, combatEvents.Object);
+        SetCombatStarted(service, DateTime.UtcNow.AddSeconds(-2));
+        service.Update(PlayerWithNoStatuses().Object, currentTarget: null, inCombat: true);
+
+        Assert.True(service.UseSoloBurstFallback);
+    }
+
+    [Fact]
+    public void UseSoloBurstFallback_AfterThirtySecondsWithoutRemoteDps_ReturnsTrue()
+    {
+        var partyCoord = new Mock<IPartyCoordinationService>();
+        partyCoord.Setup(x => x.IsPartyCoordinationEnabled).Returns(true);
+        partyCoord.Setup(x => x.HasRemoteDps).Returns(false);
+
+        var service = new BurstWindowService(partyCoord.Object);
+        SetCombatStarted(service, DateTime.UtcNow.AddSeconds(-35));
+        service.Update(PlayerWithNoStatuses().Object, currentTarget: null, inCombat: true);
+
+        Assert.True(service.UseSoloBurstFallback);
+    }
+
+    [Fact]
+    public void IsBurstImminent_WhenSoloFallbackActive_IgnoresPendingIpcIntent()
+    {
+        var partyCoord = new Mock<IPartyCoordinationService>();
+        partyCoord.Setup(x => x.IsPartyCoordinationEnabled).Returns(true);
+        partyCoord.Setup(x => x.HasRemoteDps).Returns(false);
+        partyCoord.Setup(x => x.HasPendingRaidBuffIntent(It.IsAny<float>())).Returns(true);
+
+        var service = new BurstWindowService(partyCoord.Object);
+        SetCombatStarted(service, DateTime.UtcNow.AddSeconds(-35));
+        service.Update(PlayerWithNoStatuses().Object, currentTarget: null, inCombat: true);
+
+        Assert.True(service.UseSoloBurstFallback);
+        Assert.False(service.IsBurstImminent());
+    }
+
+    [Fact]
+    public void UseSoloBurstFallback_WithActiveRemoteBurstCoordination_ReturnsFalse()
+    {
+        var partyCoord = new Mock<IPartyCoordinationService>();
+        partyCoord.Setup(x => x.IsPartyCoordinationEnabled).Returns(true);
+        partyCoord.Setup(x => x.HasRemoteDps).Returns(true);
+        partyCoord.Setup(x => x.HasPendingRaidBuffIntent(It.IsAny<float>())).Returns(true);
+        partyCoord.Setup(x => x.IsInBurstWindow()).Returns(false);
+        partyCoord.Setup(x => x.GetBurstWindowState()).Returns(BurstWindowState.NoInfo);
+
+        var service = new BurstWindowService(partyCoord.Object);
+        SetCombatStarted(service, DateTime.UtcNow.AddSeconds(-35));
+        service.Update(PlayerWithNoStatuses().Object, currentTarget: null, inCombat: true);
+
+        Assert.False(service.UseSoloBurstFallback);
+        Assert.True(service.IsBurstImminent());
     }
 }

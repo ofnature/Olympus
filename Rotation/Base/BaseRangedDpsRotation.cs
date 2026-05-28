@@ -155,7 +155,7 @@ public abstract class BaseRangedDpsRotation<TContext, TModule> : BaseRotation<TC
         UpdateComboState();
 
         // Update burst window tracking (pass current target for raid debuff detection)
-        BurstWindowService?.Update(player, TargetingService.GetUserEnemyTarget());
+        BurstWindowService?.Update(player, TargetingService.GetUserEnemyTarget(), inCombat);
 
         // Update damage trend service with player entity ID
         if (inCombat)

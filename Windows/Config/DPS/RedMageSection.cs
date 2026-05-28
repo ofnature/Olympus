@@ -114,6 +114,12 @@ public sealed class RedMageSection
                 config.RedMage.MeleeComboMinMana, 50, 100,
                 Loc.T(LocalizedStrings.RedMage.MeleeComboMinManaDesc, "Minimum mana to enter melee combo"), save, v => config.RedMage.MeleeComboMinMana = v);
 
+            config.RedMage.MeleeComboMinCombatSeconds = ConfigUIHelpers.FloatSlider(
+                "Melee Min Combat Time (s)",
+                config.RedMage.MeleeComboMinCombatSeconds, 0f, 15f, "%.1f",
+                "Seconds after combat starts before Riposte entry (0 = immediate)", save,
+                v => config.RedMage.MeleeComboMinCombatSeconds = v);
+
             var finisherPreference = config.RedMage.FinisherPreference;
             if (ConfigUIHelpers.EnumCombo(Loc.T(LocalizedStrings.RedMage.FinisherPreference, "Finisher Preference"), ref finisherPreference,
                 Loc.T(LocalizedStrings.RedMage.FinisherPreferenceDesc, "Verholy vs Verflare preference"), save))

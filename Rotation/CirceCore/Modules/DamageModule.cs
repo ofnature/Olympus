@@ -4,6 +4,7 @@ using Olympus.Data;
 using Olympus.Models.Action;
 using Olympus.Rotation.CirceCore.Abilities;
 using Olympus.Rotation.CirceCore.Context;
+using Olympus.Rotation.CirceCore.Helpers;
 using Olympus.Rotation.Common.Helpers;
 using Olympus.Rotation.Common.Scheduling;
 using Olympus.Services;
@@ -15,8 +16,7 @@ namespace Olympus.Rotation.CirceCore.Modules;
 /// <summary>
 /// Handles the Red Mage damage rotation (scheduler-driven).
 /// Manages Dualcast flow, melee combo, finishers, and mana balance.
-/// Combo step is computed via action replacement on Enchanted Riposte
-/// (see CLAUDE.md: GetAdjustedActionId-based melee combo tracking).
+/// Combo step is computed from Mana Stacks and the vanilla combo field.
 /// </summary>
 public sealed class DamageModule : ICirceModule
 {
@@ -72,7 +72,8 @@ public sealed class DamageModule : ICirceModule
 
         var aoeEnabled = context.Configuration.RedMage.EnableAoERotation;
         var aoeThreshold = context.Configuration.RedMage.AoEMinTargets;
-        var rawEnemyCount = context.TargetingService.CountEnemiesInRange(5f, player);
+        // Impact / Veraero II / Verthunder II: 5y circle on the target from up to 25y away — not 5y from the player.
+        var rawEnemyCount = context.TargetingService.CountEnemiesInRangeOfTarget(5f, target, player);
         context.Debug.NearbyEnemies = rawEnemyCount;
         var enemyCount = aoeEnabled ? rawEnemyCount : 0;
         var useAoe = enemyCount >= aoeThreshold;
@@ -302,6 +303,20 @@ public sealed class DamageModule : ICirceModule
         // UseMeleeDuringBurst = false: skip melee entry when in a burst window
         if (!rdmCfg.UseMeleeDuringBurst && inBurst) return;
 
+        if (RdmSoloBurstHelper.ShouldHoldMeleeForSoloBurstChain(context, _burstWindowService))
+        {
+            context.Debug.DamageState = context.HasManafication && !context.HasEmbolden
+                ? "Hold melee for Embolden (solo burst)"
+                : "Hold melee for Manafication+Embolden";
+            return;
+        }
+
+        if (RdmSoloBurstHelper.ShouldGapCloseForMeleeEntry(context, _burstWindowService, target))
+        {
+            context.Debug.DamageState = "Gap close for melee entry (Corps-a-corps)";
+            return;
+        }
+
         var highMana = context.LowerMana >= rdmCfg.MeleeComboMinMana;
         var verySoon = context.LowerMana >= 90;
         if (!inBurst && !highMana && !verySoon)
@@ -374,18 +389,30 @@ public sealed class DamageModule : ICirceModule
     private void TryPushStartMoulinet(ICirceContext context, RotationScheduler scheduler, IBattleChara target)
     {
         if (!context.Configuration.RedMage.EnableMeleeCombo) return;
+
         var level = context.Player.Level;
         if (level < RDMActions.EnchantedMoulinet.MinLevel) return;
 
+        var rdmCfg = context.Configuration.RedMage;
         var inBurst = context.HasEmbolden || context.HasManafication;
         var highMana = context.LowerMana >= 80;
         var verySoon = context.LowerMana >= 90;
+
+        if (RdmSoloBurstHelper.ShouldHoldMeleeForSoloBurstChain(context, _burstWindowService))
+        {
+            context.Debug.DamageState = context.HasManafication && !context.HasEmbolden
+                ? "Hold Moulinet for Embolden (solo burst)"
+                : "Hold Moulinet for Manafication+Embolden";
+            return;
+        }
+
         if (!inBurst && !highMana && !verySoon && context.EmboldenReady)
         {
             context.Debug.DamageState = "Hold Moulinet for Embolden";
             return;
         }
-        if (context.Configuration.RedMage.EnableBurstPooling && ShouldHoldForBurst(8f) && !IsInBurst && !verySoon) return;
+
+        if (rdmCfg.EnableBurstPooling && ShouldHoldForBurst(8f) && !IsInBurst && !verySoon) return;
 
         scheduler.PushGcd(CirceAbilities.EnchantedMoulinet, target.GameObjectId, priority: 5,
             onDispatched: _ =>

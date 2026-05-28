@@ -52,7 +52,16 @@ public sealed class RotationScheduler
 
     public void PushGcd(AbilityBehavior behavior, ulong targetId, int priority,
                         Action<IRotationContext>? onDispatched = null)
-        => _gcdQueue.Add(new AbilityCandidate
+    {
+        // Duplicate GCD guard: during one scheduler cycle, keep only one
+        // candidate per action id to avoid queue flooding (e.g. repeated V3 pushes).
+        foreach (var existing in _gcdQueue)
+        {
+            if (existing.Behavior.Action.ActionId == behavior.Action.ActionId)
+                return;
+        }
+
+        _gcdQueue.Add(new AbilityCandidate
         {
             Behavior = behavior,
             TargetId = targetId,
@@ -60,6 +69,7 @@ public sealed class RotationScheduler
             InsertionOrder = _insertionCounter++,
             OnDispatched = onDispatched,
         });
+    }
 
     public void PushOgcd(AbilityBehavior behavior, ulong targetId, int priority,
                          Action<IRotationContext>? onDispatched = null)

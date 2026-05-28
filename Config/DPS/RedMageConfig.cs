@@ -125,6 +125,18 @@ public sealed class RedMageConfig
     }
 
     /// <summary>
+    /// Seconds after entering combat before melee combo entry is allowed.
+    /// Prevents Riposte on pull when gauge/combo state carries over from downtime.
+    /// Set to 0 to allow immediate entry when mana thresholds are met.
+    /// </summary>
+    private float _meleeComboMinCombatSeconds = 4f;
+    public float MeleeComboMinCombatSeconds
+    {
+        get => _meleeComboMinCombatSeconds;
+        set => _meleeComboMinCombatSeconds = Math.Clamp(value, 0f, 30f);
+    }
+
+    /// <summary>
     /// Maximum mana imbalance before prioritizing the lower color.
     /// </summary>
     private int _manaImbalanceThreshold = 30;
@@ -192,6 +204,47 @@ public sealed class RedMageConfig
     /// Use Manafication with melee combo.
     /// </summary>
     public bool UseManaficationWithMelee { get; set; } = true;
+
+    /// <summary>
+    /// Minimum target HP percent to start solo burst (Embolden/Manafication).
+    /// </summary>
+    private float _soloBurstMinTargetHpPercent = 0.15f;
+    public float SoloBurstMinTargetHpPercent
+    {
+        get => _soloBurstMinTargetHpPercent;
+        set => _soloBurstMinTargetHpPercent = Math.Clamp(value, 0.05f, 0.50f);
+    }
+
+    /// <summary>
+    /// Minimum enemies near the target to start solo burst.
+    /// </summary>
+    private int _soloBurstMinEnemies = 2;
+    public int SoloBurstMinEnemies
+    {
+        get => _soloBurstMinEnemies;
+        set => _soloBurstMinEnemies = Math.Clamp(value, 1, 8);
+    }
+
+    /// <summary>
+    /// Max seconds between Embolden and Manafication cooldowns to treat them as a pair.
+    /// </summary>
+    private float _soloBurstPairCooldownSeconds = 5.0f;
+    public float SoloBurstPairCooldownSeconds
+    {
+        get => _soloBurstPairCooldownSeconds;
+        set => _soloBurstPairCooldownSeconds = Math.Clamp(value, 1f, 15f);
+    }
+
+    /// <summary>
+    /// Preferred minimum lower mana before starting Manafication in solo burst (80|80+).
+    /// Falls back to <see cref="MeleeComboMinMana"/> when both burst oGCDs are ready.
+    /// </summary>
+    private int _soloBurstIdealMinMana = 80;
+    public int SoloBurstIdealMinMana
+    {
+        get => _soloBurstIdealMinMana;
+        set => _soloBurstIdealMinMana = Math.Clamp(value, 50, 100);
+    }
 
     #endregion
 

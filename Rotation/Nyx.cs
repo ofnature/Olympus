@@ -195,5 +195,6 @@ public sealed class Nyx : BaseTankRotation<INyxContext, INyxModule>
         _debugState.DefensiveState = _nyxDebugState.MitigationState;
         _debugState.PlayerHpPercent = (float)context.Player.CurrentHp / context.Player.MaxHp;
         _debugState.PartyListCount = context.PartyList.Length;
+        _debugState.TargetInfo = TargetingDebugHelper.FormatTargetInfo(context.CurrentTarget, context.TargetingService);
     }
 }

@@ -23,13 +23,22 @@ public sealed class TargetingService : ITargetingService
     private readonly ITargetManager _targetManager;
     private readonly Configuration _configuration;
 
-    // Cache for valid enemies
-    private readonly List<IBattleNpc> _cachedEnemies = new(32);
+    // Cache of enemy GameObjectIds in range — re-resolved via ObjectTable each use (no stale IBattleNpc refs).
+    private readonly List<ulong> _cachedEnemyIds = new(32);
     private readonly Stopwatch _cacheTimer = new();
     private float _lastCacheRange;
+    private bool _lastScanApplyLineOfSight = true;
 
     // Reusable work list for AoE target methods (all called from game thread)
     private readonly List<IBattleNpc> _aoeWorkList = new();
+
+    // User-selected target sticky — GameObjectId only, re-resolved via ObjectTable.
+    // Set exclusively from <see cref="ITargetManager.Target"/> (never from FindEnemy strategy picks)
+    // so LowestHp/AoE candidate cycling cannot thrash the ID during multi-mob fights.
+    private const int StickyTargetGraceMs = 400;
+    private ulong _userStickyTargetGameObjectId;
+    private long _userStickyTargetLastValidMs;
+    private readonly Stopwatch _stickyClock = new();
 
     // Tank job IDs: PLD=19, WAR=21, DRK=32, GNB=37
     private static readonly HashSet<uint> TankJobIds = [19, 21, 32, 37];
@@ -49,6 +58,7 @@ public sealed class TargetingService : ITargetingService
         _configuration = configuration;
         GapCloserSafety = gapCloserSafety;
         _cacheTimer.Start();
+        _stickyClock.Start();
     }
 
     /// <summary>
@@ -59,13 +69,30 @@ public sealed class TargetingService : ITargetingService
     /// </summary>
     public bool IsDamageTargetingPaused()
     {
-        return _configuration.Targeting.PauseWhenNoTarget && _targetManager.Target == null;
+        if (!_configuration.Targeting.PauseWhenNoTarget)
+            return false;
+
+        SyncUserStickyFromTargetManager();
+
+        if (HasValidUserSelectedEnemy())
+            return false;
+
+        return ResolveUserStickyTarget() == null;
     }
 
     /// <inheritdoc />
     public IBattleNpc? GetUserEnemyTarget()
     {
-        return _targetManager.Target is IBattleNpc enemy && IsStillValid(enemy) ? enemy : null;
+        SyncUserStickyFromTargetManager();
+
+        if (_targetManager.Target is IBattleNpc userEnemy)
+        {
+            var resolved = ResolveEnemyById(userEnemy.GameObjectId);
+            if (resolved != null)
+                return resolved;
+        }
+
+        return ResolveUserStickyTarget();
     }
 
     /// <summary>
@@ -99,7 +126,7 @@ public sealed class TargetingService : ITargetingService
             target = FindEnemyByStrategy(EnemyTargetingStrategy.LowestHp, maxRange, player);
         }
 
-        return target;
+        return ApplyStickyFallback(target);
     }
 
     /// <summary>
@@ -172,21 +199,82 @@ public sealed class TargetingService : ITargetingService
     /// <returns>Number of valid enemies within radius.</returns>
     public int CountEnemiesInRange(float radius, IPlayerCharacter player)
     {
+        SyncUserStickyFromTargetManager();
+
         // Hard pause: no target → report 0 enemies so AoE thresholds can't trigger.
         if (IsDamageTargetingPaused())
             return 0;
 
-        int count = 0;
-        var currentTargetId = _targetManager.Target is IBattleNpc ? _targetManager.Target.GameObjectId : 0UL;
+        var playerInCombat = (player.StatusFlags & StatusFlags.InCombat) != 0;
+        var count = 0;
+        var engagedTargetId = GetEngagedTargetIdForEnemyCount();
         foreach (var enemy in GetValidEnemies(radius, player))
         {
-            // Only count enemies in combat or explicitly targeted — avoids counting
-            // non-engaged targets like unattacked dummies or non-pulled packs
-            if ((enemy.StatusFlags & StatusFlags.InCombat) == 0 && enemy.GameObjectId != currentTargetId)
+            // While the player is in combat, count every valid enemy in range (fresh object-table data).
+            // Out of combat, only count pulled mobs or the engaged target to avoid nearby dummies.
+            if (!playerInCombat
+                && (enemy.StatusFlags & StatusFlags.InCombat) == 0
+                && enemy.GameObjectId != engagedTargetId)
                 continue;
             count++;
         }
+
         return count;
+    }
+
+    /// <inheritdoc />
+    public int CountEnemiesInRangeOfTarget(float radius, IBattleNpc target, IPlayerCharacter player)
+    {
+        SyncUserStickyFromTargetManager();
+
+        if (IsDamageTargetingPaused())
+            return 0;
+
+        var anchor = ResolveEnemyById(target.GameObjectId);
+        if (anchor == null)
+            return 0;
+
+        var playerPos = player.Position;
+        var centerPos = anchor.Position;
+        var scanRange = radius
+                        + Vector3.Distance(playerPos, centerPos)
+                        + anchor.HitboxRadius
+                        + player.HitboxRadius;
+
+        var playerInCombat = (player.StatusFlags & StatusFlags.InCombat) != 0;
+        var count = 0;
+        var engagedTargetId = GetEngagedTargetIdForEnemyCount();
+
+        // Pack counting: anchor is already acquired — skip LoS on scan and near-point filters.
+        foreach (var enemy in GetValidEnemies(scanRange, player, applyLineOfSightFilter: false))
+        {
+            if (!PassesEnemyNearPointFilters(enemy, centerPos, anchor, radius, playerPos))
+                continue;
+
+            if (!playerInCombat
+                && (enemy.StatusFlags & StatusFlags.InCombat) == 0
+                && enemy.GameObjectId != engagedTargetId)
+                continue;
+
+            count++;
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Target ID used for the "in combat or engaged" exception when counting nearby enemies.
+    /// Includes sticky combat target when <see cref="ITargetManager.Target"/> is briefly null.
+    /// </summary>
+    private ulong GetEngagedTargetIdForEnemyCount()
+    {
+        if (_targetManager.Target is IBattleNpc userTarget)
+            return userTarget.GameObjectId;
+
+        if (_userStickyTargetGameObjectId != 0 && ResolveEnemyById(_userStickyTargetGameObjectId) != null)
+            return _userStickyTargetGameObjectId;
+
+        return 0;
     }
 
     /// <summary>
@@ -268,7 +356,12 @@ public sealed class TargetingService : ITargetingService
             && !_configuration.Targeting.StrictCurrentTargetStrategy)
             target = FindEnemyByActionStrategy(EnemyTargetingStrategy.LowestHp, actionId, player);
 
-        return target;
+        if (target == null)
+            target = TryRecoverActionTargetFromStickyGrace(actionId, player, strategy)
+                     ?? TryRecoverStickyOnTransientActionRangeFail(actionId, player)
+                     ?? TryRecoverUserStickyForAggregateStrategy(strategy, actionId, player);
+
+        return ApplyStickyFallback(target);
     }
 
     /// <summary>
@@ -276,8 +369,164 @@ public sealed class TargetingService : ITargetingService
     /// </summary>
     public void InvalidateCache()
     {
-        _cachedEnemies.Clear();
+        _cachedEnemyIds.Clear();
         _cacheTimer.Restart();
+        _userStickyTargetGameObjectId = 0;
+    }
+
+    private bool HasValidUserSelectedEnemy()
+    {
+        return _targetManager.Target is IBattleNpc enemy
+               && ResolveEnemyById(enemy.GameObjectId) != null;
+    }
+
+    /// <summary>
+    /// Captures the player's hard target into the user sticky slot when it resolves to a valid enemy.
+    /// </summary>
+    private void SyncUserStickyFromTargetManager()
+    {
+        if (_targetManager.Target is not IBattleNpc raw)
+            return;
+
+        var resolved = ResolveEnemyById(raw.GameObjectId);
+        if (resolved != null)
+            SetUserStickyTarget(resolved.GameObjectId);
+    }
+
+    private void SetUserStickyTarget(ulong gameObjectId)
+    {
+        _userStickyTargetGameObjectId = gameObjectId;
+        _userStickyTargetLastValidMs = _stickyClock.ElapsedMilliseconds;
+    }
+
+    private void TouchUserStickyGrace()
+    {
+        if (_userStickyTargetGameObjectId != 0)
+            _userStickyTargetLastValidMs = _stickyClock.ElapsedMilliseconds;
+    }
+
+    private IBattleNpc? ResolveUserStickyTarget()
+    {
+        if (_userStickyTargetGameObjectId == 0)
+            return null;
+
+        if (_stickyClock.ElapsedMilliseconds - _userStickyTargetLastValidMs > StickyTargetGraceMs)
+        {
+            _userStickyTargetGameObjectId = 0;
+            return null;
+        }
+
+        return ResolveEnemyById(_userStickyTargetGameObjectId);
+    }
+
+    private IBattleNpc? ResolveEnemyById(ulong gameObjectId)
+    {
+        if (gameObjectId == 0)
+            return null;
+
+        var obj = _objectTable.SearchById(gameObjectId);
+        if (obj is not IBattleNpc enemy || !IsStillValid(enemy))
+            return null;
+
+        return enemy;
+    }
+
+    /// <summary>
+    /// Returns the strategy-resolved target when present; otherwise the user sticky target.
+    /// Does not write strategy picks into the user sticky slot (prevents LowestHp thrashing).
+    /// </summary>
+    private IBattleNpc? ApplyStickyFallback(IBattleNpc? resolved)
+    {
+        SyncUserStickyFromTargetManager();
+
+        if (resolved != null)
+            return resolved;
+
+        var sticky = ResolveUserStickyTarget();
+        if (sticky != null)
+            TouchUserStickyGrace();
+        return sticky;
+    }
+
+    /// <summary>
+    /// When <see cref="IsActionInRange"/> fails transiently on the player's explicit target but that
+    /// target is still alive and matches the sticky combat ID within the grace window, keep it.
+    /// </summary>
+    private IBattleNpc? TryRecoverActionTargetFromStickyGrace(
+        uint actionId,
+        IPlayerCharacter player,
+        EnemyTargetingStrategy strategy)
+    {
+        var explicitEnemy = strategy switch
+        {
+            EnemyTargetingStrategy.CurrentTarget => ResolveEnemyById(_targetManager.Target?.GameObjectId ?? 0),
+            EnemyTargetingStrategy.FocusTarget => ResolveEnemyById(_targetManager.FocusTarget?.GameObjectId ?? 0),
+            _ => null,
+        };
+
+        if (explicitEnemy == null)
+            return null;
+
+        if (IsActionInRange(actionId, player, explicitEnemy))
+            return explicitEnemy;
+
+        return TryStickyActionRangeGrace(explicitEnemy) ? explicitEnemy : null;
+    }
+
+    /// <summary>
+    /// When aggregate action strategies find no in-range enemy but the sticky combat target is still
+    /// valid, keep attacking through transient <see cref="IsActionInRange"/> failures.
+    /// </summary>
+    private IBattleNpc? TryRecoverStickyOnTransientActionRangeFail(uint actionId, IPlayerCharacter player)
+    {
+        var sticky = ResolveUserStickyTarget();
+        if (sticky == null)
+            return null;
+
+        if (IsActionInRange(actionId, player, sticky))
+            return null;
+
+        TouchUserStickyGrace();
+        return sticky;
+    }
+
+    /// <summary>
+    /// For aggregate strategies (LowestHp, etc.): when no candidate is returned but the user's
+    /// hard target is in action range, prefer that target so multi-mob scans cannot drop to null.
+    /// </summary>
+    private IBattleNpc? TryRecoverUserStickyForAggregateStrategy(
+        EnemyTargetingStrategy strategy,
+        uint actionId,
+        IPlayerCharacter player)
+    {
+        if (strategy is EnemyTargetingStrategy.CurrentTarget or EnemyTargetingStrategy.FocusTarget)
+            return null;
+
+        var sticky = ResolveUserStickyTarget();
+        if (sticky == null || !IsActionInRange(actionId, player, sticky))
+            return null;
+
+        TouchUserStickyGrace();
+        return sticky;
+    }
+
+    /// <summary>
+    /// True when <paramref name="enemy"/> is the user sticky target and still within the grace window.
+    /// Refreshes the grace timestamp so intermittent range-check failures do not outlive the window.
+    /// </summary>
+    private bool TryStickyActionRangeGrace(IBattleNpc enemy)
+    {
+        if (_userStickyTargetGameObjectId == 0 || enemy.GameObjectId != _userStickyTargetGameObjectId)
+            return false;
+
+        if (_stickyClock.ElapsedMilliseconds - _userStickyTargetLastValidMs > StickyTargetGraceMs)
+            return false;
+
+        if (ResolveEnemyById(enemy.GameObjectId) == null)
+            return false;
+
+        TouchUserStickyGrace();
+        return true;
     }
 
     private IBattleNpc? FindEnemyByActionStrategy(EnemyTargetingStrategy strategy, uint actionId, IPlayerCharacter player)
@@ -361,18 +610,26 @@ public sealed class TargetingService : ITargetingService
 
     private IBattleNpc? FindCurrentTargetForAction(uint actionId, IPlayerCharacter player)
     {
-        var target = _targetManager.Target;
-        if (target is IBattleNpc enemy && IsStillValid(enemy) && IsActionInRange(actionId, player, enemy))
-            return enemy;
-        return null;
+        var resolved = ResolveEnemyById(_targetManager.Target?.GameObjectId ?? 0);
+        if (resolved == null)
+            return null;
+
+        if (IsActionInRange(actionId, player, resolved))
+            return resolved;
+
+        return TryStickyActionRangeGrace(resolved) ? resolved : null;
     }
 
     private IBattleNpc? FindFocusTargetForAction(uint actionId, IPlayerCharacter player)
     {
-        var target = _targetManager.FocusTarget;
-        if (target is IBattleNpc enemy && IsStillValid(enemy) && IsActionInRange(actionId, player, enemy))
-            return enemy;
-        return null;
+        var resolved = ResolveEnemyById(_targetManager.FocusTarget?.GameObjectId ?? 0);
+        if (resolved == null)
+            return null;
+
+        if (IsActionInRange(actionId, player, resolved))
+            return resolved;
+
+        return TryStickyActionRangeGrace(resolved) ? resolved : null;
     }
 
     /// <summary>
@@ -524,47 +781,57 @@ public sealed class TargetingService : ITargetingService
 
     private IBattleNpc? FindCurrentTarget(float maxRange, IPlayerCharacter player)
     {
-        var target = _targetManager.Target;
-        if (target is IBattleNpc enemy && IsValidEnemy(enemy, maxRange, player))
-            return enemy;
+        var resolved = ResolveEnemyById(_targetManager.Target?.GameObjectId ?? 0);
+        if (resolved != null && IsValidEnemy(resolved, maxRange, player))
+            return resolved;
 
         return null;
     }
 
     private IBattleNpc? FindFocusTarget(float maxRange, IPlayerCharacter player)
     {
-        var target = _targetManager.FocusTarget;
-        if (target is IBattleNpc enemy && IsValidEnemy(enemy, maxRange, player))
-            return enemy;
+        var resolved = ResolveEnemyById(_targetManager.FocusTarget?.GameObjectId ?? 0);
+        if (resolved != null && IsValidEnemy(resolved, maxRange, player))
+            return resolved;
 
         return null;
     }
 
     /// <summary>
-    /// Gets valid enemies in range, using cache when available.
+    /// Gets valid enemies in range, using an ID cache when available.
+    /// Each entry is re-resolved through <see cref="IObjectTable.SearchById"/> every iteration.
     /// </summary>
-    private IEnumerable<IBattleNpc> GetValidEnemies(float maxRange, IPlayerCharacter player)
+    private IEnumerable<IBattleNpc> GetValidEnemies(
+        float maxRange,
+        IPlayerCharacter player,
+        bool applyLineOfSightFilter = true)
     {
-        // Check if cache is still valid
         var cacheAge = _cacheTimer.ElapsedMilliseconds;
-        if (_cachedEnemies.Count > 0 &&
+        if (_cachedEnemyIds.Count > 0 &&
             cacheAge < _configuration.Targeting.TargetCacheTtlMs &&
-            Math.Abs(_lastCacheRange - maxRange) < 0.1f)
+            Math.Abs(_lastCacheRange - maxRange) < 0.1f &&
+            _lastScanApplyLineOfSight == applyLineOfSightFilter)
         {
-            // Validate cached entries are still valid (O(n) with RemoveAll vs O(n²) with RemoveAt)
-            _cachedEnemies.RemoveAll(e => !IsStillValid(e));
-
-            if (_cachedEnemies.Count > 0)
+            var yieldedFromCache = false;
+            for (var i = _cachedEnemyIds.Count - 1; i >= 0; i--)
             {
-                foreach (var enemy in _cachedEnemies)
+                var enemy = TryResolveValidEnemyInRange(_cachedEnemyIds[i], maxRange, player, applyLineOfSightFilter);
+                if (enemy == null)
+                    _cachedEnemyIds.RemoveAt(i);
+                else
+                {
+                    yieldedFromCache = true;
                     yield return enemy;
-                yield break;
+                }
             }
+
+            if (yieldedFromCache)
+                yield break;
         }
 
-        // Rebuild cache
-        _cachedEnemies.Clear();
+        _cachedEnemyIds.Clear();
         _lastCacheRange = maxRange;
+        _lastScanApplyLineOfSight = applyLineOfSightFilter;
         _cacheTimer.Restart();
 
         var playerPos = player.Position;
@@ -572,48 +839,94 @@ public sealed class TargetingService : ITargetingService
 
         foreach (var obj in _objectTable)
         {
-            // Cheapest checks first
             if (obj.ObjectKind != ObjectKind.BattleNpc)
                 continue;
 
-            if (!obj.IsTargetable)
+            if (!obj.IsTargetable || obj.IsDead)
                 continue;
 
-            if (obj.IsDead)
-                continue;
-
-            // Quick yalm-based range pre-filter (generous buffer for large hitboxes)
             if (obj.YalmDistanceX > maxRangeYalms + (int)Math.Ceiling(obj.HitboxRadius))
                 continue;
 
-            // Type cast
             if (obj is not IBattleNpc npc)
                 continue;
 
-            // Check if hostile (enemy or striking dummy)
-            if ((byte)npc.BattleNpcKind != Olympus.Compat.BattleNpcKinds.Combatant && npc.SubKind != 0)
+            if (!PassesEnemyInRangeFilters(npc, maxRange, player, playerPos, applyLineOfSightFilter))
                 continue;
 
-            // Precise distance check — effective range includes both hitbox radii
-            var effectiveRange = maxRange + npc.HitboxRadius + player.HitboxRadius;
-            if (Vector3.DistanceSquared(playerPos, npc.Position) > effectiveRange * effectiveRange)
-                continue;
-
-            // Line-of-sight check — reject enemies behind walls/pillars
-            if (_configuration.Targeting.EnableLineOfSightFiltering &&
-                !HasLineOfSight(playerPos, npc.Position))
-                continue;
-
-            // Invulnerability check — skip enemies with known invuln status effects
-            // (boss phase transitions, invulnerable adds, untouchable objects).
-            // Only applied to auto-targeting; explicit CurrentTarget/FocusTarget bypass this.
-            if (_configuration.Targeting.EnableInvulnerabilityFiltering &&
-                HasInvulnerabilityStatus(npc))
-                continue;
-
-            _cachedEnemies.Add(npc);
+            _cachedEnemyIds.Add(npc.GameObjectId);
             yield return npc;
         }
+    }
+
+    /// <summary>
+    /// Re-resolves a cached enemy ID and applies the same range/LoS/invuln filters as a fresh scan.
+    /// </summary>
+    private IBattleNpc? TryResolveValidEnemyInRange(
+        ulong gameObjectId,
+        float maxRange,
+        IPlayerCharacter player,
+        bool applyLineOfSightFilter = true)
+    {
+        var obj = _objectTable.SearchById(gameObjectId);
+        if (obj is not IBattleNpc npc || !IsStillValid(npc))
+            return null;
+
+        return PassesEnemyInRangeFilters(npc, maxRange, player, player.Position, applyLineOfSightFilter)
+            ? npc
+            : null;
+    }
+
+    private bool PassesEnemyInRangeFilters(
+        IBattleNpc npc,
+        float maxRange,
+        IPlayerCharacter player,
+        Vector3 playerPos,
+        bool applyLineOfSightFilter = true)
+    {
+        if ((byte)npc.BattleNpcKind != Olympus.Compat.BattleNpcKinds.Combatant && npc.SubKind != 0)
+            return false;
+
+        var effectiveRange = maxRange + npc.HitboxRadius + player.HitboxRadius;
+        if (Vector3.DistanceSquared(playerPos, npc.Position) > effectiveRange * effectiveRange)
+            return false;
+
+        if (applyLineOfSightFilter
+            && _configuration.Targeting.EnableLineOfSightFiltering
+            && !HasLineOfSight(playerPos, npc.Position))
+            return false;
+
+        if (_configuration.Targeting.EnableInvulnerabilityFiltering &&
+            HasInvulnerabilityStatus(npc))
+            return false;
+
+        return true;
+    }
+
+    /// <summary>
+    /// Kind, LoS, invuln, and anchor-centered distance — used for targeted AoE pack counting.
+    /// </summary>
+    private bool PassesEnemyNearPointFilters(
+        IBattleNpc npc,
+        Vector3 centerPos,
+        IBattleNpc anchor,
+        float radius,
+        Vector3 playerPos)
+    {
+        if ((byte)npc.BattleNpcKind != Olympus.Compat.BattleNpcKinds.Combatant && npc.SubKind != 0)
+            return false;
+
+        var effectiveRange = radius + npc.HitboxRadius + anchor.HitboxRadius;
+        if (Vector3.DistanceSquared(centerPos, npc.Position) > effectiveRange * effectiveRange)
+            return false;
+
+        // No LoS check — used only for AoE pack counting around an already-acquired anchor.
+
+        if (_configuration.Targeting.EnableInvulnerabilityFiltering &&
+            HasInvulnerabilityStatus(npc))
+            return false;
+
+        return true;
     }
 
     private static bool IsValidEnemy(IBattleNpc enemy, float maxRange, IPlayerCharacter player)
@@ -633,21 +946,38 @@ public sealed class TargetingService : ITargetingService
     }
 
     /// <summary>
-    /// Checks line of sight from the player's approximate eye height to an enemy position
-    /// using a BGCollision raycast. Returns false if geometry blocks the path.
+    /// Eye height above <paramref name="playerPos"/> for LoS ray origin (avoids floor / self-hitbox).
+    /// </summary>
+    private const float LineOfSightPlayerEyeOffsetY = 1.8f;
+
+    /// <summary>
+    /// Target point height above enemy root for LoS ray end (avoids floor and feet colliders on large mobs).
+    /// </summary>
+    private const float LineOfSightEnemyChestOffsetY = 1.5f;
+
+    /// <summary>
+    /// Stop the ray short of the target point so the target's own collision mesh is not counted as a block.
+    /// </summary>
+    private const float LineOfSightRayStopShortYalms = 0.75f;
+
+    /// <summary>
+    /// Checks line of sight from the player's eye height to chest height on the enemy using a BGCollision raycast.
+    /// Returns false if geometry blocks the path.
     /// </summary>
     private static unsafe bool HasLineOfSight(Vector3 playerPos, Vector3 enemyPos)
     {
         try
         {
-            var eyePos = playerPos with { Y = playerPos.Y + 2f };
-            var direction = enemyPos - eyePos;
+            var eyePos = playerPos with { Y = playerPos.Y + LineOfSightPlayerEyeOffsetY };
+            var targetPos = enemyPos with { Y = enemyPos.Y + LineOfSightEnemyChestOffsetY };
+            var direction = targetPos - eyePos;
             var distance = direction.Length();
             if (distance < 0.01f)
                 return true;
 
             direction /= distance;
-            return !BGCollisionModule.RaycastMaterialFilter(eyePos, direction, out _, distance);
+            var castDistance = Math.Max(0f, distance - LineOfSightRayStopShortYalms);
+            return !BGCollisionModule.RaycastMaterialFilter(eyePos, direction, out _, castDistance);
         }
         catch
         {

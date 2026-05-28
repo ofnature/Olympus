@@ -77,7 +77,7 @@ public sealed class Circe : BaseCasterDpsRotation<ICirceContext, ICirceModule>
 
     // Melee combo step tracking (0=None, 1=Zwerchhau next, 2=Redoublement next,
     // 3=Finisher next, 4=Scorch next, 5=Resolution next).
-    // Computed via action replacement on Enchanted Riposte + ManaStacks + the game's
+    // Computed via ManaStacks + the game's combo field (Verflare→Resolution).
     // combo field. Replaces the old raw combo-action/combo-timer pair which was
     // unreliable for the Enchanted chain.
     private int _meleeComboStep;
@@ -85,6 +85,9 @@ public sealed class Circe : BaseCasterDpsRotation<ICirceContext, ICirceModule>
     // Moulinet (AoE melee) combo step tracking (0=None, 1=Deux next, 2=Trois next).
     // Computed via action replacement on Enchanted Moulinet.
     private int _moulinetStep;
+
+    private bool _wasInCombat;
+    private bool _suppressMeleeComboStep;
 
     // Scheduler
     private readonly RotationScheduler _scheduler;
@@ -198,62 +201,98 @@ public sealed class Circe : BaseCasterDpsRotation<ICirceContext, ICirceModule>
     }
 
     /// <summary>
-    /// Pure mapping from action-replacement / ManaStacks / vanilla-combo state to
-    /// the 5-step Enchanted melee chain index. Precedence (top wins):
-    ///   1) adjusted Riposte → Zwerchhau ⇒ 1
-    ///   2) adjusted Riposte → Redoublement ⇒ 2
-    ///   3) ManaStacks ≥ 3 ⇒ 3
-    ///   4) comboTimer > 0 AND comboAction is Verflare/Verholy ⇒ 4
-    ///   5) comboTimer > 0 AND comboAction is Scorch ⇒ 5
+    /// Pure mapping from ManaStacks / vanilla-combo state to the 5-step Enchanted
+    /// melee chain index. Precedence (top wins):
+    ///   1) comboTimer &gt; 0 AND comboAction is Verflare/Verholy ⇒ 4
+    ///   2) comboTimer &gt; 0 AND comboAction is Scorch ⇒ 5
+    ///   3) comboTimer &gt; 0 AND (ManaStacks ≥ 3 OR last hit was Redoublement) ⇒ 3
+    ///   4) comboTimer &gt; 0 AND (ManaStacks ≥ 2 OR last hit was Zwerchhau) ⇒ 2
+    ///   5) comboTimer &gt; 0 AND (ManaStacks ≥ 1 OR last hit was Riposte) ⇒ 1
     ///   else ⇒ 0
-    /// Action replacement is preferred over ManaStacks because the game's
-    /// vanilla combo field is unreliable for the Enchanted melee chain.
+    /// Both comboAction and ManaStacks require an active combo timer so stale gauge
+    /// or combo IDs from downtime do not start the chain at combat entry.
     /// Extracted from the wrapper for unit-test coverage.
     /// </summary>
-    internal static int ComputeMeleeComboStep(uint adjustedRiposteId, int manaStacks, uint comboAction, float comboTimer)
+    internal static int ComputeMeleeComboStep(int manaStacks, uint comboAction, float comboTimer)
     {
-        // Steps 1-2: action replacement from Enchanted Riposte
-        if (adjustedRiposteId == RDMActions.EnchantedZwerchhau.ActionId)
-            return 1;
-        if (adjustedRiposteId == RDMActions.EnchantedRedoublement.ActionId)
-            return 2;
+        if (comboTimer > 0)
+        {
+            if (comboAction == RDMActions.Verflare.ActionId || comboAction == RDMActions.Verholy.ActionId)
+                return 4;
+            if (comboAction == RDMActions.Scorch.ActionId)
+                return 5;
+            if (IsRedoublementComboAction(comboAction))
+                return 3;
+            if (IsZwerchhauComboAction(comboAction))
+                return 2;
+            if (IsRiposteComboAction(comboAction))
+                return 1;
+        }
 
-        // Step 3: Finisher (Verflare/Verholy) becomes available at 3 Mana Stacks,
-        // which is granted by Enchanted Redoublement.
-        if (manaStacks >= 3)
-            return 3;
-
-        // Steps 4-5: Scorch/Resolution are chained via the vanilla combo system,
-        // so the game's combo field reliably tracks them.
-        if (comboTimer <= 0)
-            return 0;
-
-        if (comboAction == RDMActions.Verflare.ActionId || comboAction == RDMActions.Verholy.ActionId)
-            return 4;
-        if (comboAction == RDMActions.Scorch.ActionId)
-            return 5;
+        if (comboTimer > 0)
+        {
+            if (manaStacks >= 3)
+                return 3;
+            if (manaStacks >= 2)
+                return 2;
+            if (manaStacks >= 1)
+                return 1;
+        }
 
         return 0;
     }
 
+    private static bool IsRiposteComboAction(uint actionId) =>
+        actionId == RDMActions.Riposte.ActionId || actionId == RDMActions.EnchantedRiposte.ActionId;
+
+    private static bool IsZwerchhauComboAction(uint actionId) =>
+        actionId == RDMActions.Zwerchhau.ActionId || actionId == RDMActions.EnchantedZwerchhau.ActionId;
+
+    private static bool IsRedoublementComboAction(uint actionId) =>
+        actionId == RDMActions.Redoublement.ActionId || actionId == RDMActions.EnchantedRedoublement.ActionId;
+
     /// <summary>
-    /// Updates the melee combo step using action replacement on Enchanted Riposte
-    /// for steps 1-2 (Zwerchhau/Redoublement), Mana Stacks for step 3 (Finisher),
-    /// and the game's combo field for steps 4-5 (Scorch/Resolution).
+    /// Updates the melee combo step from Mana Stacks (steps 1-3) and the game's
+    /// combo field for steps 4-5 (Scorch/Resolution).
     /// </summary>
-    private unsafe void UpdateMeleeComboStep()
+    private void UpdateMeleeComboStep()
     {
-        _meleeComboStep = 0;
+        if (_suppressMeleeComboStep)
+        {
+            var minCombatSeconds = Configuration.RedMage.MeleeComboMinCombatSeconds;
+            if (CombatEventService.GetCombatDurationSeconds() < minCombatSeconds)
+            {
+                _meleeComboStep = 0;
+                return;
+            }
 
-        var actionManager = SafeGameAccess.GetActionManager(ErrorMetrics);
-        if (actionManager == null)
-            return;
+            _suppressMeleeComboStep = false;
+        }
 
-        var adjustedId = actionManager->GetAdjustedActionId(RDMActions.EnchantedRiposte.ActionId);
         var comboAction = SafeGameAccess.GetComboAction(ErrorMetrics);
         var comboTimer = SafeGameAccess.GetComboTimer(ErrorMetrics);
 
-        _meleeComboStep = ComputeMeleeComboStep(adjustedId, _manaStacks, comboAction, comboTimer);
+        _meleeComboStep = ComputeMeleeComboStep(_manaStacks, comboAction, comboTimer);
+    }
+
+    /// <inheritdoc />
+    protected override void UpdateCombatState(bool inCombat)
+    {
+        if (inCombat && !_wasInCombat)
+        {
+            _meleeComboStep = 0;
+            _moulinetStep = 0;
+            _suppressMeleeComboStep = true;
+        }
+        else if (!inCombat && _wasInCombat)
+        {
+            _meleeComboStep = 0;
+            _moulinetStep = 0;
+            _suppressMeleeComboStep = false;
+        }
+
+        _wasInCombat = inCombat;
+        base.UpdateCombatState(inCombat);
     }
 
     /// <summary>
@@ -317,6 +356,7 @@ public sealed class Circe : BaseCasterDpsRotation<ICirceContext, ICirceModule>
         // Party/player info
         _debugState.PlayerHpPercent = (float)context.Player.CurrentHp / context.Player.MaxHp;
         _debugState.PartyListCount = context.PartyList.Length;
+        _debugState.TargetInfo = TargetingDebugHelper.FormatTargetInfo(null, context.TargetingService);
     }
 
     /// <inheritdoc />
@@ -329,7 +369,8 @@ public sealed class Circe : BaseCasterDpsRotation<ICirceContext, ICirceModule>
             && PlayerSafetyHelper.IsPlayerIntentChannelActive(context.Player))
             return;
 
-        if (TryDispatchTincture(context, inCombat)) return;
+        if (TryDispatchTincture(context, inCombat))
+            return;
 
         _scheduler.Reset();
         foreach (var module in _modules)

@@ -275,6 +275,7 @@ public sealed class Nike : BaseMeleeDpsRotation<INikeContext, INikeModule>
         // Party/player info
         _debugState.PlayerHpPercent = (float)context.Player.CurrentHp / context.Player.MaxHp;
         _debugState.PartyListCount = context.PartyList.Length;
+        _debugState.TargetInfo = TargetingDebugHelper.FormatTargetInfo(null, context.TargetingService);
     }
 
     /// <inheritdoc />
