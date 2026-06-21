@@ -69,6 +69,12 @@ public sealed class PersephoneStatusHelper : BaseStatusHelper
     public bool HasGarudasFavor(IBattleChara player)
         => HasStatus(player, SMNActions.StatusIds.GarudasFavor);
 
+    /// <summary>
+    /// Checks if Ruby's Glimmer proc is active (enables Searing Flash).
+    /// </summary>
+    public bool HasRubysGlimmer(IBattleChara player)
+        => HasStatus(player, SMNActions.StatusIds.RubysGlimmer);
+
     #endregion
 
     #region Demi-Summon Detection

@@ -16,6 +16,7 @@ public class HermesComboStepTests
     [InlineData(2240u, 30f, 1)]    // Spinning Edge → step 1 (Gust Slash next)
     [InlineData(2242u, 30f, 2)]    // Gust Slash → step 2 (Aeolian Edge / Armor Crush next)
     [InlineData(2254u, 30f, 1)]    // Death Blossom (AoE) → step 1 (Hakke Mujinsatsu next)
+    [InlineData(16488u, 30f, 2)]   // Hakke Mujinsatsu (AoE) → step 2 (combo complete)
     [InlineData(99999u, 30f, 0)]   // Unknown action
     public void ComputeComboStep_MapsActionAndTimer(uint comboAction, float comboTimer, int expected)
     {

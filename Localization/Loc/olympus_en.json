@@ -104,6 +104,8 @@
   "config.general.combat_behavior_header": "Combat Behavior",
   "config.general.start_on_auto_attack": "Start rotation on auto-attack",
   "config.general.start_on_auto_attack_desc": "When enabled, Olympus starts executing the rotation as soon as auto-attack is active on a target, before the server sets the in-combat flag.",
+  "config.general.start_on_party_in_combat": "Start rotation when group is in combat",
+  "config.general.start_on_party_in_combat_desc": "When enabled, Olympus runs the rotation while any party member or Trust ally is fighting, even before you personally enter combat. Use Tank Assist targeting to automatically attack what your tank is hitting.",
   "config.window.section": "Window Behavior",
   "config.window.prevent_escape_close": "Prevent closing with Escape key",
   "config.window.prevent_escape_close_desc": "When enabled, pressing Escape will not close the Olympus window.",
@@ -143,6 +145,8 @@
   "config.targeting.strict_current_target_desc": "When using Current Target or Focus Target strategy, never fall back to another enemy if yours is gone.",
   "config.targeting.safe_gap_closer": "Safe gap closers",
   "config.targeting.safe_gap_closer_desc": "Only use gap closers on your explicitly selected target, and block them when you are moving away from the target (spread markers, ground AoE at the end point).",
+  "config.targeting.include_hostiles_without_personal_combat_flag": "Include hostiles without your in-combat flag",
+  "config.targeting.include_hostiles_without_personal_combat_flag_desc": "In alliance raids, mobs tagged by other parties often lack your personal in-combat flag until you hit them. Enable to keep attacking valid contribution targets. Also activates automatically while group-combat assist is enabled and allies are fighting.",
   "config.targeting.movement_tolerance": "Movement Tolerance",
   "config.targeting.movement_tolerance_desc": "Delay after stopping before casting. Lower = faster, higher = safer.",
 

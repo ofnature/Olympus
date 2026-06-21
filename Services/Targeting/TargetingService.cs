@@ -36,6 +36,9 @@ public sealed class TargetingService : ITargetingService
     // Set exclusively from <see cref="ITargetManager.Target"/> (never from FindEnemy strategy picks)
     // so LowestHp/AoE candidate cycling cannot thrash the ID during multi-mob fights.
     private const int StickyTargetGraceMs = 400;
+    // Max range for combat-death auto-retarget and live-hostile detection (matches tank engage pass).
+    private const float CombatRetargetMaxRangeY = 25f;
+
     private ulong _userStickyTargetGameObjectId;
     private long _userStickyTargetLastValidMs;
     private readonly Stopwatch _stickyClock = new();
@@ -63,21 +66,30 @@ public sealed class TargetingService : ITargetingService
 
     /// <summary>
     /// Returns true when damage targeting should be suppressed because the player has
-    /// dropped their target and <see cref="Config.TargetingConfig.PauseWhenNoTarget"/> is on.
-    /// This is the primary safeguard for gaze mechanics and any moment the player wants
-    /// Olympus to stop attacking — dropping the target is a hard pause signal.
+    /// intentionally dropped their target and <see cref="Config.TargetingConfig.PauseWhenNoTarget"/> is on.
+    /// A dead hard target during active combat with live hostiles nearby is NOT treated as
+    /// an intentional drop — see combat retarget (Layer 1/2).
     /// </summary>
     public bool IsDamageTargetingPaused()
     {
         if (!_configuration.Targeting.PauseWhenNoTarget)
             return false;
 
+        PrepareDamageTargeting(_objectTable.LocalPlayer);
+
         SyncUserStickyFromTargetManager();
 
         if (HasValidUserSelectedEnemy())
             return false;
 
-        return ResolveUserStickyTarget() == null;
+        if (ResolveUserStickyTarget() != null)
+            return false;
+
+        var player = _objectTable.LocalPlayer;
+        if (player != null && IsCombatRetargetScenario(player))
+            return false;
+
+        return true;
     }
 
     /// <inheritdoc />
@@ -104,6 +116,8 @@ public sealed class TargetingService : ITargetingService
     /// <returns>Best target according to strategy, or null if none found.</returns>
     public IBattleNpc? FindEnemy(EnemyTargetingStrategy strategy, float maxRange, IPlayerCharacter player)
     {
+        PrepareDamageTargeting(player);
+
         // Hard pause: player has no target and PauseWhenNoTarget is on. Covers gaze mechanics.
         if (IsDamageTargetingPaused())
             return null;
@@ -121,7 +135,8 @@ public sealed class TargetingService : ITargetingService
         // is on, in which case an explicit-target strategy with no target stays empty
         // (prevents auto-retargeting when the player is trying to stop attacking)
         if (target == null && strategy is EnemyTargetingStrategy.CurrentTarget or EnemyTargetingStrategy.FocusTarget
-            && !_configuration.Targeting.StrictCurrentTargetStrategy)
+            && (!_configuration.Targeting.StrictCurrentTargetStrategy
+                || ShouldRelaxStrictOnCombatDeath(player)))
         {
             target = FindEnemyByStrategy(EnemyTargetingStrategy.LowestHp, maxRange, player);
         }
@@ -205,17 +220,22 @@ public sealed class TargetingService : ITargetingService
         if (IsDamageTargetingPaused())
             return 0;
 
-        var playerInCombat = (player.StatusFlags & StatusFlags.InCombat) != 0;
+        var playerEffectivelyInCombat = IsPlayerEffectivelyInCombat(player);
         var count = 0;
         var engagedTargetId = GetEngagedTargetIdForEnemyCount();
         foreach (var enemy in GetValidEnemies(radius, player))
         {
-            // While the player is in combat, count every valid enemy in range (fresh object-table data).
-            // Out of combat, only count pulled mobs or the engaged target to avoid nearby dummies.
-            if (!playerInCombat
-                && (enemy.StatusFlags & StatusFlags.InCombat) == 0
-                && enemy.GameObjectId != engagedTargetId)
+            if (playerEffectivelyInCombat)
+            {
+                if (!ShouldIncludeEnemyForTargeting(enemy, engagedTargetId, player))
+                    continue;
+            }
+            else if ((enemy.StatusFlags & StatusFlags.InCombat) == 0
+                     && enemy.GameObjectId != engagedTargetId)
+            {
                 continue;
+            }
+
             count++;
         }
 
@@ -241,7 +261,7 @@ public sealed class TargetingService : ITargetingService
                         + anchor.HitboxRadius
                         + player.HitboxRadius;
 
-        var playerInCombat = (player.StatusFlags & StatusFlags.InCombat) != 0;
+        var playerEffectivelyInCombat = IsPlayerEffectivelyInCombat(player);
         var count = 0;
         var engagedTargetId = GetEngagedTargetIdForEnemyCount();
 
@@ -251,10 +271,16 @@ public sealed class TargetingService : ITargetingService
             if (!PassesEnemyNearPointFilters(enemy, centerPos, anchor, radius, playerPos))
                 continue;
 
-            if (!playerInCombat
-                && (enemy.StatusFlags & StatusFlags.InCombat) == 0
-                && enemy.GameObjectId != engagedTargetId)
+            if (playerEffectivelyInCombat)
+            {
+                if (!ShouldIncludeEnemyForTargeting(enemy, engagedTargetId, player))
+                    continue;
+            }
+            else if ((enemy.StatusFlags & StatusFlags.InCombat) == 0
+                     && enemy.GameObjectId != engagedTargetId)
+            {
                 continue;
+            }
 
             count++;
         }
@@ -340,6 +366,8 @@ public sealed class TargetingService : ITargetingService
     /// <inheritdoc />
     public IBattleNpc? FindEnemyForAction(EnemyTargetingStrategy strategy, uint actionId, IPlayerCharacter player)
     {
+        PrepareDamageTargeting(player);
+
         // Hard pause: no target → no damage targeting at all.
         if (IsDamageTargetingPaused())
             return null;
@@ -353,7 +381,8 @@ public sealed class TargetingService : ITargetingService
         // is off. Strict mode keeps explicit-target intent as a hard stop — important
         // for players who use CurrentTarget to manually control every engagement.
         if (target == null && strategy is EnemyTargetingStrategy.CurrentTarget or EnemyTargetingStrategy.FocusTarget
-            && !_configuration.Targeting.StrictCurrentTargetStrategy)
+            && (!_configuration.Targeting.StrictCurrentTargetStrategy
+                || ShouldRelaxStrictOnCombatDeath(player)))
             target = FindEnemyByActionStrategy(EnemyTargetingStrategy.LowestHp, actionId, player);
 
         if (target == null)
@@ -373,6 +402,95 @@ public sealed class TargetingService : ITargetingService
         _cacheTimer.Restart();
         _userStickyTargetGameObjectId = 0;
     }
+
+    #region Combat death retarget (Layers 1–3)
+
+    /// <summary>
+    /// Layer 1 entry: auto-retarget the game hard target when the current one died mid-combat.
+    /// Idempotent — no-op when a valid hard target already exists.
+    /// </summary>
+    private void PrepareDamageTargeting(IPlayerCharacter? player)
+    {
+        if (player == null)
+            return;
+
+        TryAutoRetargetOnCombatDeath(player);
+    }
+
+    private bool IsCombatRetargetScenario(IPlayerCharacter player) =>
+        IsPlayerEffectivelyInCombat(player)
+        && IsHardTargetInvalid()
+        && HasLiveHostilesNearby(player);
+
+    private static bool IsPlayerInCombat(IPlayerCharacter player) =>
+        (player.StatusFlags & StatusFlags.InCombat) != 0;
+
+    /// <summary>
+    /// True when the player's hard target is missing, not an enemy, or dead.
+    /// </summary>
+    private bool IsHardTargetInvalid()
+    {
+        if (_targetManager.Target is not IBattleNpc raw)
+            return true;
+
+        return ResolveEnemyById(raw.GameObjectId) == null;
+    }
+
+    /// <summary>
+    /// True when at least one valid in-combat hostile is within retarget scan range.
+    /// </summary>
+    private bool HasLiveHostilesNearby(IPlayerCharacter player)
+    {
+        var engagedTargetId = GetEngagedTargetIdForEnemyCount();
+        foreach (var enemy in GetValidEnemies(CombatRetargetMaxRangeY, player))
+        {
+            if (ShouldIncludeEnemyForTargeting(enemy, engagedTargetId, player))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Layer 1: RSR-style game target write when hard target died and live hostiles remain.
+    /// </summary>
+    private void TryAutoRetargetOnCombatDeath(IPlayerCharacter player)
+    {
+        if (!IsCombatRetargetScenario(player))
+            return;
+
+        if (HasValidUserSelectedEnemy())
+            return;
+
+        var pickStrategy = CombatRetargetPolicy.ResolveAutoRetargetStrategy(
+            _configuration.Targeting.EnemyStrategy);
+
+        var pick = FindEnemyByStrategy(pickStrategy, CombatRetargetMaxRangeY, player);
+        if (pick == null)
+            return;
+
+        SetGameHardTarget(pick);
+    }
+
+    /// <summary>
+    /// Writes the client's hard target and syncs user sticky (feeds gap closer Rule 1).
+    /// </summary>
+    private void SetGameHardTarget(IBattleNpc enemy)
+    {
+        _targetManager.Target = enemy;
+        SetUserStickyTarget(enemy.GameObjectId);
+    }
+
+    /// <summary>
+    /// Layer 3: bypass StrictCurrentTargetStrategy for explicit-strategy → aggregate fallback.
+    /// </summary>
+    private bool ShouldRelaxStrictOnCombatDeath(IPlayerCharacter player) =>
+        CombatRetargetPolicy.ShouldRelaxStrictOnCombatDeath(
+            _configuration.Targeting.StrictCurrentTargetStrategy,
+            _configuration.Targeting.EnemyStrategy,
+            IsCombatRetargetScenario(player));
+
+    #endregion
 
     private bool HasValidUserSelectedEnemy()
     {
@@ -695,9 +813,7 @@ public sealed class TargetingService : ITargetingService
 
         foreach (var enemy in GetValidEnemies(maxRange, player))
         {
-            // Only consider enemies in combat or explicitly targeted by the player —
-            // avoids targeting non-engaged enemies like unattacked dummies or non-pulled packs
-            if ((enemy.StatusFlags & StatusFlags.InCombat) == 0 && enemy.GameObjectId != currentTargetId)
+            if (!ShouldIncludeEnemyForTargeting(enemy, currentTargetId, player))
                 continue;
 
             if (enemy.CurrentHp < lowestHp)
@@ -718,7 +834,7 @@ public sealed class TargetingService : ITargetingService
 
         foreach (var enemy in GetValidEnemies(maxRange, player))
         {
-            if ((enemy.StatusFlags & StatusFlags.InCombat) == 0 && enemy.GameObjectId != currentTargetId)
+            if (!ShouldIncludeEnemyForTargeting(enemy, currentTargetId, player))
                 continue;
 
             if (enemy.CurrentHp > highestHp)
@@ -740,7 +856,7 @@ public sealed class TargetingService : ITargetingService
 
         foreach (var enemy in GetValidEnemies(maxRange, player))
         {
-            if ((enemy.StatusFlags & StatusFlags.InCombat) == 0 && enemy.GameObjectId != currentTargetId)
+            if (!ShouldIncludeEnemyForTargeting(enemy, currentTargetId, player))
                 continue;
 
             var dist = Vector3.DistanceSquared(playerPos, enemy.Position);
@@ -939,6 +1055,20 @@ public sealed class TargetingService : ITargetingService
 
         return DistanceHelper.IsInRange(player.Position, enemy.Position, maxRange + enemy.HitboxRadius + player.HitboxRadius);
     }
+
+    private bool IsPlayerEffectivelyInCombat(IPlayerCharacter player) =>
+        EnemyEngagementPolicy.IsPlayerEffectivelyInCombat(player, _configuration, _partyList, _objectTable);
+
+    private bool ShouldRelaxEnemyInCombatRequirement(IPlayerCharacter player) =>
+        EnemyEngagementPolicy.ShouldRelaxEnemyInCombatRequirement(
+            _configuration, player, _partyList, _objectTable);
+
+    private bool ShouldIncludeEnemyForTargeting(IBattleNpc enemy, ulong currentTargetId, IPlayerCharacter player) =>
+        EnemyEngagementPolicy.ShouldIncludeEnemyForTargeting(
+            enemy,
+            currentTargetId,
+            IsPlayerEffectivelyInCombat(player),
+            ShouldRelaxEnemyInCombatRequirement(player));
 
     private static bool IsStillValid(IBattleNpc enemy)
     {

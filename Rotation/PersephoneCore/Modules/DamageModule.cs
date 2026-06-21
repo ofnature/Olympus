@@ -86,7 +86,7 @@ public sealed class DamageModule : IPersephoneModule
         TryPushAddle(context, scheduler, target);
 
         if (context.IsDemiSummonActive)
-            TryPushDemiSummonGcd(context, scheduler, target, useAoe);
+            TryPushDemiSummonGcdChain(context, scheduler, target, useAoe);
 
         if (context.IsIfritAttuned || context.IsTitanAttuned || context.IsGarudaAttuned)
             TryPushAttunementGcd(context, scheduler, target, useAoe, isMoving);
@@ -149,46 +149,58 @@ public sealed class DamageModule : IPersephoneModule
             });
     }
 
-    private void TryPushDemiSummonGcd(IPersephoneContext context, RotationScheduler scheduler, IBattleChara target, bool useAoe)
+    private void TryPushDemiSummonGcdChain(IPersephoneContext context, RotationScheduler scheduler, IBattleChara target, bool useAoe)
     {
         if (context.IsBahamutActive && !context.Configuration.Summoner.EnableBahamut) return;
         if (context.IsPhoenixActive && !context.Configuration.Summoner.EnablePhoenix) return;
         if (context.IsSolarBahamutActive && !context.Configuration.Summoner.EnableSolarBahamut) return;
 
-        var demiGcd = SMNActions.GetDemiSummonGcd(context.IsBahamutActive, context.IsSolarBahamutActive, useAoe);
-        var ability = demiGcd.ActionId switch
-        {
-            var id when id == SMNActions.AstralImpulse.ActionId => PersephoneAbilities.AstralImpulse,
-            var id when id == SMNActions.AstralFlare.ActionId => PersephoneAbilities.AstralFlare,
-            var id when id == SMNActions.FountainOfFire.ActionId => PersephoneAbilities.FountainOfFire,
-            var id when id == SMNActions.BrandOfPurgatory.ActionId => PersephoneAbilities.BrandOfPurgatory,
-            var id when id == SMNActions.UmbralImpulse.ActionId => PersephoneAbilities.UmbralImpulse,
-            var id when id == SMNActions.UmbralFlare.ActionId => PersephoneAbilities.UmbralFlare,
-            _ => PersephoneAbilities.AstralImpulse,
-        };
-
-        scheduler.PushGcd(ability, target.GameObjectId, priority: 2,
-            onDispatched: _ =>
+        // RSR GeneralGCD demi fallback order — scheduler picks first valid candidate.
+        // AoE vs ST branch uses Summoner.AoEMinTargets (same pattern as filler GCDs).
+        var chain = useAoe
+            ? new[]
             {
-                context.Debug.PlannedAction = demiGcd.Name;
-                context.Debug.DamageState = $"{demiGcd.Name} (Demi phase)";
+                PersephoneAbilities.BrandOfPurgatory,
+                PersephoneAbilities.UmbralFlare,
+                PersephoneAbilities.AstralFlare,
+            }
+            : new[]
+            {
+                PersephoneAbilities.FountainOfFire,
+                PersephoneAbilities.UmbralImpulse,
+                PersephoneAbilities.AstralImpulse,
+            };
 
-                if (context.TrainingService?.IsTrainingEnabled == true)
+        var priority = 2;
+        foreach (var ability in chain)
+        {
+            var demiGcd = ability.Action;
+            scheduler.PushGcd(ability, target.GameObjectId, priority: priority++,
+                onDispatched: _ =>
                 {
-                    var demiType = context.IsBahamutActive ? "Bahamut" : context.IsPhoenixActive ? "Phoenix" : "Solar Bahamut";
-                    TrainingHelper.Decision(context.TrainingService)
-                        .Action(demiGcd.ActionId, demiGcd.Name)
-                        .AsSummon(demiType).Target(target.Name?.TextValue)
-                        .Reason($"{demiGcd.Name} during {demiType} phase",
-                            $"During {demiType} phase, your normal GCDs are replaced with powerful summon-specific attacks.")
-                        .Factors($"{demiType} active", $"Timer: {context.DemiSummonTimer:F1}s")
-                        .Alternatives("None - always use demi GCDs")
-                        .Tip($"Maximize GCDs during {demiType} phase.")
-                        .Concept(SmnConcepts.DemiPhases)
-                        .Record();
-                    context.TrainingService.RecordConceptApplication(SmnConcepts.DemiPhases, true, "Demi-summon GCD used");
-                }
-            });
+                    context.Debug.PlannedAction = demiGcd.Name;
+                    context.Debug.DamageState = $"{demiGcd.Name} (Demi phase)";
+
+                    if (context.TrainingService?.IsTrainingEnabled == true)
+                    {
+                        var demiType = context.IsBahamutActive ? "Bahamut"
+                            : context.IsPhoenixActive ? "Phoenix"
+                            : "Solar Bahamut";
+                        TrainingHelper.Decision(context.TrainingService)
+                            .Action(demiGcd.ActionId, demiGcd.Name)
+                            .AsSummon(demiType).Target(target.Name?.TextValue)
+                            .Reason($"{demiGcd.Name} during {demiType} phase",
+                                $"During {demiType} phase, your normal GCDs are replaced with powerful summon-specific attacks.")
+                            .Factors($"{demiType} active", $"Timer: {context.DemiSummonTimer:F1}s")
+                            .Alternatives("None - always use demi GCDs")
+                            .Tip($"Maximize GCDs during {demiType} phase.")
+                            .Concept(SmnConcepts.DemiPhases)
+                            .Record();
+                        context.TrainingService.RecordConceptApplication(
+                            SmnConcepts.DemiPhases, true, "Demi-summon GCD used");
+                    }
+                });
+        }
     }
 
     private void TryPushAttunementGcd(IPersephoneContext context, RotationScheduler scheduler, IBattleChara target, bool useAoe, bool isMoving)

@@ -116,19 +116,21 @@ public static class PLDActions
     };
 
     /// <summary>
-    /// Blade of Honor - Upgraded Goring Blade (Lv.100)
-    /// Enhanced version with higher potency
+    /// Blade of Honor - burst finisher granted after Blade of Valor (Lv.100).
+    /// oGCD (1s recast). It replaces the Imperator slot when "Blade of Honor Ready" is
+    /// active; it cannot be hotbarred and has no reliable standalone status id, so readiness
+    /// is detected via GetAdjustedActionId(Imperator) == BladeOfHonor (RSR parity).
     /// </summary>
     public static readonly ActionDefinition BladeOfHonor = new()
     {
         ActionId = 36922,
         Name = "Blade of Honor",
         MinLevel = 100,
-        Category = ActionCategory.GCD,
+        Category = ActionCategory.oGCD,
         TargetType = ActionTargetType.SingleEnemy,
         EffectTypes = ActionEffectType.Damage,
         CastTime = 0f,
-        RecastTime = 2.5f,
+        RecastTime = 1f,
         Range = 3f,
         MpCost = 0,
         DamagePotency = 1000,
@@ -482,6 +484,30 @@ public static class PLDActions
     };
 
     /// <summary>
+    /// Imperator - Lv.96 upgrade of Requiescat. Defined so the rotation can probe
+    /// GetAdjustedActionId(Imperator) == BladeOfHonor to detect the "Blade of Honor Ready"
+    /// proc (the action replaces the Imperator slot). RSR parity: PaladinRotation.BladeOfHonorReady.
+    /// Dispatch still goes through Requiescat (the game auto-upgrades the cast at Lv.96+).
+    /// </summary>
+    public static readonly ActionDefinition Imperator = new()
+    {
+        ActionId = 36921,
+        Name = "Imperator",
+        MinLevel = 96,
+        Category = ActionCategory.oGCD,
+        TargetType = ActionTargetType.SingleEnemy,
+        EffectTypes = ActionEffectType.Damage,
+        CastTime = 0f,
+        RecastTime = 60f,
+        Range = 25f,
+        Radius = 5f,
+        MpCost = 0,
+        DamagePotency = 580,
+        AppliedStatusId = 1368, // Requiescat / Confiteor Ready window
+        AppliedStatusDuration = 30f
+    };
+
+    /// <summary>
     /// Iron Will - Tank stance (Lv.10)
     /// Toggle - increases enmity
     /// </summary>
@@ -732,6 +758,7 @@ public static class PLDActions
         public const uint SwordOath = 1902;
         public const uint DivineMight = 2673; // Granted by Royal Authority; makes next Holy Spirit instant
         public const uint GoringBladeDot = 725;
+        public const uint GoringBladeReady = 3847; // Granted by Fight or Flight (Enhanced Fight or Flight, Lv.54); enables Goring Blade
         public const uint CircleOfScornDot = 248;
         public const uint Sheltron = 1856;
         public const uint HolySheltron = 2674;

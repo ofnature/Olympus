@@ -13,6 +13,7 @@ using Olympus.Rotation.ThemisCore.Helpers;
 using Olympus.Rotation.ThemisCore.Modules;
 using Olympus.Services;
 using Olympus.Services.Action;
+using Olympus.Services.Combat;
 using Olympus.Services.Cooldown;
 using Olympus.Services.Debuff;
 using Olympus.Services.Prediction;
@@ -55,6 +56,7 @@ public sealed class Themis : BaseTankRotation<IThemisContext, IThemisModule>
     private readonly ThemisPartyHelper _partyHelper;
     private readonly ITrainingService? _trainingService;
     private readonly IBurstWindowService? _burstWindowService;
+    private readonly ITimeToKillService? _timeToKillService;
     private readonly List<IThemisModule> _modules;
 
     // Scheduler (per-rotation, per-frame priority queue)
@@ -83,7 +85,8 @@ public sealed class Themis : BaseTankRotation<IThemisContext, IThemisModule>
         IErrorMetricsService? errorMetrics = null,
         IBurstWindowService? burstWindowService = null,
         Olympus.Services.Consumables.ITinctureDispatcher? tinctureDispatcher = null,
-        Olympus.Services.Pull.IPullIntentService? pullIntentService = null)
+        Olympus.Services.Pull.IPullIntentService? pullIntentService = null,
+        ITimeToKillService? timeToKillService = null)
         : base(
             log,
             actionTracker,
@@ -108,6 +111,7 @@ public sealed class Themis : BaseTankRotation<IThemisContext, IThemisModule>
     {
         _trainingService = trainingService;
         _burstWindowService = burstWindowService;
+        _timeToKillService = timeToKillService;
 
         _scheduler = new RotationScheduler(
             actionService,
@@ -203,6 +207,7 @@ public sealed class Themis : BaseTankRotation<IThemisContext, IThemisModule>
             timelineService: TimelineService,
             partyCoordinationService: PartyCoordinationService,
             trainingService: _trainingService,
+            timeToKillService: _timeToKillService,
             log: Log);
     }
 

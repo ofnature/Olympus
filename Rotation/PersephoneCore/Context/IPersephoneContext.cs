@@ -157,6 +157,16 @@ public interface IPersephoneContext : ICasterDpsRotationContext
     bool HasGarudasFavor { get; }
 
     /// <summary>
+    /// Whether Ruby's Glimmer proc is active (enables Searing Flash).
+    /// </summary>
+    bool HasRubysGlimmer { get; }
+
+    /// <summary>
+    /// Whether Mountain Buster is ready via Astral Flow slot replacement (RSR MountainBusterPvEReady).
+    /// </summary>
+    bool MountainBusterReady { get; }
+
+    /// <summary>
     /// Whether Radiant Aegis shield is active.
     /// </summary>
     bool HasRadiantAegis { get; }

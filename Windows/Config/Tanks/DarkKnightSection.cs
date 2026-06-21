@@ -238,8 +238,12 @@ public sealed class DarkKnightSection
                 actionId: DRKActions.Shadowstride.ActionId);
 
             ConfigUIHelpers.Spacing();
-            ImGui.TextDisabled(Loc.T(LocalizedStrings.Tank.UsesSharedAoESettings, "Uses shared tank AoE settings."));
-            ImGui.TextDisabled(Loc.TFormat(LocalizedStrings.Tank.CurrentMinTargets, "Current min targets: {0}", config.Tank.AoEMinTargets));
+            TankAoEConfigHelper.DrawAoESettings(
+                config,
+                JobRegistry.DarkKnight,
+                () => config.Tank.DarkKnightAoEMinTargetsOverride,
+                v => config.Tank.DarkKnightAoEMinTargetsOverride = v,
+                save);
 
             ConfigUIHelpers.EndIndent();
         }

@@ -36,7 +36,8 @@ public readonly record struct PositionalAnticipationContext(
     bool HasFugetsu = false,
     float FugetsuRemainingSeconds = 0f,
     bool HasFuka = false,
-    float FukaRemainingSeconds = 0f);
+    float FukaRemainingSeconds = 0f,
+    int Kazematoi = 0);
 
 /// <summary>
 /// Job-specific logic for when a positional finisher is imminent.

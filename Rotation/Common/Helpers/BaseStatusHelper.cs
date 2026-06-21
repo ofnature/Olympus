@@ -111,6 +111,19 @@ public abstract class BaseStatusHelper
         return 0f;
     }
 
+    /// <summary>
+    /// Predicts whether a status will expire within the next <paramref name="gcdCount"/> GCDs,
+    /// using the live GCD duration so the window scales with skill speed / haste (RSR-style
+    /// DataCenter.GCDTime gating). A status that is absent (<paramref name="remainingTime"/> &lt;= 0)
+    /// is treated as "ended" so callers refresh/apply it.
+    /// </summary>
+    /// <param name="remainingTime">Status remaining seconds (0 when the status is absent).</param>
+    /// <param name="gcdCount">Number of GCDs to look ahead.</param>
+    /// <param name="gcdDuration">Live GCD duration in seconds (e.g. ActionService.GcdDuration).</param>
+    /// <param name="offsetSeconds">Optional extra lead time added on top of the GCD window.</param>
+    public static bool WillStatusEndInGcds(float remainingTime, int gcdCount, float gcdDuration, float offsetSeconds = 0f)
+        => remainingTime <= (gcdCount * gcdDuration) + offsetSeconds;
+
     #endregion
 
     #region Shared Role Action Status IDs

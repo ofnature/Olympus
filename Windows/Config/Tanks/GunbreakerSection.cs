@@ -205,8 +205,12 @@ public sealed class GunbreakerSection
             ImGui.BulletText(Loc.T(LocalizedStrings.Gunbreaker.BowShock, "Bow Shock"));
 
             ConfigUIHelpers.Spacing();
-            ImGui.TextDisabled(Loc.T(LocalizedStrings.Tank.UsesSharedAoESettings, "Uses shared tank AoE settings."));
-            ImGui.TextDisabled(Loc.TFormat(LocalizedStrings.Tank.CurrentMinTargets, "Current min targets: {0}", config.Tank.AoEMinTargets));
+            TankAoEConfigHelper.DrawAoESettings(
+                config,
+                JobRegistry.Gunbreaker,
+                () => config.Tank.GunbreakerAoEMinTargetsOverride,
+                v => config.Tank.GunbreakerAoEMinTargetsOverride = v,
+                save);
 
             ConfigUIHelpers.EndIndent();
         }

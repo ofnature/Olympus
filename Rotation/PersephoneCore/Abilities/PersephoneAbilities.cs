@@ -15,7 +15,12 @@ public static class PersephoneAbilities
     public static readonly AbilityBehavior Ruin = new() { Action = SMNActions.Ruin, Toggle = cfg => cfg.Summoner.EnableRuin };
     public static readonly AbilityBehavior Ruin2 = new() { Action = SMNActions.Ruin2, Toggle = cfg => cfg.Summoner.EnableRuin };
     public static readonly AbilityBehavior Ruin3 = new() { Action = SMNActions.Ruin3, Toggle = cfg => cfg.Summoner.EnableRuin };
-    public static readonly AbilityBehavior Ruin4 = new() { Action = SMNActions.Ruin4, Toggle = cfg => cfg.Summoner.EnableRuinIV };
+    public static readonly AbilityBehavior Ruin4 = new()
+    {
+        Action = SMNActions.Ruin4,
+        Toggle = cfg => cfg.Summoner.EnableRuinIV,
+        ProcBuff = SMNActions.StatusIds.FurtherRuin,
+    };
 
     // --- AoE filler ---
     public static readonly AbilityBehavior Outburst = new() { Action = SMNActions.Outburst, Toggle = cfg => cfg.Summoner.EnableAoERotation };
@@ -87,7 +92,12 @@ public static class PersephoneAbilities
 
     // --- Buffs / Enkindle / Astral Flow ---
     public static readonly AbilityBehavior SearingLight = new() { Action = SMNActions.SearingLight, Toggle = cfg => cfg.Summoner.EnableSearingLight };
-    public static readonly AbilityBehavior SearingFlash = new() { Action = SMNActions.SearingFlash, Toggle = cfg => cfg.Summoner.EnableSearingFlash };
+    public static readonly AbilityBehavior SearingFlash = new()
+    {
+        Action = SMNActions.SearingFlash,
+        Toggle = cfg => cfg.Summoner.EnableSearingFlash,
+        ProcBuff = SMNActions.StatusIds.RubysGlimmer,
+    };
     public static readonly AbilityBehavior EnkindleBahamut = new() { Action = SMNActions.EnkindleBahamut, Toggle = cfg => cfg.Summoner.EnableEnkindle };
     public static readonly AbilityBehavior EnkindlePhoenix = new() { Action = SMNActions.EnkindlePhoenix, Toggle = cfg => cfg.Summoner.EnableEnkindle };
     public static readonly AbilityBehavior EnkindleSolarBahamut = new() { Action = SMNActions.EnkindleSolarBahamut, Toggle = cfg => cfg.Summoner.EnableEnkindle };

@@ -76,6 +76,8 @@ public sealed class HermesContext : IHermesContext
     public int Kazematoi { get; }
 
     // Mudra state
+    public bool HasGameMudraStatus { get; }
+    public bool IsMudraSequenceActive { get; }
     public bool IsMudraActive { get; }
     public int MudraCount { get; }
     public NINActions.MudraType Mudra1 { get; }
@@ -101,6 +103,8 @@ public sealed class HermesContext : IHermesContext
     public float KunaisBaneRemaining { get; }
     public bool HasDokumoriOnTarget { get; }
     public float DokumoriRemaining { get; }
+    public bool InMug { get; }
+    public bool InTrickAttack { get; }
 
     // Helpers
     public HermesStatusHelper StatusHelper { get; }
@@ -200,8 +204,13 @@ public sealed class HermesContext : IHermesContext
         Ninki = ninki;
         Kazematoi = kazematoi;
 
+        InMug = HermesBurstWindowHelper.IsInMugWindow(actionService, (byte)player.Level);
+        InTrickAttack = HermesBurstWindowHelper.IsInTrickAttackWindow(actionService, (byte)player.Level);
+
         // Mudra state from helper
-        IsMudraActive = statusHelper.IsMudraActive(player) || mudraHelper.IsSequenceActive;
+        HasGameMudraStatus = statusHelper.IsMudraActive(player);
+        IsMudraSequenceActive = mudraHelper.IsSequenceActive;
+        IsMudraActive = HasGameMudraStatus || IsMudraSequenceActive;
         MudraCount = mudraHelper.MudraCount;
         Mudra1 = mudraHelper.Mudra1;
         Mudra2 = mudraHelper.Mudra2;
@@ -211,8 +220,10 @@ public sealed class HermesContext : IHermesContext
         HasKassatsu = statusHelper.HasKassatsu(player);
         HasTenChiJin = statusHelper.HasTenChiJin(player);
         TenChiJinStacks = statusHelper.GetTenChiJinStacks(player);
-        HasSuiton = statusHelper.HasSuiton(player);
-        SuitonRemaining = statusHelper.GetSuitonRemaining(player);
+        HasSuiton = statusHelper.HasSuiton(player) || mudraHelper.HasSuitonBurstLatch;
+        SuitonRemaining = statusHelper.HasSuiton(player)
+            ? statusHelper.GetSuitonRemaining(player)
+            : mudraHelper.HasSuitonBurstLatch ? MudraHelper.SuitonBurstLatchSeconds : 0f;
         HasBunshin = statusHelper.HasBunshin(player);
         BunshinStacks = statusHelper.GetBunshinStacks(player);
         HasPhantomKamaitachiReady = statusHelper.HasPhantomKamaitachiReady(player);
@@ -282,9 +293,15 @@ public sealed class HermesContext : IHermesContext
 
         // Mudra
         Debug.IsMudraActive = IsMudraActive;
+        Debug.HasGameMudraStatus = HasGameMudraStatus;
+        Debug.IsMudraSequenceActive = IsMudraSequenceActive;
         Debug.MudraCount = MudraCount;
         Debug.MudraSequence = HermesDebugState.FormatMudraSequence(Mudra1, Mudra2, Mudra3);
         Debug.PendingNinjutsu = MudraHelper.TargetNinjutsu;
+        Debug.NinjutsuSlotAdjustedId = ActionService.GetAdjustedActionId(NINActions.Ninjutsu.ActionId);
+        Debug.NinjutsuSlotFromActionManager = HermesNinjutsuSlotProbe.GetSlotFromActionManager();
+        Debug.NinjutsuSlotProbe = HermesNinjutsuSlotProbe.DescribeSlot(Debug.NinjutsuSlotAdjustedId);
+        HermesNinjutsuMudraExecutor.PopulateTenChargeDebug(this, Debug);
         Debug.HasKassatsu = HasKassatsu;
         Debug.HasTenChiJin = HasTenChiJin;
         Debug.TenChiJinStacks = TenChiJinStacks;
@@ -305,6 +322,12 @@ public sealed class HermesContext : IHermesContext
         Debug.KunaisBaneRemaining = KunaisBaneRemaining;
         Debug.HasDokumoriOnTarget = HasDokumoriOnTarget;
         Debug.DokumoriRemaining = DokumoriRemaining;
+        Debug.InMug = InMug;
+        Debug.InTrickAttack = InTrickAttack;
+
+        Debug.IsInBurstPhase = HermesTcjBurstGates.IsInBurstPhase(this);
+        Debug.CanPushTenChiJinOgcd = HermesNinjutsuDiagnostics.TryGetTcjOgcdBlockReason(this, out var tcjBlock);
+        Debug.TcjOgcdBlockReason = tcjBlock;
 
         // Combo
         Debug.ComboStep = ComboStep;

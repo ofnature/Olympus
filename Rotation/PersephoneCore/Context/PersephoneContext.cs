@@ -109,6 +109,8 @@ public sealed class PersephoneContext : IPersephoneContext
     public bool HasIfritsFavor { get; }
     public bool HasTitansFavor { get; }
     public bool HasGarudasFavor { get; }
+    public bool HasRubysGlimmer { get; }
+    public bool MountainBusterReady { get; }
     public bool HasRadiantAegis { get; }
 
     // Cooldown state
@@ -260,6 +262,8 @@ public sealed class PersephoneContext : IPersephoneContext
         AetherflowStacks = aetherflowStacks;
         HasAetherflow = aetherflowStacks > 0;
 
+        var level = player.Level;
+
         // Buff state
         HasFurtherRuin = statusHelper.HasFurtherRuin(player);
         FurtherRuinRemaining = statusHelper.GetFurtherRuinRemaining(player);
@@ -268,7 +272,10 @@ public sealed class PersephoneContext : IPersephoneContext
         HasIfritsFavor = statusHelper.HasIfritsFavor(player);
         HasTitansFavor = statusHelper.HasTitansFavor(player);
         HasGarudasFavor = statusHelper.HasGarudasFavor(player);
+        HasRubysGlimmer = statusHelper.HasRubysGlimmer(player);
         HasRadiantAegis = statusHelper.HasRadiantAegis(player);
+        MountainBusterReady = level >= SMNActions.MountainBuster.MinLevel
+            && SMNActions.IsMountainBusterReady(actionService);
 
         // Calculate party health metrics
         PartyHealthMetrics = CalculatePartyHealth(player);
@@ -280,29 +287,30 @@ public sealed class PersephoneContext : IPersephoneContext
             player);
 
         // Cooldown tracking
-        var level = player.Level;
         SearingLightReady = level >= SMNActions.SearingLight.MinLevel &&
                            actionService.IsActionReady(SMNActions.SearingLight.ActionId);
         EnergyDrainReady = level >= SMNActions.EnergyDrain.MinLevel &&
                           actionService.IsActionReady(SMNActions.EnergyDrain.ActionId);
 
-        // Enkindle readiness depends on which demi-summon is active
+        // Enkindle readiness — CanExecuteAction on the latched demi enkindle (RSR CanUse parity).
         EnkindleReady = false;
-        if (IsBahamutActive && level >= SMNActions.EnkindleBahamut.MinLevel)
-            EnkindleReady = actionService.IsActionReady(SMNActions.EnkindleBahamut.ActionId);
-        else if (IsPhoenixActive && level >= SMNActions.EnkindlePhoenix.MinLevel)
-            EnkindleReady = actionService.IsActionReady(SMNActions.EnkindlePhoenix.ActionId);
-        else if (IsSolarBahamutActive && level >= SMNActions.EnkindleSolarBahamut.MinLevel)
-            EnkindleReady = actionService.IsActionReady(SMNActions.EnkindleSolarBahamut.ActionId);
+        if (IsDemiSummonActive)
+        {
+            var enkindleAction = SMNActions.GetEnkindleAction(
+                IsBahamutActive, IsPhoenixActive, IsSolarBahamutActive);
+            if (enkindleAction != null && level >= enkindleAction.MinLevel)
+                EnkindleReady = actionService.CanExecuteAction(enkindleAction);
+        }
 
-        // Astral Flow readiness depends on which demi-summon is active
+        // Astral Flow readiness — CanExecuteAction on the latched demi finisher (RSR CanUse parity).
         AstralFlowReady = false;
-        if (IsBahamutActive && level >= SMNActions.Deathflare.MinLevel)
-            AstralFlowReady = actionService.IsActionReady(SMNActions.Deathflare.ActionId);
-        else if (IsPhoenixActive && level >= SMNActions.Rekindle.MinLevel)
-            AstralFlowReady = actionService.IsActionReady(SMNActions.Rekindle.ActionId);
-        else if (IsSolarBahamutActive && level >= SMNActions.Sunflare.MinLevel)
-            AstralFlowReady = actionService.IsActionReady(SMNActions.Sunflare.ActionId);
+        if (IsDemiSummonActive)
+        {
+            var astralFlowAction = SMNActions.GetAstralFlowAction(
+                IsBahamutActive, IsPhoenixActive, IsSolarBahamutActive);
+            if (astralFlowAction != null && level >= astralFlowAction.MinLevel)
+                AstralFlowReady = actionService.CanExecuteAction(astralFlowAction);
+        }
 
         RadiantAegisCharges = level >= SMNActions.RadiantAegis.MinLevel
             ? (int)actionService.GetCurrentCharges(SMNActions.RadiantAegis.ActionId)

@@ -41,7 +41,8 @@ public static class HermesTestContext
         bool isAtFlank = false,
         bool targetHasPositionalImmunity = false,
         // Mudra state
-        bool isMudraActive = false,
+        bool hasGameMudraStatus = false,
+        bool isMudraSequenceActive = false,
         int mudraCount = 0,
         NINActions.MudraType mudra1 = NINActions.MudraType.None,
         NINActions.MudraType mudra2 = NINActions.MudraType.None,
@@ -64,6 +65,8 @@ public static class HermesTestContext
         float kunaisBaneRemaining = 0f,
         bool hasDokumoriOnTarget = false,
         float dokumoriRemaining = 0f,
+        bool inMug = false,
+        bool inTrickAttack = false,
         HermesDebugState? debugState = null)
     {
         config ??= CreateDefaultNinjaConfiguration();
@@ -107,7 +110,9 @@ public static class HermesTestContext
         mock.Setup(x => x.Kazematoi).Returns(kazematoi);
 
         // Mudra state
-        mock.Setup(x => x.IsMudraActive).Returns(isMudraActive || helper.IsSequenceActive);
+        mock.Setup(x => x.HasGameMudraStatus).Returns(hasGameMudraStatus);
+        mock.Setup(x => x.IsMudraSequenceActive).Returns(isMudraSequenceActive || helper.IsSequenceActive);
+        mock.Setup(x => x.IsMudraActive).Returns(hasGameMudraStatus || isMudraSequenceActive || helper.IsSequenceActive);
         mock.Setup(x => x.MudraCount).Returns(mudraCount > 0 ? mudraCount : helper.MudraCount);
         mock.Setup(x => x.Mudra1).Returns(mudra1 != NINActions.MudraType.None ? mudra1 : helper.Mudra1);
         mock.Setup(x => x.Mudra2).Returns(mudra2 != NINActions.MudraType.None ? mudra2 : helper.Mudra2);
@@ -133,6 +138,8 @@ public static class HermesTestContext
         mock.Setup(x => x.KunaisBaneRemaining).Returns(kunaisBaneRemaining);
         mock.Setup(x => x.HasDokumoriOnTarget).Returns(hasDokumoriOnTarget);
         mock.Setup(x => x.DokumoriRemaining).Returns(dokumoriRemaining);
+        mock.Setup(x => x.InMug).Returns(inMug);
+        mock.Setup(x => x.InTrickAttack).Returns(inTrickAttack);
 
         // Combo state
         mock.Setup(x => x.ComboStep).Returns(comboStep);

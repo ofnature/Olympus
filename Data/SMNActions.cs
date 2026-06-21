@@ -1,4 +1,5 @@
 using Olympus.Models.Action;
+using Olympus.Services.Action;
 
 namespace Olympus.Data;
 
@@ -848,6 +849,24 @@ public static class SMNActions
     #region Astral Flow oGCDs
 
     /// <summary>
+    /// Astral Flow - Transforms to Deathflare/Rekindle/Sunflare or primal favor actions (Lv.60).
+    /// Probed via <see cref="IActionService.GetAdjustedActionId"/> for demi phase and Mountain Buster
+    /// detection (RSR AstralFlowPvE parity).
+    /// </summary>
+    public static readonly ActionDefinition AstralFlow = new()
+    {
+        ActionId = 25822,
+        Name = "Astral Flow",
+        MinLevel = 60,
+        Category = ActionCategory.GCD,
+        TargetType = ActionTargetType.Self,
+        EffectTypes = ActionEffectType.Buff,
+        CastTime = 0f,
+        RecastTime = 2.5f,
+        MpCost = 0
+    };
+
+    /// <summary>
     /// Deathflare - Demi-Bahamut finisher (Lv.60)
     /// </summary>
     public static readonly ActionDefinition Deathflare = new()
@@ -956,6 +975,7 @@ public static class SMNActions
         public const uint Surecast = 160;
         public const uint FurtherRuin = 2701;       // Enables Ruin IV
         public const uint SearingLight = 2703;      // Party damage buff
+        public const uint RubysGlimmer = 3873;      // Enables Searing Flash (RSR StatusNeed parity)
         public const uint RadiantAegis = 2702;      // Shield
 
         // Primal attunements (tracked via gauge, but useful for reference)
@@ -1051,16 +1071,64 @@ public static class SMNActions
     /// <summary>
     /// Gets the demi-summon GCD based on active summon.
     /// </summary>
-    /// <param name="isBahamut">True for Bahamut, false for Phoenix</param>
+    /// <param name="isBahamut">True for Bahamut</param>
+    /// <param name="isPhoenix">True for Phoenix</param>
     /// <param name="isSolarBahamut">True for Solar Bahamut</param>
     /// <param name="useAoe">Whether to use AoE variant</param>
-    public static ActionDefinition GetDemiSummonGcd(bool isBahamut, bool isSolarBahamut, bool useAoe)
+    public static ActionDefinition GetDemiSummonGcd(bool isBahamut, bool isPhoenix, bool isSolarBahamut, bool useAoe)
     {
         if (isSolarBahamut)
             return useAoe ? UmbralFlare : UmbralImpulse;
         if (isBahamut)
             return useAoe ? AstralFlare : AstralImpulse;
-        return useAoe ? BrandOfPurgatory : FountainOfFire; // Phoenix
+        if (isPhoenix)
+            return useAoe ? BrandOfPurgatory : FountainOfFire;
+        return useAoe ? BrandOfPurgatory : FountainOfFire;
+    }
+
+    /// <summary>
+    /// Returns the action ID currently occupying the Astral Flow hotbar slot.
+    /// </summary>
+    public static uint GetAdjustedAstralFlowId(IActionService actionService)
+        => actionService.GetAdjustedActionId(AstralFlow.ActionId);
+
+    /// <summary>
+    /// Whether Demi-Bahamut is active, detected via Astral Flow → Deathflare replacement (RSR InBahamut).
+    /// </summary>
+    public static bool IsBahamutPhase(IActionService actionService)
+        => GetAdjustedAstralFlowId(actionService) == Deathflare.ActionId;
+
+    /// <summary>
+    /// Whether Demi-Phoenix is active, detected via Astral Flow → Rekindle replacement (RSR InPhoenix).
+    /// </summary>
+    public static bool IsPhoenixPhase(IActionService actionService)
+        => GetAdjustedAstralFlowId(actionService) == Rekindle.ActionId;
+
+    /// <summary>
+    /// Whether Solar Bahamut is active, detected via Astral Flow → Sunflare replacement (RSR InSolarBahamut).
+    /// </summary>
+    public static bool IsSolarBahamutPhase(IActionService actionService)
+        => GetAdjustedAstralFlowId(actionService) == Sunflare.ActionId;
+
+    /// <summary>
+    /// Whether Mountain Buster is the current Astral Flow replacement (RSR MountainBusterPvEReady).
+    /// </summary>
+    public static bool IsMountainBusterReady(IActionService actionService)
+        => GetAdjustedAstralFlowId(actionService) == MountainBuster.ActionId;
+
+    /// <summary>
+    /// Resolves demi-summon phase flags from the Astral Flow button replacement.
+    /// </summary>
+    public static void ResolveDemiPhase(
+        IActionService actionService,
+        out bool isBahamut,
+        out bool isPhoenix,
+        out bool isSolarBahamut)
+    {
+        var adjusted = GetAdjustedAstralFlowId(actionService);
+        isBahamut = adjusted == Deathflare.ActionId;
+        isPhoenix = adjusted == Rekindle.ActionId;
+        isSolarBahamut = adjusted == Sunflare.ActionId;
     }
 
     /// <summary>

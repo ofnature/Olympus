@@ -172,9 +172,11 @@ public static class MockBuilders
         mock.Setup(x => x.CanExecuteOgcd).Returns(canExecuteOgcd);
         mock.Setup(x => x.CurrentGcdState).Returns(canExecuteGcd ? GcdState.Ready : GcdState.Rolling);
         mock.Setup(x => x.GcdRemaining).Returns(canExecuteGcd ? 0f : 1.5f);
+        mock.Setup(x => x.GcdDuration).Returns(2.5f);
         mock.Setup(x => x.AnimationLockRemaining).Returns(0f);
         mock.Setup(x => x.IsCasting).Returns(false);
         mock.Setup(x => x.GetCooldownRemaining(It.IsAny<uint>())).Returns(0f);
+        mock.Setup(x => x.GetRecastTimeElapsed(It.IsAny<uint>())).Returns(0f);
         mock.Setup(x => x.GetCurrentCharges(It.IsAny<uint>())).Returns(0u);
         mock.Setup(x => x.GetMaxCharges(It.IsAny<uint>(), It.IsAny<uint>())).Returns((ushort)2);
         mock.Setup(x => x.GetAvailableWeaveSlots()).Returns(canExecuteOgcd ? 2 : 0);
@@ -185,7 +187,16 @@ public static class MockBuilders
                 It.IsAny<ActionDefinition>(), It.IsAny<uint>(), It.IsAny<ulong>()))
             .Returns(true);
         mock.Setup(x => x.GetAdjustedActionId(It.IsAny<uint>())).Returns<uint>(id => id);
+        mock.Setup(x => x.CanExecuteAction(It.IsAny<ActionDefinition>())).Returns(true);
+        mock.Setup(x => x.CanExecuteActionId(It.IsAny<uint>())).Returns(true);
         mock.Setup(x => x.PlayerHasStatus(It.IsAny<uint>())).Returns(false);
+        mock.Setup(x => x.LastOgcdId).Returns(0u);
+        mock.Setup(x => x.WasLastGcd(It.IsAny<uint>())).Returns(false);
+        mock.Setup(x => x.WasLastOgcd(It.IsAny<uint>())).Returns(false);
+        mock.Setup(x => x.WasLastAction(It.IsAny<uint>())).Returns(false);
+        mock.Setup(x => x.RecordGcdExecuted(It.IsAny<uint>()));
+        mock.Setup(x => x.RecordActionExecuted(It.IsAny<uint>()));
+        mock.Setup(x => x.NotifyActionExecuted(It.IsAny<ActionDefinition>(), It.IsAny<uint>()));
         mock.Setup(x => x.ExecuteItem(It.IsAny<uint>(), It.IsAny<bool>(), It.IsAny<ulong>())).Returns(false);
 
         return mock;

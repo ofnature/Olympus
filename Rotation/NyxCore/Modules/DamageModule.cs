@@ -103,11 +103,11 @@ public sealed class DamageModule : INyxModule
     {
         if (!context.HasDarkArts) return;
         var level = context.Player.Level;
-        var action = context.Configuration.Tank.EnableAoEDamage && enemyCount >= context.Configuration.Tank.AoEMinTargets
+        var action = context.Configuration.Tank.EnableAoEDamage && enemyCount >= context.Configuration.Tank.GetEffectiveAoEMinTargets(JobRegistry.DarkKnight)
             ? DRKActions.GetFloodAction(level) : DRKActions.GetEdgeAction(level);
         if (!context.ActionService.IsActionReady(action.ActionId)) return;
 
-        var isAoe = context.Configuration.Tank.EnableAoEDamage && enemyCount >= context.Configuration.Tank.AoEMinTargets;
+        var isAoe = context.Configuration.Tank.EnableAoEDamage && enemyCount >= context.Configuration.Tank.GetEffectiveAoEMinTargets(JobRegistry.DarkKnight);
         var behavior = isAoe ? NyxAbilities.FloodOfShadow : NyxAbilities.EdgeOfShadow;
         scheduler.PushOgcd(behavior, targetId, priority: 1,
             onDispatched: _ =>
@@ -181,7 +181,7 @@ public sealed class DamageModule : INyxModule
         }
 
         var level = context.Player.Level;
-        var isAoe = context.Configuration.Tank.EnableAoEDamage && enemyCount >= context.Configuration.Tank.AoEMinTargets;
+        var isAoe = context.Configuration.Tank.EnableAoEDamage && enemyCount >= context.Configuration.Tank.GetEffectiveAoEMinTargets(JobRegistry.DarkKnight);
         var action = isAoe ? DRKActions.GetFloodAction(level) : DRKActions.GetEdgeAction(level);
         var behavior = isAoe ? NyxAbilities.FloodOfShadow : NyxAbilities.EdgeOfShadow;
 
@@ -271,7 +271,7 @@ public sealed class DamageModule : INyxModule
 
         // AoE: use Impalement (step 1 replacement for AoE)
         bool useAoE = context.Configuration.Tank.EnableAoEDamage &&
-                      enemyCount >= context.Configuration.Tank.AoEMinTargets &&
+                      enemyCount >= context.Configuration.Tank.GetEffectiveAoEMinTargets(JobRegistry.DarkKnight) &&
                       level >= DRKActions.Impalement.MinLevel;
 
         if (useAoE && context.ActionService.IsActionReady(DRKActions.Impalement.ActionId))
@@ -332,7 +332,7 @@ public sealed class DamageModule : INyxModule
 
         // AoE: Quietus
         bool useAoE = context.Configuration.Tank.EnableAoEDamage &&
-                      enemyCount >= context.Configuration.Tank.AoEMinTargets &&
+                      enemyCount >= context.Configuration.Tank.GetEffectiveAoEMinTargets(JobRegistry.DarkKnight) &&
                       level >= DRKActions.Quietus.MinLevel;
 
         if (useAoE && context.ActionService.IsActionReady(DRKActions.Quietus.ActionId))
@@ -364,7 +364,7 @@ public sealed class DamageModule : INyxModule
     {
         var level = context.Player.Level;
         bool useAoE = context.Configuration.Tank.EnableAoEDamage &&
-                      enemyCount >= context.Configuration.Tank.AoEMinTargets &&
+                      enemyCount >= context.Configuration.Tank.GetEffectiveAoEMinTargets(JobRegistry.DarkKnight) &&
                       level >= DRKActions.Unleash.MinLevel;
 
         if (useAoE)

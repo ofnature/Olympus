@@ -2,6 +2,7 @@ using System.Linq;
 using System.Reflection;
 using Olympus.Rotation.Common.Scheduling;
 using Olympus.Rotation.HephaestusCore.Abilities;
+using Olympus.Rotation.ThemisCore.Abilities;
 using Xunit;
 
 namespace Olympus.Tests.Rotation.Common.Scheduling;
@@ -40,5 +41,13 @@ public class AbilityBehaviorMetaTests
             var usesBoth = value.ComboStep is not null && value.AdjustedActionProbe is not null;
             Assert.False(usesBoth, $"{name} uses both ComboStep and AdjustedActionProbe - pick one");
         }
+    }
+
+    [Fact]
+    public void PldIntervene_ReservesOneChargeForBurst()
+    {
+        var intervene = ThemisAbilities.Intervene;
+        Assert.NotNull(intervene.ChargeHold);
+        Assert.Equal(1, intervene.ChargeHold!.HoldCharges);
     }
 }

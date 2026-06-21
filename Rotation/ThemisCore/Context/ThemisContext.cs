@@ -6,6 +6,7 @@ using Olympus.Data;
 using Olympus.Services;
 using Olympus.Services.Action;
 using Olympus.Services.Cache;
+using Olympus.Services.Combat;
 using Olympus.Services.Cooldown;
 using Olympus.Services.Debuff;
 using Olympus.Services.Prediction;
@@ -74,6 +75,7 @@ public sealed class ThemisContext : IThemisContext
 
     public int OathGauge { get; }
     public bool HasFightOrFlight { get; }
+    public bool HasGoringBladeReady { get; }
     public float FightOrFlightRemaining { get; }
     public bool HasRequiescat { get; }
     public int RequiescatStacks { get; }
@@ -91,6 +93,7 @@ public sealed class ThemisContext : IThemisContext
     public ThemisPartyHelper PartyHelper { get; }
     public ThemisDebugState Debug { get; }
     public ITrainingService? TrainingService { get; }
+    public ITimeToKillService? TimeToKillService { get; }
 
     public IBattleChara? CurrentTarget { get; private set; }
 
@@ -128,6 +131,7 @@ public sealed class ThemisContext : IThemisContext
         ITimelineService? timelineService = null,
         IPartyCoordinationService? partyCoordinationService = null,
         ITrainingService? trainingService = null,
+        ITimeToKillService? timeToKillService = null,
         IPluginLog? log = null)
     {
         Player = player;
@@ -156,6 +160,7 @@ public sealed class ThemisContext : IThemisContext
         TankCooldownService = tankCooldownService;
         PartyCoordinationService = partyCoordinationService;
         TrainingService = trainingService;
+        TimeToKillService = timeToKillService;
         StatusHelper = statusHelper;
         PartyHelper = partyHelper;
         Debug = debugState;
@@ -181,6 +186,7 @@ public sealed class ThemisContext : IThemisContext
         // Status checks
         HasTankStance = statusHelper.HasIronWill(player);
         HasFightOrFlight = statusHelper.HasFightOrFlight(player);
+        HasGoringBladeReady = statusHelper.HasGoringBladeReady(player);
         FightOrFlightRemaining = statusHelper.GetFightOrFlightRemaining(player);
         HasRequiescat = statusHelper.HasRequiescat(player);
         RequiescatStacks = statusHelper.GetRequiescatStacks(player);
@@ -193,30 +199,33 @@ public sealed class ThemisContext : IThemisContext
         // DoT tracking
         GoringBladeRemaining = statusHelper.GetGoringBladeRemaining(CurrentTarget, player.EntityId);
 
-        // Blade of Honor is only usable when the buff is active after completing Blade of Valor (Lv.100)
         var level = player.Level;
+        // Blade of Honor Ready (after Blade of Valor) replaces the Imperator slot. RSR parity
+        // (PaladinRotation.BladeOfHonorReady). The old IsActionReady check used cooldown readiness,
+        // which is always true for this no-recast proc oGCD and caused per-frame requeue spam.
         HasBladeOfHonor = level >= PLDActions.BladeOfHonor.MinLevel &&
-                         actionService.IsActionReady(PLDActions.BladeOfHonor.ActionId);
+                         actionService.GetAdjustedActionId(PLDActions.Imperator.ActionId) == PLDActions.BladeOfHonor.ActionId;
 
         // Determine Atonement chain position based on Sword Oath stacks
         // Sword Oath starts at 3, each Atonement reduces it
         AtonementStep = HasSwordOath ? (4 - SwordOathStacks) : 0;
 
-        // Determine Confiteor chain position by checking which action is ready
-        // The game enables each action in sequence: Confiteor → Faith → Truth → Valor
-        if (level >= PLDActions.BladeOfValor.MinLevel &&
-            actionService.IsActionReady(PLDActions.BladeOfValor.ActionId))
-            ConfiteorStep = 3;  // Blade of Valor ready
-        else if (level >= PLDActions.BladeOfTruth.MinLevel &&
-                 actionService.IsActionReady(PLDActions.BladeOfTruth.ActionId))
-            ConfiteorStep = 2;  // Blade of Truth ready
-        else if (level >= PLDActions.BladeOfFaith.MinLevel &&
-                 actionService.IsActionReady(PLDActions.BladeOfFaith.ActionId))
-            ConfiteorStep = 1;  // Blade of Faith ready
+        // Confiteor chain advances by button replacement, detected via GetAdjustedActionId(Confiteor)
+        // — RSR parity (PaladinRotation.BladeOf{Faith,Truth,Valor}Ready). The old IsActionReady checks
+        // were ~always true (combo GCDs have no independent recast), so the step was effectively pinned.
+        // Step values are 1-based to match the module switch (1=Confiteor, 2=Faith, 3=Truth, 4=Valor;
+        // 0=not in chain). The previous 0-based values were off-by-one vs that switch.
+        var confiteorAdjusted = actionService.GetAdjustedActionId(PLDActions.Confiteor.ActionId);
+        if (level >= PLDActions.BladeOfValor.MinLevel && confiteorAdjusted == PLDActions.BladeOfValor.ActionId)
+            ConfiteorStep = 4;  // Blade of Valor ready
+        else if (level >= PLDActions.BladeOfTruth.MinLevel && confiteorAdjusted == PLDActions.BladeOfTruth.ActionId)
+            ConfiteorStep = 3;  // Blade of Truth ready
+        else if (level >= PLDActions.BladeOfFaith.MinLevel && confiteorAdjusted == PLDActions.BladeOfFaith.ActionId)
+            ConfiteorStep = 2;  // Blade of Faith ready
         else if (HasRequiescat && level >= PLDActions.Confiteor.MinLevel)
-            ConfiteorStep = 0;  // Confiteor ready (at start of chain)
+            ConfiteorStep = 1;  // Confiteor ready (chain entry)
         else
-            ConfiteorStep = -1; // Not in chain
+            ConfiteorStep = 0;  // Not in chain
 
         // Update debug state
         UpdateDebugState();

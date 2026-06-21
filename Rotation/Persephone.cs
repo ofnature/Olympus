@@ -181,9 +181,10 @@ public sealed class Persephone : BaseCasterDpsRotation<IPersephoneContext, IPers
         // Track demi-summon phase changes
         if (_summonTimer > 0 && _lastDemiSummonTimer <= 0)
         {
-            // New demi-summon phase started - reset tracking
+            // New demi-summon phase started - reset tracking and latch phase from Astral Flow slot
             _hasUsedEnkindleThisPhase = false;
             _hasUsedAstralFlowThisPhase = false;
+            DetectDemiPhaseFromAstralFlow();
         }
         else if (_summonTimer <= 0 && _lastDemiSummonTimer > 0)
         {
@@ -192,51 +193,27 @@ public sealed class Persephone : BaseCasterDpsRotation<IPersephoneContext, IPers
             _isPhoenixActive = false;
             _isSolarBahamutActive = false;
         }
+        else if (_summonTimer > 0
+                 && !_isBahamutActive && !_isPhoenixActive && !_isSolarBahamutActive)
+        {
+            // Latch missed at phase start (e.g. frame timing) — re-probe Astral Flow replacement
+            DetectDemiPhaseFromAstralFlow();
+        }
 
         _lastDemiSummonTimer = _summonTimer;
+    }
 
-        // Determine which demi-summon is active
-        // This is determined by checking action readiness and recent action usage
-        // The game changes the demi-summon GCDs based on which summon is active
-        if (_summonTimer > 0)
-        {
-            // Check which Enkindle/Astral Flow is available to determine summon type
-            // Bahamut: Enkindle Bahamut + Deathflare
-            // Phoenix: Enkindle Phoenix + Rekindle
-            // Solar Bahamut: Enkindle Solar Bahamut + Sunflare
-
-            // Use action readiness to determine which summon is active
-            var bahamutEnkindleReady = ActionService.IsActionReady(SMNActions.EnkindleBahamut.ActionId);
-            var phoenixEnkindleReady = ActionService.IsActionReady(SMNActions.EnkindlePhoenix.ActionId);
-            var solarBahamutEnkindleReady = ActionService.IsActionReady(SMNActions.EnkindleSolarBahamut.ActionId);
-
-            // Only one should be ready at a time during the appropriate phase
-            if (solarBahamutEnkindleReady || ActionService.IsActionReady(SMNActions.Sunflare.ActionId))
-            {
-                _isSolarBahamutActive = true;
-                _isBahamutActive = false;
-                _isPhoenixActive = false;
-            }
-            else if (phoenixEnkindleReady || ActionService.IsActionReady(SMNActions.Rekindle.ActionId))
-            {
-                _isPhoenixActive = true;
-                _isBahamutActive = false;
-                _isSolarBahamutActive = false;
-            }
-            else if (bahamutEnkindleReady || ActionService.IsActionReady(SMNActions.Deathflare.ActionId))
-            {
-                _isBahamutActive = true;
-                _isPhoenixActive = false;
-                _isSolarBahamutActive = false;
-            }
-            else
-            {
-                // Fallback: if summon timer > 0 but no enkindle ready,
-                // assume it's whatever was active before or Bahamut by default
-                if (!_isBahamutActive && !_isPhoenixActive && !_isSolarBahamutActive)
-                    _isBahamutActive = true;
-            }
-        }
+    /// <summary>
+    /// Detects active demi-summon type from Astral Flow button replacement (RSR InBahamut/InPhoenix/InSolarBahamut).
+    /// Latched for the duration of the summon timer so phase stays correct after Deathflare/Rekindle/Sunflare are spent.
+    /// </summary>
+    private void DetectDemiPhaseFromAstralFlow()
+    {
+        SMNActions.ResolveDemiPhase(
+            ActionService,
+            out _isBahamutActive,
+            out _isPhoenixActive,
+            out _isSolarBahamutActive);
     }
 
     /// <summary>

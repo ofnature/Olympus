@@ -1,8 +1,10 @@
 using Olympus.Data;
 using Olympus.Rotation.Common.Helpers;
+using Olympus.Rotation.Common.RoleActionHelpers;
 using Olympus.Rotation.Common.Scheduling;
 using Olympus.Rotation.HermesCore.Abilities;
 using Olympus.Rotation.HermesCore.Context;
+using Olympus.Rotation.HermesCore.Helpers;
 using Olympus.Services;
 using Olympus.Services.Training;
 using Olympus.Services.Party;
@@ -35,24 +37,53 @@ public sealed class BuffModule : IHermesModule
 
     public void CollectCandidates(IHermesContext context, RotationScheduler scheduler, bool isMoving)
     {
+        context.Debug.BuffState = "";
+
         if (!context.InCombat)
         {
             context.Debug.BuffState = "Not in combat";
             return;
         }
-        if (context.IsMudraActive)
+        if (context.HasGameMudraStatus && context.MudraHelper.IsSequenceActive
+            && !HermesNinjutsuMudraExecutor.IsRabbitFailureSlot(context))
         {
-            context.Debug.BuffState = "Mudra active";
+            context.Debug.BuffState = "Stalled (mudra status)";
             return;
         }
 
         TryPushTenriJindo(context, scheduler);
+        TryPushTrueNorth(context, scheduler);
         TryPushKunaisBane(context, scheduler);
         TryPushMug(context, scheduler);
         TryPushKassatsu(context, scheduler);
         TryPushTenChiJin(context, scheduler);
         TryPushBunshin(context, scheduler);
         TryPushMeisui(context, scheduler);
+    }
+
+    private void TryPushTrueNorth(IHermesContext context, RotationScheduler scheduler)
+    {
+        if (!context.Configuration.MeleeShared.EnableTrueNorth) return;
+        if (context.HasTrueNorth || context.TargetHasPositionalImmunity) return;
+        if (!HermesPositionalHelper.NeedsTrueNorthForUpcomingFinisher(context)) return;
+        if (!RoleActionGates.TrueNorthReady(context)) return;
+
+        scheduler.PushOgcd(HermesAbilities.TrueNorth, context.Player.GameObjectId, priority: 5,
+            onDispatched: _ =>
+            {
+                context.Debug.PlannedAction = RoleActions.TrueNorth.Name;
+                context.Debug.BuffState = "True North (finisher)";
+                TrainingHelper.Decision(context.TrainingService)
+                    .Action(RoleActions.TrueNorth.ActionId, RoleActions.TrueNorth.Name)
+                    .AsMeleeDamage().Target("Self")
+                    .Reason("True North before Aeolian Edge / Armor Crush finisher",
+                        "True North ignores positional requirements for the next weaponskill.")
+                    .Factors("Finisher imminent", "Not in correct positional")
+                    .Alternatives("Reposition with vNav (preferred)", "Miss bonus damage")
+                    .Tip("Save charges for when movement is impossible.")
+                    .Concept(NinConcepts.KazematoiManagement)
+                    .Record();
+            });
     }
 
     private void TryPushKunaisBane(IHermesContext context, RotationScheduler scheduler)
@@ -71,7 +102,7 @@ public sealed class BuffModule : IHermesModule
             context.Debug.BuffState = $"Holding {action.Name} (phase soon)";
             return;
         }
-        if (ShouldHoldForBurst(context.Configuration.Ninja.KunaisBaneHoldTime))
+        if (HermesBurstPrepHelper.WouldHoldKunaisBane(context, _burstWindowService))
         {
             context.Debug.BuffState = $"Holding {action.Name} for burst";
             return;
@@ -87,15 +118,21 @@ public sealed class BuffModule : IHermesModule
             partyCoord.AnnounceRaidBuffIntent(NINActions.KunaisBane.ActionId);
         }
 
-        var target = context.TargetingService.FindEnemy(
-            context.Configuration.Targeting.EnemyStrategy, action.Range, player);
-        if (target == null) return;
+        var target = context.TargetingService.FindEnemyForAction(
+            context.Configuration.Targeting.EnemyStrategy, action.ActionId, player);
+        if (target == null)
+        {
+            context.Debug.BuffState = $"{action.Name} ready — out of melee range";
+            return;
+        }
 
         var ability = action == NINActions.KunaisBane ? HermesAbilities.KunaisBane : HermesAbilities.TrickAttack;
 
         scheduler.PushOgcd(ability, target.GameObjectId, priority: 1,
             onDispatched: _ =>
             {
+                context.MudraHelper.ClearSuitonBurstLatch();
+                context.MudraHelper.ClearBurstPrepHold();
                 context.Debug.PlannedAction = action.Name;
                 context.Debug.BuffState = $"Activating {action.Name}";
                 partyCoord?.OnRaidBuffUsed(NINActions.KunaisBane.ActionId, 120_000);
@@ -154,7 +191,7 @@ public sealed class BuffModule : IHermesModule
         var action = NINActions.GetMugAction(level);
         if (level >= NINActions.Dokumori.MinLevel && context.HasDokumoriOnTarget) return;
         if (!context.ActionService.IsActionReady(action.ActionId)) return;
-        if (ShouldHoldForBurst()) return;
+        if (HermesBurnHelper.ShouldPoolForRaidBurst(context) && ShouldHoldForBurst()) return;
 
         var target = context.TargetingService.FindEnemy(
             context.Configuration.Targeting.EnemyStrategy, action.Range, player);
@@ -213,9 +250,7 @@ public sealed class BuffModule : IHermesModule
         if (!context.Configuration.Ninja.EnableTenChiJin) return;
         var player = context.Player;
         if (player.Level < NINActions.TenChiJin.MinLevel) return;
-        if (context.HasTenChiJin) return;
-        if (context.IsMoving) return;
-        if (!context.ActionService.IsActionReady(NINActions.TenChiJin.ActionId)) return;
+        if (!HermesTcjBurstGates.CanPushTenChiJinOgcd(context)) return;
 
         scheduler.PushOgcd(HermesAbilities.TenChiJin, player.GameObjectId, priority: 4,
             onDispatched: _ =>

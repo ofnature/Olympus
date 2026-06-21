@@ -174,4 +174,37 @@ public class PositionalStandCalculatorTests
 
         Assert.Equal(5f, result.Z, Epsilon);
     }
+
+    [Fact]
+    public void CalculateMeleeApproach_MovesTowardTargetAtMeleeDistance()
+    {
+        var request = new MeleeApproachStandRequest(
+            PlayerPosition: new Vector3(0f, 0f, 10f),
+            PlayerHitboxRadius: 0.5f,
+            TargetPosition: Vector3.Zero,
+            TargetHitboxRadius: 2f,
+            GcdRemainingSeconds: 2.5f);
+
+        var result = PositionalStandCalculator.CalculateMeleeApproach(in request);
+
+        Assert.True(result.Z < 10f, "Should move closer to target");
+        Assert.Equal(0f, result.X, Epsilon);
+    }
+
+    [Fact]
+    public void CalculateBurstMeleeApproach_ReachesFullMeleeStandPoint()
+    {
+        var request = new MeleeApproachStandRequest(
+            PlayerPosition: new Vector3(0f, 0f, 30f),
+            PlayerHitboxRadius: 0.5f,
+            TargetPosition: Vector3.Zero,
+            TargetHitboxRadius: 2f,
+            GcdRemainingSeconds: 2.5f);
+
+        var clamped = PositionalStandCalculator.CalculateMeleeApproach(in request);
+        var full = PositionalStandCalculator.CalculateBurstMeleeApproach(in request);
+
+        Assert.True(clamped.Z > full.Z + 5f, "GCD-clamped step should stop short of full melee stand");
+        Assert.Equal(5.5f, full.Z, Epsilon);
+    }
 }

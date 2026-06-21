@@ -11,7 +11,7 @@ namespace Olympus.Rotation.HermesCore.Helpers;
 public sealed class MudraHelper
 {
     // In-game mudra sequences time out after ~6 seconds. Use 7s as safety margin.
-    private const long SequenceTimeoutMs = 7000;
+    internal const long SequenceTimeoutMs = 7000;
     private readonly Stopwatch _sequenceTimer = new();
 
     /// <summary>
@@ -45,6 +45,52 @@ public sealed class MudraHelper
     public int MudraCount { get; private set; }
 
     /// <summary>
+    /// Shadow Walker can lag after Suiton finishes — latch burst prep until status appears or KB fires.
+    /// </summary>
+    public const float SuitonBurstLatchSeconds = 20f;
+
+    private readonly Stopwatch _suitonBurstLatch = new();
+
+    /// <summary>True briefly after Suiton executes, before Shadow Walker appears on status list.</summary>
+    public bool HasSuitonBurstLatch =>
+        _suitonBurstLatch.IsRunning && _suitonBurstLatch.Elapsed.TotalSeconds < SuitonBurstLatchSeconds;
+
+    public void MarkSuitonExecuted() => _suitonBurstLatch.Restart();
+
+    public void ClearSuitonBurstLatch() => _suitonBurstLatch.Reset();
+
+    /// <summary>
+    /// Doton ground DoT status can lag one GCD after cast — latch prevents an immediate second Doton (Rabbit).
+    /// </summary>
+    public const float DotonActiveLatchSeconds = 24f;
+
+    private readonly Stopwatch _dotonActiveLatch = new();
+
+    public bool HasDotonActiveLatch =>
+        _dotonActiveLatch.IsRunning && _dotonActiveLatch.Elapsed.TotalSeconds < DotonActiveLatchSeconds;
+
+    public void MarkDotonExecuted() => _dotonActiveLatch.Restart();
+
+    public void ClearDotonActiveLatch() => _dotonActiveLatch.Reset();
+
+    /// <summary>Cap burst-prep GCD hold so party-burst KB holds cannot stall the rotation.</summary>
+    public const float MaxBurstPrepGcdHoldSeconds = 4.5f;
+
+    private readonly Stopwatch _burstPrepHoldTimer = new();
+
+    public void BeginBurstPrepHold()
+    {
+        if (!_burstPrepHoldTimer.IsRunning)
+            _burstPrepHoldTimer.Restart();
+    }
+
+    public void ClearBurstPrepHold() => _burstPrepHoldTimer.Reset();
+
+    public bool ShouldReleaseBurstPrepGcdHold =>
+        _burstPrepHoldTimer.IsRunning
+        && _burstPrepHoldTimer.Elapsed.TotalSeconds >= MaxBurstPrepGcdHoldSeconds;
+
+    /// <summary>
     /// Whether we're currently in the middle of a mudra sequence.
     /// Automatically resets if the sequence has been active longer than the game timeout.
     /// </summary>
@@ -55,8 +101,8 @@ public sealed class MudraHelper
             if (State == MudraState.Idle)
                 return false;
 
-            // Auto-reset if the sequence has been active too long (game timed out)
-            if (MudraCount > 0 && _sequenceTimer.ElapsedMilliseconds > SequenceTimeoutMs)
+            // RSR slot-step path never calls AdvanceSequence — timeout must not require MudraCount > 0.
+            if (_sequenceTimer.ElapsedMilliseconds > SequenceTimeoutMs)
             {
                 Reset();
                 return false;
@@ -65,6 +111,13 @@ public sealed class MudraHelper
             return true;
         }
     }
+
+    /// <summary>Seconds since <see cref="StartSequence"/> (for stuck diagnostics / abort).</summary>
+    public double SequenceElapsedSeconds =>
+        _sequenceTimer.IsRunning ? _sequenceTimer.Elapsed.TotalSeconds : 0;
+
+    /// <summary>RSR slot-step: record a successful mudra press without legacy state-machine AdvanceSequence.</summary>
+    public void NotifyMudraPressed() => MudraCount++;
 
     /// <summary>
     /// Whether we're ready to execute the Ninjutsu (all mudras input).
@@ -167,6 +220,7 @@ public sealed class MudraHelper
     /// <param name="enemyCount">Number of nearby enemies.</param>
     /// <param name="useDoton">Whether Doton is enabled for AoE (config toggle).</param>
     /// <param name="dotonMinTargets">Minimum enemies for Doton (config value).</param>
+    /// <param name="hasDotonActive">Whether Doton ground DoT is already ticking.</param>
     /// <returns>The recommended Ninjutsu to use.</returns>
     public static NINActions.NinjutsuType GetRecommendedNinjutsu(
         byte level,
@@ -174,7 +228,8 @@ public sealed class MudraHelper
         bool needsSuiton,
         int enemyCount,
         bool useDoton = true,
-        int dotonMinTargets = 3)
+        int dotonMinTargets = 3,
+        bool hasDotonActive = false)
     {
         // Kassatsu-enhanced Ninjutsu
         if (hasKassatsu)
@@ -202,10 +257,15 @@ public sealed class MudraHelper
         if (enemyCount >= 3)
         {
             // Doton for stationary AoE (configurable — enemies may move out of Doton)
-            if (useDoton && enemyCount >= dotonMinTargets && level >= NINActions.Doton.MinLevel)
+            if (useDoton && !hasDotonActive && enemyCount >= dotonMinTargets
+                && level >= NINActions.Doton.MinLevel)
                 return NINActions.NinjutsuType.Doton;
 
-            // Katon for burst AoE (always available as AoE fallback)
+            // Doton ticking — ABB skips Katon filler; combo fills Ten CD windows.
+            if (hasDotonActive)
+                return NINActions.NinjutsuType.None;
+
+            // Katon for burst AoE when Doton is unavailable
             if (level >= NINActions.Katon.MinLevel)
                 return NINActions.NinjutsuType.Katon;
         }

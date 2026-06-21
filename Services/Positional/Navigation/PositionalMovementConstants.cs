@@ -44,9 +44,16 @@ public static class PositionalMovementConstants
     public const float TelegraphAbortEpsilonSeconds = 0.05f;
 
     /// <summary>
-    /// vNav <c>PathfindAndMoveCloseTo</c> arrival tolerance (yalms).
-    /// Rear/flank zones are ~90° arcs at the stand ring; 0.35y keeps the player inside
-    /// the positional hit cone without overshooting through the boss or past the arc edge.
+    /// vNav <c>PathfindAndMoveCloseTo</c> arrival tolerance (yalms) for positional rear/flank arcs.
     /// </summary>
     public const float PositionalArrivalToleranceYalms = 0.35f;
+
+    /// <summary>vNav arrival tolerance for burst gap-close (slightly looser than positional arcs).</summary>
+    public const float BurstApproachArrivalToleranceYalms = 0.5f;
+
+    /// <summary>Primary enemy search radius for burst melee approach target resolution.</summary>
+    public const float BurstApproachTargetSearchNearYalms = 25f;
+
+    /// <summary>Extended search when the player is out of melee but still engaged on a distant target.</summary>
+    public const float BurstApproachTargetSearchFarYalms = 50f;
 }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Plugin.Services;
+using Olympus.Data;
 using Olympus.Models.Action;
 using Olympus.Rotation.Common.Helpers;
 using Olympus.Services;
@@ -204,7 +205,34 @@ public sealed class RotationScheduler
             // delegates to UseAction which handles the queue window correctly; if the GCD
             // is on its own independent cooldown (Sonic Break, Gnashing Fang, etc.) UseAction
             // returns false and we fall through to DispatchRejected at the bottom of the loop.
-            if (candidate.Behavior.ChargeSource is { } chargeId)
+            if (candidate.Behavior.ChargeHold is { } hold)
+            {
+                // P5 charge-hold: reserve charges for the burst window so a multi-charge oGCD
+                // never dumps its last charge off-burst (RSR usedUp semantics).
+                var holdChargeId = candidate.Behavior.ChargeSource ?? effective.ActionId;
+                var charges = _actionService.GetCurrentCharges(holdChargeId);
+                if (charges == 0)
+                {
+                    RecordFail(candidate, $"Cooldown (no charges on {holdChargeId})");
+                    continue;
+                }
+
+                bool inBurst;
+                try { inBurst = hold.InBurst(ctx); }
+                catch (Exception ex)
+                {
+                    _errorMetrics?.RecordError("Scheduler", $"ChargeHold.InBurst threw: {ex.Message}");
+                    RecordFail(candidate, "ChargeHold threw");
+                    continue;
+                }
+
+                if (!inBurst && charges <= hold.HoldCharges)
+                {
+                    RecordFail(candidate, $"ChargeHold (reserve {hold.HoldCharges} for burst)");
+                    continue;
+                }
+            }
+            else if (candidate.Behavior.ChargeSource is { } chargeId)
             {
                 if (_actionService.GetCurrentCharges(chargeId) == 0)
                 {
@@ -226,6 +254,25 @@ public sealed class RotationScheduler
                 {
                     RecordFail(candidate, "Mechanic");
                     continue;
+                }
+            }
+
+            // Gate: action-manager status (RSR ActionManagerStatusValid parity).
+            // GCD path only. Skipped during the queue window: GetActionStatus returns 583 while
+            // the global GCD rolls, but UseAction still accepts queue submission (see ExecuteGcd).
+            // Skipped for ReplacementBaseId / ExecuteGcdRaw paths that intentionally bypass status.
+            if (!isOgcd && candidate.Behavior.ReplacementBaseId is null)
+            {
+                var gcdRemaining = _actionService.GcdRemaining;
+                var inQueueWindow = gcdRemaining > 0f && gcdRemaining <= FFXIVTimings.QueueWindow;
+                if (!inQueueWindow)
+                {
+                    var adjustedId = _actionService.GetAdjustedActionId(effective.ActionId);
+                    if (!_actionService.CanExecuteActionId(adjustedId))
+                    {
+                        RecordFail(candidate, "ActionStatus");
+                        continue;
+                    }
                 }
             }
 

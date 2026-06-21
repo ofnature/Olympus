@@ -133,7 +133,7 @@ public static class NINActions
 
     /// <summary>
     /// Ten - Mudra input (Lv.30)
-    /// First mudra in the system.
+    /// First mudra in the system. Recast per charge ~20s at max level.
     /// </summary>
     public static readonly ActionDefinition Ten = new()
     {
@@ -144,7 +144,7 @@ public static class NINActions
         TargetType = ActionTargetType.Self,
         EffectTypes = ActionEffectType.None,
         CastTime = 0f,
-        RecastTime = 0.5f,
+        RecastTime = 20f,
         MpCost = 0
     };
 
@@ -283,7 +283,7 @@ public static class NINActions
 
     /// <summary>
     /// Huton - Three mudra Ninjutsu: Jin-Chi-Ten (Lv.45)
-    /// Reduces GCD recast time.
+    /// AoE wind damage; grants Shadow Walker (enables Kunai's Bane).
     /// </summary>
     public static readonly ActionDefinition Huton = new()
     {
@@ -296,8 +296,8 @@ public static class NINActions
         CastTime = 0f,
         RecastTime = 1.5f,
         MpCost = 0,
-        AppliedStatusId = StatusIds.Huton,
-        AppliedStatusDuration = 60f
+        AppliedStatusId = StatusIds.ShadowWalker,
+        AppliedStatusDuration = 20f
     };
 
     /// <summary>
@@ -336,7 +336,7 @@ public static class NINActions
         Range = 20f,
         MpCost = 0,
         DamagePotency = 580,
-        AppliedStatusId = StatusIds.Suiton,
+        AppliedStatusId = StatusIds.ShadowWalker,
         AppliedStatusDuration = 20f
     };
 
@@ -533,8 +533,7 @@ public static class NINActions
         EffectTypes = ActionEffectType.Damage | ActionEffectType.Debuff,
         CastTime = 0f,
         RecastTime = 60f,
-        Range = 20f,
-        Radius = 5f,
+        Range = 3f,
         MpCost = 0,
         DamagePotency = 600,
         AppliedStatusId = StatusIds.KunaisBane,
@@ -764,8 +763,11 @@ public static class NINActions
     public static class StatusIds
     {
         // Ninjutsu buffs
-        public const uint Suiton = 507; // Enables Kunai's Bane
-        public const uint Huton = 500;  // Reduced GCD
+        /// <summary>Legacy pre-Dawntrail Suiton buff — superseded by <see cref="ShadowWalker"/>.</summary>
+        public const uint Suiton = 507;
+        /// <summary>Dawntrail: granted by Suiton/Huton; enables Kunai's Bane (RSR IsShadowWalking).</summary>
+        public const uint ShadowWalker = 3848;
+        public const uint Huton = 500;  // Legacy haste buff (pre-Dawntrail)
         public const uint Doton = 501;  // Ground DoT active
 
         // Combat buffs
@@ -782,7 +784,7 @@ public static class NINActions
         public const uint Dokumori = 3849;        // Dokumori debuff
 
         // Combo/resource buffs
-        public const uint Kazematoi = 3848;       // Aeolian Edge bonus stacks
+        // Kazematoi stacks are job-gauge only (NINGauge.Kazematoi) — no player status buff.
         public const uint TenriJindoReady = 3851; // Can use Tenri Jindo
 
         // Defensive
@@ -796,6 +798,17 @@ public static class NINActions
 
         // Hidden/Mudra state
         public const uint Mudra = 496; // Mudra input active
+    }
+
+    /// <summary>Action IDs mudra slots adjust to during Ten Chi Jin (RSR PvE parity).</summary>
+    public static class TenChiJinAdjusted
+    {
+        public const uint FumaShurikenSt = 18873;
+        public const uint FumaShurikenAoE = 18875;
+        public const uint Katon = 18876;
+        public const uint Raiton = 18877;
+        public const uint Doton = 18880;
+        public const uint Suiton = 18881;
     }
 
     #endregion

@@ -26,6 +26,16 @@ public sealed class ThemisStatusHelper : BaseStatusHelper
     }
 
     /// <summary>
+    /// Checks if the player has Goring Blade Ready (granted by Fight or Flight).
+    /// In Dawntrail, Goring Blade is a proc weaponskill gated by this status — it is no
+    /// longer a DoT/combo action.
+    /// </summary>
+    public bool HasGoringBladeReady(IBattleChara player)
+    {
+        return HasStatus(player, PLDActions.StatusIds.GoringBladeReady);
+    }
+
+    /// <summary>
     /// Gets the remaining duration of Fight or Flight.
     /// </summary>
     public float GetFightOrFlightRemaining(IBattleChara player)

@@ -90,7 +90,7 @@ public sealed class DamageModule : IHephaestusModule
         TryPushSonicBreak(context, scheduler, target.GameObjectId);
 
         var aoe = context.Configuration.Tank.EnableAoEDamage
-                  && enemyCount >= context.Configuration.Tank.AoEMinTargets;
+                  && enemyCount >= context.Configuration.Tank.GetEffectiveAoEMinTargets(JobRegistry.Gunbreaker);
         if (!aoe)
             TryPushStartGnashingFang(context, scheduler, target.GameObjectId);
 
@@ -581,7 +581,7 @@ public sealed class DamageModule : IHephaestusModule
         if (!shouldSpend) return;
 
         var aoe = context.Configuration.Tank.EnableAoEDamage
-                  && enemyCount >= context.Configuration.Tank.AoEMinTargets
+                  && enemyCount >= context.Configuration.Tank.GetEffectiveAoEMinTargets(JobRegistry.Gunbreaker)
                   && context.Player.Level >= GNBActions.FatedCircle.MinLevel;
 
         if (aoe)
@@ -653,7 +653,7 @@ public sealed class DamageModule : IHephaestusModule
 
         // AoE combo path
         if (context.Configuration.Tank.EnableAoEDamage &&
-            enemyCount >= context.Configuration.Tank.AoEMinTargets &&
+            enemyCount >= context.Configuration.Tank.GetEffectiveAoEMinTargets(JobRegistry.Gunbreaker) &&
             level >= GNBActions.DemonSlice.MinLevel)
         {
             TryPushAoECombo(context, scheduler, targetId);

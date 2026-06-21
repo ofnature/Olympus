@@ -216,10 +216,12 @@ public abstract class BaseRotation<TContext, TModule> : IRotation, IDisposable
         // Movement detection
         var (isMoving, _) = UpdateMovement(player);
 
-        // Combat tracking — also treat auto-attack as combat if enabled
+        // Combat tracking — optional early start before personal InCombat flag
         var inCombat = (player.StatusFlags & StatusFlags.InCombat) != 0;
         if (!inCombat && Configuration.EnableOnAutoAttack)
             inCombat = IsAutoAttacking();
+        if (!inCombat && Configuration.EnableOnPartyInCombat)
+            inCombat = PartyCombatHelper.IsAnyGroupMemberInCombat(player, PartyList, ObjectTable);
         UpdateCombatState(inCombat);
 
         // Job-specific service updates

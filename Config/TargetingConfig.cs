@@ -27,6 +27,8 @@ public sealed class TargetingConfig
     /// When true, all damage targeting is suppressed while the player has no selected target.
     /// This is the primary safeguard for gaze mechanics (drop target to look away) and for
     /// any case where the player wants Olympus to stop attacking. Default ON.
+    /// Does not pause when the player is in combat, the hard target is dead or missing,
+    /// and live hostiles remain nearby — Olympus auto-retargets instead.
     /// </summary>
     public bool PauseWhenNoTarget { get; set; } = true;
 
@@ -61,6 +63,8 @@ public sealed class TargetingConfig
     /// When true, the fallback that retargets to LowestHp when CurrentTarget/FocusTarget
     /// strategies fail is disabled — a missing current target simply stops damage. This
     /// makes "drop target" a hard pause for players using explicit-target strategies.
+    /// Relaxed automatically when the hard target dies mid-combat, live hostiles remain,
+    /// and <see cref="EnemyStrategy"/> is an aggregate strategy (LowestHp, Nearest, etc.).
     /// Default ON.
     /// </summary>
     public bool StrictCurrentTargetStrategy { get; set; } = true;
@@ -102,4 +106,12 @@ public sealed class TargetingConfig
     /// explicit CurrentTarget/FocusTarget selections are never filtered.
     /// </summary>
     public bool EnableInvulnerabilityFiltering { get; set; } = true;
+
+    /// <summary>
+    /// When true, aggregate targeting includes valid hostiles that are not flagged in combat
+    /// with you personally. Needed in alliance raids where other parties tag mobs first —
+    /// those targets still accept contribution damage but lack your InCombat flag until hit.
+    /// Only applies while you (or your group, with party-combat assist) are effectively fighting.
+    /// </summary>
+    public bool IncludeHostilesWithoutPersonalCombatFlag { get; set; } = false;
 }

@@ -4,6 +4,7 @@ using Dalamud.Plugin.Services;
 using Olympus.Services;
 using Olympus.Services.Action;
 using Olympus.Services.Cache;
+using Olympus.Services.Combat;
 using Olympus.Services.Cooldown;
 using Olympus.Services.Debuff;
 using Olympus.Services.Healing;
@@ -119,6 +120,13 @@ public interface IRotationContext
     /// Null if no timeline is loaded for the current zone.
     /// </summary>
     ITimelineService? TimelineService { get; }
+
+    /// <summary>
+    /// Optional enemy time-to-kill estimator. Defaults to null; a job opts in by
+    /// overriding this in its context (pilot: Themis/PLD). Additive default member
+    /// so existing contexts compile unchanged.
+    /// </summary>
+    ITimeToKillService? TimeToKillService => null;
 
     #endregion
 

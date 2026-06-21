@@ -21,6 +21,7 @@ public class StatusHelperTests
         var ids = new uint[]
         {
             NINActions.StatusIds.Suiton,
+            NINActions.StatusIds.ShadowWalker,
             NINActions.StatusIds.Huton,
             NINActions.StatusIds.Doton,
             NINActions.StatusIds.Kassatsu,
@@ -40,7 +41,6 @@ public class StatusHelperTests
             NINActions.StatusIds.RaijuReady,
             NINActions.StatusIds.Meisui,
             NINActions.StatusIds.TenriJindoReady,
-            NINActions.StatusIds.Kazematoi,
         };
 
         Assert.Equal(ids.Length, ids.Distinct().Count());
@@ -63,6 +63,7 @@ public class StatusHelperTests
     public void StatusIds_AllCoreStatuses_AreNonZero()
     {
         Assert.NotEqual(0u, NINActions.StatusIds.Suiton);
+        Assert.NotEqual(0u, NINActions.StatusIds.ShadowWalker);
         Assert.NotEqual(0u, NINActions.StatusIds.Kassatsu);
         Assert.NotEqual(0u, NINActions.StatusIds.TenChiJin);
         Assert.NotEqual(0u, NINActions.StatusIds.Bunshin);
@@ -72,7 +73,6 @@ public class StatusHelperTests
         Assert.NotEqual(0u, NINActions.StatusIds.TenriJindoReady);
         Assert.NotEqual(0u, NINActions.StatusIds.KunaisBane);
         Assert.NotEqual(0u, NINActions.StatusIds.Dokumori);
-        Assert.NotEqual(0u, NINActions.StatusIds.Kazematoi);
         Assert.NotEqual(0u, NINActions.StatusIds.Mudra);
         Assert.NotEqual(0u, NINActions.StatusIds.TrueNorth);
     }
@@ -82,9 +82,15 @@ public class StatusHelperTests
     #region Known Status ID Values — Match Game Data
 
     [Fact]
-    public void StatusId_Suiton_MatchesGameData()
+    public void StatusId_Suiton_MatchesLegacyGameData()
     {
         Assert.Equal(507u, NINActions.StatusIds.Suiton);
+    }
+
+    [Fact]
+    public void StatusId_ShadowWalker_MatchesDawntrailGameData()
+    {
+        Assert.Equal(3848u, NINActions.StatusIds.ShadowWalker);
     }
 
     [Fact]

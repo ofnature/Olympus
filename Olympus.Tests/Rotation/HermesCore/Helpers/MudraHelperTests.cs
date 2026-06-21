@@ -1,3 +1,4 @@
+using System.Threading;
 using Olympus.Data;
 using Olympus.Rotation.HermesCore.Helpers;
 using Xunit;
@@ -10,12 +11,45 @@ namespace Olympus.Tests.Rotation.HermesCore.Helpers;
 ///   2) sequence loading from GetMudraSequence per ninjutsu type
 ///   3) static GetRecommendedNinjutsu decision function
 ///
-/// IsSequenceActive timeout coverage is deferred -- testing it requires
-/// injecting a clock into MudraHelper, which crosses the "no new abstractions"
-/// boundary set by the spec.
+/// IsSequenceActive timeout fires even when MudraCount stays 0 (RSR slot-step never calls AdvanceSequence).
 /// </summary>
 public class MudraHelperTests
 {
+    [Fact]
+    public void IsSequenceActive_True_AfterStart_WithoutAdvanceSequence()
+    {
+        var helper = new MudraHelper();
+        helper.StartSequence(NINActions.NinjutsuType.Raiton);
+
+        Assert.Equal(0, helper.MudraCount);
+        Assert.True(helper.IsSequenceActive);
+    }
+
+    [Fact]
+    public void NotifyMudraPressed_IncrementsCount_WithoutAdvanceSequence()
+    {
+        var helper = new MudraHelper();
+        helper.StartSequence(NINActions.NinjutsuType.Raiton);
+
+        helper.NotifyMudraPressed();
+
+        Assert.Equal(1, helper.MudraCount);
+        Assert.Equal(MudraState.FirstMudra, helper.State);
+    }
+
+    [Fact]
+    public void IsSequenceActive_TimesOut_WithoutAdvanceSequence()
+    {
+        var helper = new MudraHelper();
+        helper.StartSequence(NINActions.NinjutsuType.Raiton);
+        Assert.True(helper.IsSequenceActive);
+
+        Thread.Sleep((int)MudraHelper.SequenceTimeoutMs + 250);
+
+        Assert.False(helper.IsSequenceActive);
+        Assert.Equal(MudraState.Idle, helper.State);
+    }
+
     // ----- State machine -----
 
     [Fact]
@@ -289,6 +323,17 @@ public class MudraHelperTests
             needsSuiton: true, enemyCount: 1);
 
         Assert.Equal(NINActions.NinjutsuType.Suiton, result);
+    }
+
+    [Fact]
+    public void GetRecommendedNinjutsu_AoE_With_Doton_Active_Returns_None()
+    {
+        var result = MudraHelper.GetRecommendedNinjutsu(
+            level: NINActions.Doton.MinLevel, hasKassatsu: false,
+            needsSuiton: false, enemyCount: 3,
+            useDoton: true, dotonMinTargets: 3, hasDotonActive: true);
+
+        Assert.Equal(NINActions.NinjutsuType.None, result);
     }
 
     [Fact]

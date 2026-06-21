@@ -39,7 +39,8 @@ public static class ThemisTestContext
         int comboStep = 0,
         uint lastComboAction = 0,
         float comboTimeRemaining = 0f,
-        ThemisDebugState? debugState = null)
+        ThemisDebugState? debugState = null,
+        Mock<IObjectTable>? objectTable = null)
     {
         config ??= CreateDefaultPaladinConfiguration();
 
@@ -64,7 +65,7 @@ public static class ThemisTestContext
         var hpPredictionService = MockBuilders.CreateMockHpPredictionService();
         var mpForecastService = MockBuilders.CreateMockMpForecastService();
         var playerStatsService = MockBuilders.CreateMockPlayerStatsService();
-        var objectTable = MockBuilders.CreateMockObjectTable();
+        objectTable ??= MockBuilders.CreateMockObjectTable();
         var partyList = MockBuilders.CreateMockPartyList();
         var debuffDetectionService = MockBuilders.CreateMockDebuffDetectionService();
 

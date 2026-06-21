@@ -82,6 +82,19 @@ public class PositionalMovementServiceTests
     }
 
     [Fact]
+    public void Update_WhenAnimationLockHigh_AllowsMoveForInstantCastJob()
+    {
+        var service = CreateService();
+        _anticipation.Next = new PositionalAnticipation(PositionalType.Rear, 7481, PositionalAnticipationReason.ComboSetup);
+        _action.Setup(x => x.AnimationLockRemaining).Returns(0.45f);
+
+        service.Update(CreateRequest(allowMovementDuringActionLock: true));
+
+        Assert.Equal(PositionalMovementPhase.Moving, service.State.Phase);
+        _vNav.Verify(x => x.PathfindAndMoveCloseTo(It.IsAny<Vector3>(), It.IsAny<float>(), false), Times.Once);
+    }
+
+    [Fact]
     public void Update_WhenTelegraphAppears_AbortsRunningPath()
     {
         var service = CreateService();
@@ -118,7 +131,8 @@ public class PositionalMovementServiceTests
         => new(_vNav.Object, _bossMod.Object);
 
     private PositionalMovementUpdateRequest CreateRequest(
-        PositionalAnticipationContext? anticipationContext = null)
+        PositionalAnticipationContext? anticipationContext = null,
+        bool allowMovementDuringActionLock = false)
     {
         return new PositionalMovementUpdateRequest(
             AnticipationProvider: _anticipation,
@@ -131,7 +145,8 @@ public class PositionalMovementServiceTests
                 RotationRadians: 0f,
                 HasPositionalImmunity: false),
             ActionService: _action.Object,
-            InCombat: true);
+            InCombat: true,
+            AllowMovementDuringActionLock: allowMovementDuringActionLock);
     }
 
     private static PositionalAnticipationContext BaseAnticipationContext => new(

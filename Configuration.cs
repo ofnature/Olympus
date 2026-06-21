@@ -63,6 +63,13 @@ public sealed class Configuration : IPluginConfiguration
     /// </summary>
     public bool EnableOnAutoAttack { get; set; } = false;
 
+    /// <summary>
+    /// When true, treat the rotation as in-combat while any party member or Trust ally
+    /// is fighting, even before the local player has the InCombat flag.
+    /// Pair with Tank Assist targeting for automatic assist on the pull.
+    /// </summary>
+    public bool EnableOnPartyInCombat { get; set; } = false;
+
     // Master category toggles
     public bool EnableHealing { get; set; } = true;
     public bool EnableDamage { get; set; } = true;
@@ -143,6 +150,7 @@ public sealed class Configuration : IPluginConfiguration
 
         // Reset general behavior
         EnableOnAutoAttack = false;
+        EnableOnPartyInCombat = false;
         MovementTolerance = 0.1f;
 
         // Reset master toggles

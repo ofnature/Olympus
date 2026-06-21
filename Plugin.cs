@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
@@ -10,6 +11,7 @@ using Olympus.Rotation;
 using Olympus.Services;
 using Olympus.Services.Action;
 using Olympus.Services.Calculation;
+using Olympus.Services.Combat;
 using Olympus.Services.Cooldown;
 using Olympus.Services.Debuff;
 using Olympus.Services.Debug;
@@ -66,6 +68,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly CooldownPlanner cooldownPlanner;
     private readonly TargetingService targetingService;
     private readonly GapCloserSafetyService gapCloserSafetyService;
+    private readonly TimeToKillService timeToKillService;
     private readonly ShieldTrackingService shieldTrackingService;
     private readonly HpPredictionService hpPredictionService;
     private readonly ActionService actionService;
@@ -88,6 +91,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly BossModSafetyService bossModSafetyService;
     private readonly PositionalMovementService positionalMovementService;
     private readonly SamuraiPositionalAnticipationProvider samuraiPositionalAnticipationProvider;
+    private readonly NinjaPositionalAnticipationProvider ninjaPositionalAnticipationProvider;
+    private readonly NinjaBurstApproachService ninjaBurstApproachService;
 
     // Burst window tracking for DPS rotations
     private readonly BurstWindowService burstWindowService;
@@ -206,6 +211,7 @@ public sealed class Plugin : IDalamudPlugin
         this.cooldownPlanner = new CooldownPlanner(damageIntakeService, damageTrendService, configuration);
         this.gapCloserSafetyService = new GapCloserSafetyService(configuration, targetManager);
         this.targetingService = new TargetingService(objectTable, partyList, targetManager, configuration, gapCloserSafetyService);
+        this.timeToKillService = new TimeToKillService();
         this.shieldTrackingService = new ShieldTrackingService(objectTable, partyList, log);
 
         // New action system services
@@ -250,6 +256,8 @@ public sealed class Plugin : IDalamudPlugin
         this.bossModSafetyService = new BossModSafetyService(pluginInterface, log);
         this.positionalMovementService = new PositionalMovementService(vNavService, bossModSafetyService);
         this.samuraiPositionalAnticipationProvider = new SamuraiPositionalAnticipationProvider();
+        this.ninjaPositionalAnticipationProvider = new NinjaPositionalAnticipationProvider();
+        this.ninjaBurstApproachService = new NinjaBurstApproachService(vNavService, bossModSafetyService);
 
         // Party coordination service (multi-Olympus IPC)
         if (configuration.PartyCoordination.EnablePartyCoordination)
@@ -507,6 +515,7 @@ public sealed class Plugin : IDalamudPlugin
         container.Register<IDamageTrendService, DamageTrendService>(damageTrendService);
         container.Register<ITargetingService, TargetingService>(targetingService);
         container.Register<IGapCloserSafetyService, GapCloserSafetyService>(gapCloserSafetyService);
+        container.Register<ITimeToKillService, TimeToKillService>(timeToKillService);
         container.Register<IHpPredictionService, HpPredictionService>(hpPredictionService);
         container.Register<IPlayerStatsService, PlayerStatsService>(playerStatsService);
         container.Register<IDebuffDetectionService, DebuffDetectionService>(debuffDetectionService);
@@ -525,6 +534,8 @@ public sealed class Plugin : IDalamudPlugin
         container.Register<IBossModSafetyService, BossModSafetyService>(bossModSafetyService);
         container.Register<IPositionalMovementService, PositionalMovementService>(positionalMovementService);
         container.Register(samuraiPositionalAnticipationProvider);
+        container.Register(ninjaPositionalAnticipationProvider);
+        container.Register(ninjaBurstApproachService);
 
         // DPS burst window service
         container.Register<IBurstWindowService, BurstWindowService>(burstWindowService);
@@ -745,6 +756,11 @@ public sealed class Plugin : IDalamudPlugin
 
             // Track player-to-target distance for gap closer safety heuristics.
             gapCloserSafetyService.Update(localPlayer, targetManager.Target as IBattleChara);
+
+            // Sample enemy HP for time-to-kill estimation (lazy enumeration; service throttles to ~1 Hz).
+            timeToKillService.Update(
+                objectTable.OfType<IBattleChara>()
+                    .Where(o => o.ObjectKind == Dalamud.Game.ClientState.Objects.Enums.ObjectKind.BattleNpc));
 
             // Check if we have a rotation for the current job
             var jobId = localPlayer.ClassJob.RowId;

@@ -144,13 +144,13 @@ public sealed class NinjaConfig
     /// <summary>
     /// Save Ninki for burst windows.
     /// </summary>
-    public bool SaveNinkiForBurst { get; set; } = true;
+    public bool SaveNinkiForBurst { get; set; } = false;
 
     /// <summary>
     /// Pool gauge resources (Bhavacakra, Hellfrog Medium) for raid buff burst windows.
-    /// When enabled, holds gauge spenders within 8s of an imminent burst.
+    /// When disabled, Hermes uses ABB — press buttons on cooldown.
     /// </summary>
-    public bool EnableBurstPooling { get; set; } = true;
+    public bool EnableBurstPooling { get; set; } = false;
 
     #endregion
 
@@ -169,6 +169,16 @@ public sealed class NinjaConfig
     #endregion
 
     #region Positional Settings
+
+    /// <summary>
+    /// Whether to use vNav to reposition before Aeolian Edge / Armor Crush (SAM parity).
+    /// </summary>
+    public bool EnablePositionalMovement { get; set; } = true;
+
+    /// <summary>
+    /// Move into melee range during burst prep (Shadow Walker + Kunai's Bane ready).
+    /// </summary>
+    public bool EnableBurstMeleeApproach { get; set; } = true;
 
     /// <summary>
     /// Whether to enforce positional requirements.

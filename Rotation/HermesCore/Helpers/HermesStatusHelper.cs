@@ -12,18 +12,30 @@ public sealed class HermesStatusHelper : BaseStatusHelper
     #region Ninjutsu Buffs
 
     /// <summary>
-    /// Checks if the player has Suiton active.
+    /// Checks if the player has Shadow Walker (Dawntrail Suiton/Huton buff that enables Kunai's Bane).
     /// </summary>
     public bool HasSuiton(IBattleChara player)
     {
-        return HasStatus(player, NINActions.StatusIds.Suiton);
+        return HasShadowWalker(player);
     }
 
     /// <summary>
-    /// Gets the remaining duration of Suiton.
+    /// Dawntrail Shadow Walker buff — replaces the legacy Suiton (507) status.
+    /// </summary>
+    public bool HasShadowWalker(IBattleChara player)
+    {
+        return HasStatus(player, NINActions.StatusIds.ShadowWalker)
+               || HasStatus(player, NINActions.StatusIds.Suiton);
+    }
+
+    /// <summary>
+    /// Gets the remaining duration of Shadow Walker (shown as Suiton in debug for burst prep).
     /// </summary>
     public float GetSuitonRemaining(IBattleChara player)
     {
+        if (HasStatus(player, NINActions.StatusIds.ShadowWalker, out var remaining))
+            return remaining;
+
         return GetStatusRemaining(player, NINActions.StatusIds.Suiton);
     }
 
@@ -232,21 +244,14 @@ public sealed class HermesStatusHelper : BaseStatusHelper
     #region Kazematoi (Aeolian Edge buff)
 
     /// <summary>
-    /// Checks if Kazematoi buff is active.
-    /// Note: Kazematoi is tracked via gauge, this is for the buff display.
+    /// Kazematoi is job-gauge only — use <see cref="IHermesContext.Kazematoi"/> for stack count.
     /// </summary>
-    public bool HasKazematoi(IBattleChara player)
-    {
-        return HasStatus(player, NINActions.StatusIds.Kazematoi);
-    }
+    public bool HasKazematoi(IBattleChara player) => false;
 
     /// <summary>
-    /// Gets Kazematoi stacks from status.
+    /// Kazematoi is job-gauge only — use <see cref="IHermesContext.Kazematoi"/> for stack count.
     /// </summary>
-    public int GetKazematoiStacks(IBattleChara player)
-    {
-        return GetStatusStacks(player, NINActions.StatusIds.Kazematoi);
-    }
+    public int GetKazematoiStacks(IBattleChara player) => 0;
 
     #endregion
 

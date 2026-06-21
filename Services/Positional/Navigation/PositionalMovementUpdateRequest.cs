@@ -21,4 +21,6 @@ public readonly record struct PositionalMovementUpdateRequest(
     PositionalMovementTarget? Target,
     IActionService ActionService,
     bool InCombat,
-    bool EnableMovement = true);
+    bool EnableMovement = true,
+    /// <summary>NIN: instant weaponskills/mudras — do not defer vNav for animation lock.</summary>
+    bool AllowMovementDuringActionLock = false);

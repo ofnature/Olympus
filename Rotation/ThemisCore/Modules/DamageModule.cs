@@ -81,6 +81,7 @@ public sealed class DamageModule : IThemisModule
         // oGCD pushes
         TryPushCircleOfScorn(context, scheduler, player.GameObjectId, target.GameObjectId);
         TryPushExpiacion(context, scheduler, target.GameObjectId);
+        TryPushBladeOfHonor(context, scheduler, target.GameObjectId);
         if (!context.TargetingService.GapCloserSafety.ShouldBlockGapCloser(target, player))
             TryPushIntervene(context, scheduler, target.GameObjectId);
 
@@ -101,6 +102,10 @@ public sealed class DamageModule : IThemisModule
         if (!context.Configuration.Tank.EnableIntervene) return;
         if (context.Player.Level < PLDActions.Intervene.MinLevel) return;
         if (!context.ActionService.IsActionReady(PLDActions.Intervene.ActionId)) return;
+
+        // RSR parity (PLD_Reborn.AttackAbility): Intervene is a forward dash — don't fire it while
+        // moving, since the dash can throw you out of position (RSR gate: !IsMoving).
+        if (context.IsMoving) return;
 
         scheduler.PushOgcd(ThemisAbilities.Intervene, targetId, priority: 4,
             onDispatched: _ =>
@@ -156,6 +161,14 @@ public sealed class DamageModule : IThemisModule
         if (!context.Configuration.Tank.EnableCircleOfScorn) return;
         if (context.Player.Level < PLDActions.CircleOfScorn.MinLevel) return;
         if (!context.ActionService.IsActionReady(PLDActions.CircleOfScorn.ActionId)) return;
+        // RSR parity (ActionConfig.TimeToKill): don't apply the AoE DoT to a target about to die.
+        if (ShouldSkipForTtk(context, targetId)) return;
+
+        // RSR parity (PLD_Reborn.AttackAbility): Circle of Scorn only fires once Fight or
+        // Flight AND Requiescat/Imperator are on cooldown, so the FoF -> Requiescat opener
+        // double-weave is never robbed of a weave slot. RSR gate:
+        //   FightOrFlightPvE.Cooldown.IsCoolingDown && Imperator.Cooldown.IsCoolingDown
+        if (!BurstOpenerCommitted(context)) return;
 
         scheduler.PushOgcd(ThemisAbilities.CircleOfScorn, selfId, priority: 3,
             onDispatched: _ =>
@@ -188,6 +201,11 @@ public sealed class DamageModule : IThemisModule
         if (level < action.MinLevel) return;
         if (!context.ActionService.IsActionReady(action.ActionId)) return;
 
+        // RSR parity (PLD_Reborn.AttackAbility): Expiacion/Spirits Within are held until the
+        // FoF -> Requiescat opener oGCDs are committed, matching RSR's
+        //   FightOrFlightPvE.Cooldown.IsCoolingDown && Imperator.Cooldown.IsCoolingDown gate.
+        if (!BurstOpenerCommitted(context)) return;
+
         var hasFof = context.HasFightOrFlight;
 
         scheduler.PushOgcd(behavior, targetId, priority: 3,
@@ -208,6 +226,45 @@ public sealed class DamageModule : IThemisModule
                     .Record();
                 context.TrainingService?.RecordConceptApplication(PldConcepts.Expiacion, wasSuccessful: true);
             });
+    }
+
+    /// <summary>
+    /// True once the Fight or Flight -> Requiescat burst-opener oGCDs are committed
+    /// (on cooldown) or simply unavailable (disabled / under level). Mirrors RSR's
+    /// "FightOrFlightPvE.Cooldown.IsCoolingDown && Imperator.Cooldown.IsCoolingDown"
+    /// gate that stops Circle of Scorn / Expiacion stealing an opener weave slot.
+    /// Olympus has no Imperator upgrade, so Requiescat is the highest magic-phase enabler.
+    /// </summary>
+    private static bool BurstOpenerCommitted(IThemisContext context)
+    {
+        var level = context.Player.Level;
+        var svc = context.ActionService;
+
+        var fofInPlan = context.Configuration.Tank.EnableFightOrFlight
+                        && level >= PLDActions.FightOrFlight.MinLevel;
+        if (fofInPlan && svc.IsActionReady(PLDActions.FightOrFlight.ActionId))
+            return false; // FoF is about to be pressed — protect the weave slot
+
+        var reqInPlan = context.Configuration.Tank.EnableRequiescat
+                        && level >= PLDActions.Requiescat.MinLevel;
+        if (reqInPlan && svc.IsActionReady(PLDActions.Requiescat.ActionId))
+            return false; // Requiescat is about to be pressed — protect the weave slot
+
+        return true;
+    }
+
+    /// <summary>
+    /// RSR-style time-to-kill gate. When enabled, suppresses DoT (re)application on
+    /// targets whose estimated TTK is below the configured threshold. Defaults to
+    /// inert: off by config, and never skips until enough HP samples exist
+    /// (GetTtkSeconds returns float.MaxValue while data is insufficient).
+    /// </summary>
+    private static bool ShouldSkipForTtk(IThemisContext context, ulong targetId)
+    {
+        if (!context.Configuration.Tank.EnableTimeToKillCheck) return false;
+        var ttkSvc = context.TimeToKillService;
+        if (ttkSvc is null) return false;
+        return ttkSvc.GetTtkSeconds(targetId) < context.Configuration.Tank.TimeToKillThresholdSeconds;
     }
 
     #endregion
@@ -261,7 +318,7 @@ public sealed class DamageModule : IThemisModule
     {
         if (!context.HasRequiescat) return;
         var level = context.Player.Level;
-        var minAoE = context.Configuration.Tank.AoEMinTargets;
+        var minAoE = context.Configuration.Tank.GetEffectiveAoEMinTargets(JobRegistry.Paladin);
 
         // Holy Circle (AoE) if threshold met and L72+
         if (level >= PLDActions.HolyCircle.MinLevel &&
@@ -395,56 +452,60 @@ public sealed class DamageModule : IThemisModule
 
     #region Goring Blade / Blade of Honor
 
+    private void TryPushBladeOfHonor(IThemisContext context, RotationScheduler scheduler, ulong targetId)
+    {
+        if (!context.Configuration.Tank.EnableDamage) return;
+        if (context.Player.Level < PLDActions.BladeOfHonor.MinLevel) return;
+        // Proc gate (RSR parity): only when "Blade of Honor Ready" is active, detected via button
+        // replacement in ThemisContext.HasBladeOfHonor. This is the fix for the per-frame requeue spam.
+        if (!context.HasBladeOfHonor) return;
+
+        scheduler.PushOgcd(ThemisAbilities.BladeOfHonor, targetId, priority: 1,
+            onDispatched: _ =>
+            {
+                context.Debug.PlannedAction = PLDActions.BladeOfHonor.Name;
+                context.Debug.DamageState = "Blade of Honor";
+                TrainingHelper.Decision(context.TrainingService)
+                    .Action(PLDActions.BladeOfHonor.ActionId, PLDActions.BladeOfHonor.Name)
+                    .AsTankBurst()
+                    .Reason(
+                        "Blade of Honor — burst finisher after the Confiteor combo (Blade of Valor).",
+                        "Highest-potency oGCD finisher; fires once per Requiescat/Imperator burst window.")
+                    .Factors("Blade of Honor Ready proc active")
+                    .Alternatives("Weave another oGCD if the proc is not yet available")
+                    .Tip("Blade of Honor is granted by Blade of Valor and consumed once per burst.")
+                    .Concept(PldConcepts.GoringBlade)
+                    .Record();
+                context.TrainingService?.RecordConceptApplication(PldConcepts.GoringBlade, wasSuccessful: true);
+            });
+    }
+
     private void TryPushGoringBlade(IThemisContext context, RotationScheduler scheduler, ulong targetId)
     {
         var level = context.Player.Level;
         if (level < PLDActions.GoringBlade.MinLevel) return;
 
-        var shouldRefresh = context.GoringBladeRemaining < 5f ||
-                           (context.HasFightOrFlight && context.GoringBladeRemaining < 10f);
-        if (!shouldRefresh) return;
+        // RSR parity (PaladinRotation.ModifyGoringBladePvE: StatusNeed = GoringBladeReady).
+        // Dawntrail removed the Goring Blade DoT/combo — it is now a Fight-or-Flight proc weaponskill,
+        // so gate purely on the proc. (No DoT-remaining refresh and no TimeToKill skip: it is direct
+        // damage, always worth spending while the proc is up.)
+        if (!context.HasGoringBladeReady) return;
 
-        // Lv.100: prefer Blade of Honor if available
-        if (level >= PLDActions.BladeOfHonor.MinLevel && context.HasBladeOfHonor)
-        {
-            var remaining = context.GoringBladeRemaining;
-            scheduler.PushGcd(ThemisAbilities.BladeOfHonor, targetId, priority: 2,
-                onDispatched: _ =>
-                {
-                    context.Debug.PlannedAction = PLDActions.BladeOfHonor.Name;
-                    context.Debug.DamageState = "Blade of Honor";
-                    TrainingHelper.Decision(context.TrainingService)
-                        .Action(PLDActions.BladeOfHonor.ActionId, PLDActions.BladeOfHonor.Name)
-                        .AsTankBurst()
-                        .Reason(
-                            "Blade of Honor used as the Lv.100 DoT refresh and AoE finisher.",
-                            "Blade of Honor is the enhanced Goring Blade at level 100.")
-                        .Factors("Blade of Honor available", $"DoT remaining: {remaining:F1}s")
-                        .Alternatives("Goring Blade (lower level version)")
-                        .Tip("Blade of Honor upgrades Goring Blade at level 100.")
-                        .Concept(PldConcepts.GoringBlade)
-                        .Record();
-                    context.TrainingService?.RecordConceptApplication(PldConcepts.GoringBlade, wasSuccessful: true);
-                });
-            return;
-        }
-
-        var remainingG = context.GoringBladeRemaining;
         var hasFof = context.HasFightOrFlight;
         scheduler.PushGcd(ThemisAbilities.GoringBlade, targetId, priority: 3,
             onDispatched: _ =>
             {
                 context.Debug.PlannedAction = PLDActions.GoringBlade.Name;
-                context.Debug.DamageState = $"Goring Blade (DoT {remainingG:F1}s)";
+                context.Debug.DamageState = "Goring Blade (proc)";
                 TrainingHelper.Decision(context.TrainingService)
                     .Action(PLDActions.GoringBlade.ActionId, PLDActions.GoringBlade.Name)
-                    .AsTankDamage()
+                    .AsTankBurst()
                     .Reason(
-                        $"Goring Blade applied to refresh DoT ({remainingG:F1}s remaining).",
-                        "Goring Blade applies a DoT that must be refreshed before expiry.")
-                    .Factors($"DoT remaining: {remainingG:F1}s", hasFof ? "Inside Fight or Flight" : "DoT falling off (<5s)")
-                    .Alternatives("Delay until Fight or Flight (risk DoT falling off)")
-                    .Tip("Keep Goring Blade up at all times.")
+                        "Goring Blade — Fight or Flight proc weaponskill (700 potency).",
+                        "Granted by Fight or Flight; spend it within the proc window during burst.")
+                    .Factors("Goring Blade Ready proc active", hasFof ? "Inside Fight or Flight" : "Proc window")
+                    .Alternatives("Continue the main combo if the proc is not up")
+                    .Tip("Use Goring Blade once per Fight or Flight, early in the burst.")
                     .Concept(PldConcepts.GoringBlade)
                     .Record();
                 context.TrainingService?.RecordConceptApplication(PldConcepts.GoringBlade, wasSuccessful: true);
@@ -458,7 +519,7 @@ public sealed class DamageModule : IThemisModule
     private void TryPushBasicCombo(IThemisContext context, RotationScheduler scheduler, ulong targetId, ulong selfId, int enemyCount)
     {
         var level = context.Player.Level;
-        var minAoE = context.Configuration.Tank.AoEMinTargets;
+        var minAoE = context.Configuration.Tank.GetEffectiveAoEMinTargets(JobRegistry.Paladin);
         var useAoE = context.Configuration.Tank.EnableAoEDamage
                      && enemyCount >= minAoE
                      && level >= PLDActions.TotalEclipse.MinLevel;
@@ -477,7 +538,8 @@ public sealed class DamageModule : IThemisModule
     {
         var level = context.Player.Level;
 
-        // Step 2: Prominence (requires LastComboAction == TotalEclipse)
+        // Step 2: Prominence (requires LastComboAction == TotalEclipse).
+        // Do not return — fall through to Total Eclipse at priority 7 as ActionStatus fallback.
         if (context.ComboStep == 2 &&
             context.LastComboAction == PLDActions.TotalEclipse.ActionId &&
             level >= PLDActions.Prominence.MinLevel)
@@ -500,10 +562,9 @@ public sealed class DamageModule : IThemisModule
                         .Record();
                     context.TrainingService?.RecordConceptApplication(PldConcepts.MagicPhase, wasSuccessful: true);
                 });
-            return;
         }
 
-        // Step 1 / starter: Total Eclipse
+        // Step 1 / starter / fallback: Total Eclipse
         scheduler.PushGcd(ThemisAbilities.TotalEclipse, selfId, priority: 7,
             onDispatched: _ =>
             {
@@ -528,7 +589,8 @@ public sealed class DamageModule : IThemisModule
     {
         var level = context.Player.Level;
 
-        // Step 3: Royal Authority / Rage of Halone
+        // Step 3: Royal Authority / Rage of Halone.
+        // Do not return — fall through to Fast Blade at priority 7 as ActionStatus fallback.
         if (context.ComboStep == 3 && context.LastComboAction == PLDActions.RiotBlade.ActionId)
         {
             var finisher = PLDActions.GetComboFinisher(level);
@@ -554,15 +616,15 @@ public sealed class DamageModule : IThemisModule
                         .Record();
                     context.TrainingService?.RecordConceptApplication(PldConcepts.AtonementChain, wasSuccessful: true);
                 });
-            return;
         }
 
-        // Step 2: Riot Blade
+        // Step 2: Riot Blade.
+        // Do not return — fall through to Fast Blade at priority 7 as ActionStatus fallback.
         if (context.ComboStep == 2 &&
             context.LastComboAction == PLDActions.FastBlade.ActionId &&
             level >= PLDActions.RiotBlade.MinLevel)
         {
-            scheduler.PushGcd(ThemisAbilities.RiotBlade, targetId, priority: 7,
+            scheduler.PushGcd(ThemisAbilities.RiotBlade, targetId, priority: 6,
                 onDispatched: _ =>
                 {
                     context.Debug.PlannedAction = PLDActions.RiotBlade.Name;
@@ -580,10 +642,9 @@ public sealed class DamageModule : IThemisModule
                         .Record();
                     context.TrainingService?.RecordConceptApplication(PldConcepts.BurstWindow, wasSuccessful: true);
                 });
-            return;
         }
 
-        // Starter: Fast Blade
+        // Starter / fallback: Fast Blade
         scheduler.PushGcd(ThemisAbilities.FastBlade, targetId, priority: 7,
             onDispatched: _ =>
             {

@@ -149,6 +149,8 @@ public static class LocalizedStrings
         public const string CombatBehaviorHeader = "config.general.combat_behavior_header";
         public const string StartOnAutoAttack = "config.general.start_on_auto_attack";
         public const string StartOnAutoAttackDesc = "config.general.start_on_auto_attack_desc";
+        public const string StartOnPartyInCombat = "config.general.start_on_party_in_combat";
+        public const string StartOnPartyInCombatDesc = "config.general.start_on_party_in_combat_desc";
     }
 
     /// <summary>Keys for window behavior settings.</summary>
@@ -224,6 +226,8 @@ public static class LocalizedStrings
         public const string SafeGapCloserDesc = "config.targeting.safe_gap_closer_desc";
         public const string InvulnerabilityFiltering = "config.targeting.invulnerability_filtering";
         public const string InvulnerabilityFilteringDesc = "config.targeting.invulnerability_filtering_desc";
+        public const string IncludeHostilesWithoutPersonalCombatFlag = "config.targeting.include_hostiles_without_personal_combat_flag";
+        public const string IncludeHostilesWithoutPersonalCombatFlagDesc = "config.targeting.include_hostiles_without_personal_combat_flag_desc";
     }
 
     /// <summary>Keys for consumables config section.</summary>
@@ -1341,6 +1345,10 @@ public static class LocalizedStrings
         public const string EnforcePositionalsDesc = "config.job.nin.enforce_positionals_desc";
         public const string AllowPositionalLoss = "config.job.nin.allow_positional_loss";
         public const string AllowPositionalLossDesc = "config.job.nin.allow_positional_loss_desc";
+        public const string EnablePositionalMovement = "config.job.nin.enable_positional_movement";
+        public const string EnablePositionalMovementDesc = "config.job.nin.enable_positional_movement_desc";
+        public const string EnableBurstMeleeApproach = "config.job.nin.enable_burst_melee_approach";
+        public const string EnableBurstMeleeApproachDesc = "config.job.nin.enable_burst_melee_approach_desc";
         public const string RoleActionsSection = "config.job.nin.role_actions_section";
         public const string EnableFeint = "config.job.nin.enable_feint";
     }

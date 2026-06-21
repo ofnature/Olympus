@@ -1,6 +1,7 @@
 using Dalamud.Game.ClientState.Objects.Types;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using Olympus.Data;
+using Olympus.Models.Action;
 using Olympus.Rotation.Common.Helpers;
 using Olympus.Rotation.Common.Scheduling;
 using Olympus.Rotation.HermesCore.Context;
@@ -18,8 +19,20 @@ namespace Olympus.Rotation.HermesCore.Modules;
 /// </summary>
 public sealed class NinjutsuModule : IHermesModule
 {
+    private const int MudraStepStuckFrameThreshold = 45;
+    private const int NinjutsuAbortCooldownFrames = 45;
+
+    private int _mudraCountZeroStuckFrames;
+    private int _ninjutsuAbortCooldownFrames;
+    private readonly IHermesNinjutsuExecutor _executor;
+
     public int Priority => 10;
     public string Name => "Ninjutsu";
+
+    public NinjutsuModule(IHermesNinjutsuExecutor? executor = null)
+    {
+        _executor = executor ?? new HermesNinjutsuExecutor();
+    }
 
     public bool TryExecute(IHermesContext context, bool isMoving) => false;
 
@@ -27,8 +40,13 @@ public sealed class NinjutsuModule : IHermesModule
 
     public void CollectCandidates(IHermesContext context, RotationScheduler scheduler, bool isMoving)
     {
+        context.Debug.NinjutsuEvaluated = false;
+        HermesNinjutsuMudraExecutor.BeginCollectFrame(context.FrameCache?.FrameNumber ?? 0);
+
         if (!context.InCombat)
         {
+            if (context.MudraHelper.IsSequenceActive && context.MudraHelper.MudraCount >= 1)
+                AbortMudraSequence(context, "Combat ended");
             context.Debug.NinjutsuState = "Not in combat";
             return;
         }
@@ -48,151 +66,331 @@ public sealed class NinjutsuModule : IHermesModule
 
         var enemyCount = context.TargetingService.CountEnemiesInRange(5f, player);
 
+        if (TryHandleRabbitFailure(context, target))
+            return;
+
+        // Track 1 — RSR DoTenChiJin (priority over MudraHelper; Phase R1)
+        if (context.HasTenChiJin)
+            _executor.TryExecuteTenChiJin(context, target, enemyCount);
+        else
+            _executor.ResetTcjTrack();
+
         if (context.MudraHelper.IsSequenceActive)
         {
             ContinueMudraSequence(context, target);
+            UpdateMudraStuckDebug(context);
+            var abortReason = GetMudraAbortReason(context, target);
+            if (abortReason != null)
+            {
+                AbortMudraSequence(context, abortReason);
+                return;
+            }
+
+            if (context.MudraHelper.MudraCount > 0)
+            {
+                var slotId = HermesNinjutsuSlotProbe.GetEffectiveSlotId(context.ActionService);
+                var aimForDesync = context.MudraHelper.TargetNinjutsu;
+                if (aimForDesync != NINActions.NinjutsuType.None
+                    && HermesNinjutsuSlotProbe.IsNoActiveNinjutsu(slotId)
+                    && !HermesNinjutsuMudraExecutor.IsWaitingForSlotAcknowledge(context, aimForDesync))
+                {
+                    AbortMudraSequence(context, "Mudra slot desync", applyCooldown: false);
+                    return;
+                }
+            }
+
+            // New sequence only — first mudra on charge CD; release combo instead of idling ~20s.
+            var aim = context.MudraHelper.TargetNinjutsu;
+            if (context.CanExecuteGcd
+                && aim != NINActions.NinjutsuType.None
+                && context.MudraHelper.MudraCount == 0
+                && HermesNinjutsuMudraExecutor.IsFirstMudraBlockedOnCharge(context, aim))
+            {
+                AbortMudraSequence(context, "Ten on charge CD — combo filler", applyCooldown: false);
+                return;
+            }
+
             return;
         }
 
         if (context.HasTenChiJin)
+            return;
+
+        HermesNinjutsuExecutor.ClearTcjDebugProbe(context);
+
+        if (_ninjutsuAbortCooldownFrames > 0)
+            _ninjutsuAbortCooldownFrames--;
+
+        context.Debug.NinjutsuEvaluated = true;
+        context.Debug.EnableNinjutsu = context.Configuration.Ninja.EnableNinjutsu;
+        context.Debug.NeedsSuiton = HermesNinjutsuDiagnostics.EvaluateNeedsSuiton(
+            context, level, enemyCount, out var needsSuitonReason);
+        context.Debug.NeedsSuitonReason = needsSuitonReason;
+        context.Debug.ShouldStartNinjutsu = HermesNinjutsuDiagnostics.EvaluateShouldStartNinjutsu(
+            context, level, enemyCount, out var blockReason);
+        context.Debug.ShouldStartNinjutsuBlockReason = blockReason;
+
+        context.Debug.NinjutsuAbortCooldownFrames = _ninjutsuAbortCooldownFrames;
+
+        if (context.Debug.ShouldStartNinjutsu && _ninjutsuAbortCooldownFrames == 0)
         {
-            HandleTenChiJin(context, target, enemyCount);
+            if (TryResumeOrphanedMudraSlot(context, target, enemyCount))
+                return;
+
+            if (!HermesNinjutsuMudraExecutor.IsTenPressable(context))
+            {
+                var needsSuiton = NeedsSuiton(context, level, enemyCount);
+                var queued = ResolveNinjutsuTarget(context, level, enemyCount, needsSuiton);
+                var tenWait = TenMudraChargeTracker.GetSnapshot(context.ActionService, level);
+                var waitSummary = TenMudraChargeTracker.FormatWaitSummary(tenWait);
+                context.Debug.NinjutsuState = queued == NINActions.NinjutsuType.None
+                    ? $"Idle: {waitSummary}"
+                    : $"Queued {queued} — {waitSummary}";
+                return;
+            }
+
+            StartNinjutsuSequence(context, target, enemyCount);
+        }
+        else if (_ninjutsuAbortCooldownFrames > 0)
+        {
+            context.Debug.NinjutsuState = $"Backoff after abort ({_ninjutsuAbortCooldownFrames})";
+        }
+        else if (string.IsNullOrEmpty(context.Debug.NinjutsuState))
+        {
+            context.Debug.NinjutsuState = $"Idle: {blockReason}";
+        }
+    }
+
+    private void AbortMudraSequence(IHermesContext context, string reason, bool applyCooldown = true)
+    {
+        _mudraCountZeroStuckFrames = 0;
+        context.MudraHelper.Reset();
+        if (applyCooldown)
+            _ninjutsuAbortCooldownFrames = NinjutsuAbortCooldownFrames;
+        context.Debug.NinjutsuAbortCooldownFrames = _ninjutsuAbortCooldownFrames;
+        context.Debug.NinjutsuState = $"Aborted: {reason}";
+    }
+
+    private void UpdateMudraStuckCounter(IHermesContext context, HermesMudraStepResult result)
+    {
+        if (!context.CanExecuteGcd)
+        {
+            _mudraCountZeroStuckFrames = 0;
             return;
         }
 
-        if (ShouldStartNinjutsu(context, level, enemyCount))
+        var aim = context.MudraHelper.TargetNinjutsu;
+        if (aim == NINActions.NinjutsuType.None)
         {
-            StartNinjutsuSequence(context, target, enemyCount);
+            _mudraCountZeroStuckFrames = 0;
+            return;
         }
+
+        if (result == HermesMudraStepResult.WaitingForAcknowledge
+            || HermesNinjutsuMudraExecutor.IsStepBlockedOnOpenGcd(context, aim))
+        {
+            _mudraCountZeroStuckFrames++;
+            return;
+        }
+
+        _mudraCountZeroStuckFrames = 0;
+    }
+
+    private void UpdateMudraStuckDebug(IHermesContext context)
+    {
+        var aim = context.MudraHelper.TargetNinjutsu;
+        var slotId = HermesNinjutsuSlotProbe.GetSlotAdjustedId(context.ActionService);
+
+        context.Debug.MudraCountZeroStuckFrames = _mudraCountZeroStuckFrames;
+        context.Debug.MudraCountZeroStuckThreshold = MudraStepStuckFrameThreshold;
+        context.Debug.NinjutsuSlotAdjustedId = slotId;
+        context.Debug.NinjutsuSlotProbe = HermesNinjutsuSlotProbe.DescribeSlot(slotId);
+        context.Debug.MudraStuckCanExecuteGcd = context.CanExecuteGcd;
+        context.Debug.MudraStuckGcdRemaining = context.ActionService.GcdRemaining;
+        context.Debug.MudraStuckAnimationLock = context.ActionService.AnimationLockRemaining;
+        context.Debug.MudraNextName = HermesNinjutsuMudraExecutor.GetExpectedStepName(
+            aim, slotId, context.Player.Level, context.HasKassatsu);
+        context.Debug.MudraNextCanExecute = HermesNinjutsuMudraExecutor.CanCurrentStepExecute(context, aim, slotId);
+    }
+
+    private string? GetMudraAbortReason(IHermesContext context, IBattleChara? target)
+    {
+        if (_mudraCountZeroStuckFrames >= MudraStepStuckFrameThreshold)
+            return "Stuck waiting for mudra step";
+
+        if (!context.MudraHelper.IsSequenceActive)
+            return null;
+        if (!context.InCombat)
+            return "Combat ended";
+        return null;
     }
 
     private void ContinueMudraSequence(IHermesContext context, IBattleChara? target)
     {
         var mudraHelper = context.MudraHelper;
+        var result = HermesNinjutsuMudraExecutor.TryExecuteStep(
+            context, target, mudraHelper.TargetNinjutsu, out var stepState, out var executedNinjutsu);
+        context.Debug.NinjutsuState = stepState;
+        UpdateMudraStuckCounter(context, result);
 
-        if (mudraHelper.IsReadyToExecute)
+        switch (result)
         {
-            if (context.CanExecuteGcd)
-            {
-                ExecuteNinjutsu(context, target);
-                return;
-            }
-            context.Debug.NinjutsuState = "Waiting for GCD to execute Ninjutsu";
-            return;
-        }
-
-        InputNextMudra(context);
-    }
-
-    private unsafe void InputNextMudra(IHermesContext context)
-    {
-        var mudraHelper = context.MudraHelper;
-        var nextMudra = mudraHelper.GetNextMudra();
-        if (nextMudra == NINActions.MudraType.None)
-        {
-            context.Debug.NinjutsuState = "Invalid mudra sequence";
-            mudraHelper.Reset();
-            return;
-        }
-
-        var mudraAction = NINActions.GetMudraAction(nextMudra);
-        var actionManager = SafeGameAccess.GetActionManager(null);
-        if (actionManager == null) return;
-
-        if (actionManager->GetActionStatus(ActionType.Action, mudraAction.ActionId) != 0)
-        {
-            context.Debug.NinjutsuState = $"Waiting for {mudraAction.Name}";
-            return;
-        }
-
-        if (actionManager->UseAction(ActionType.Action, mudraAction.ActionId, context.Player.GameObjectId))
-        {
-            mudraHelper.AdvanceSequence();
-            context.Debug.PlannedAction = mudraAction.Name;
-            context.Debug.NinjutsuState = $"Input {mudraAction.Name} ({mudraHelper.MudraCount}/{mudraHelper.GetRequiredMudraCount()})";
+            case HermesMudraStepResult.ExecutedNinjutsu when executedNinjutsu != null:
+                var targetNinjutsu = mudraHelper.TargetNinjutsu;
+                if (targetNinjutsu == NINActions.NinjutsuType.Suiton)
+                    context.MudraHelper.MarkSuitonExecuted();
+                if (targetNinjutsu == NINActions.NinjutsuType.Doton)
+                    context.MudraHelper.MarkDotonExecuted();
+                mudraHelper.CompleteSequence();
+                RecordNinjutsuTraining(context, target, targetNinjutsu, executedNinjutsu);
+                break;
+            case HermesMudraStepResult.AbortRabbit:
+                AbortMudraSequence(context, "Rabbit Medium", applyCooldown: false);
+                break;
         }
     }
 
-    private unsafe void ExecuteNinjutsu(IHermesContext context, IBattleChara? target)
+    private void RecordNinjutsuTraining(
+        IHermesContext context,
+        IBattleChara? target,
+        NINActions.NinjutsuType targetNinjutsu,
+        Models.Action.ActionDefinition ninjutsuAction)
     {
-        var mudraHelper = context.MudraHelper;
-        var targetNinjutsu = mudraHelper.TargetNinjutsu;
+        var ninjutsuType = GetNinjutsuDescription(targetNinjutsu, context.HasKassatsu);
+        var conceptId = GetNinjutsuConceptId(targetNinjutsu);
+        TrainingHelper.Decision(context.TrainingService)
+            .Action(ninjutsuAction.ActionId, ninjutsuAction.Name)
+            .AsMeleeDamage()
+            .Target(target?.Name?.TextValue ?? "Self")
+            .Reason($"Executing {ninjutsuAction.Name} ({ninjutsuType})",
+                GetNinjutsuExplanation(targetNinjutsu, context.HasKassatsu))
+            .Factors(GetNinjutsuFactors(targetNinjutsu, context))
+            .Alternatives(GetNinjutsuAlternatives(targetNinjutsu))
+            .Tip(GetNinjutsuTip(targetNinjutsu))
+            .Concept(conceptId)
+            .Record();
+        context.TrainingService?.RecordConceptApplication(conceptId, true, ninjutsuType);
+    }
 
-        var ninjutsuAction = GetNinjutsuAction(targetNinjutsu, context.HasKassatsu, context.Player.Level);
-        if (ninjutsuAction == null)
+    private static bool NeedsSuiton(IHermesContext context, byte level, int enemyCount)
+        => HermesNinjutsuDiagnostics.EvaluateNeedsSuiton(context, level, enemyCount, out _);
+
+    private static bool HasDotonActive(IHermesContext context)
+        => HermesNinjutsuDiagnostics.HasDotonGroundDoT(context);
+
+    private static NINActions.NinjutsuType ResolveNinjutsuTarget(
+        IHermesContext context, byte level, int enemyCount, bool needsSuiton)
+    {
+        if (needsSuiton && level >= NINActions.Suiton.MinLevel)
+            return NINActions.NinjutsuType.Suiton;
+
+        return MudraHelper.GetRecommendedNinjutsu(
+            level, context.HasKassatsu, needsSuiton, enemyCount,
+            context.Configuration.Ninja.UseDotonForAoE,
+            context.Configuration.Ninja.DotonMinTargets,
+            HasDotonActive(context));
+    }
+
+    private bool TryHandleRabbitFailure(IHermesContext context, IBattleChara? target)
+    {
+        if (!HermesNinjutsuMudraExecutor.IsRabbitFailureSlot(context))
+            return false;
+
+        if (context.MudraHelper.IsSequenceActive)
         {
-            context.Debug.NinjutsuState = "Invalid Ninjutsu";
-            mudraHelper.Reset();
-            return;
+            AbortMudraSequence(context, "Rabbit Medium", applyCooldown: false);
+            return true;
         }
 
-        var targetId = target?.GameObjectId ?? context.Player.GameObjectId;
-        if (targetNinjutsu == NINActions.NinjutsuType.Huton) targetId = context.Player.GameObjectId;
+        if (!context.CanExecuteGcd)
+        {
+            context.Debug.NinjutsuState = "Clearing Rabbit Medium (waiting for GCD)";
+            return true;
+        }
 
+        if (TryExecuteRabbitClear(context, target))
+        {
+            context.Debug.NinjutsuState = "Cleared Rabbit Medium";
+            return true;
+        }
+
+        context.Debug.NinjutsuState = "Rabbit Medium clear failed — continuing rotation";
+        return false;
+    }
+
+    private bool TryResumeOrphanedMudraSlot(IHermesContext context, IBattleChara? target, int enemyCount)
+    {
+        if (context.MudraHelper.IsSequenceActive)
+            return false;
+
+        var slotId = HermesNinjutsuSlotProbe.GetEffectiveSlotId(context.ActionService);
+        if (HermesNinjutsuSlotProbe.IsNoActiveNinjutsu(slotId)
+            || HermesNinjutsuSlotProbe.IsRabbitMediumCurrent(slotId))
+            return false;
+
+        if (!context.HasGameMudraStatus && !context.CanExecuteGcd)
+            return false;
+
+        var level = context.Player.Level;
+        var needsSuiton = NeedsSuiton(context, level, enemyCount);
+        var aim = ResolveNinjutsuTarget(context, level, enemyCount, needsSuiton);
+
+        if (aim == NINActions.NinjutsuType.None)
+            return false;
+
+        _mudraCountZeroStuckFrames = 0;
+        context.MudraHelper.StartSequence(aim);
+        context.Debug.NinjutsuState = $"Resuming {aim} from slot ({HermesNinjutsuSlotProbe.DescribeSlot(slotId)})";
+        ContinueMudraSequence(context, target);
+        return true;
+    }
+
+    private static unsafe bool TryExecuteRabbitClear(IHermesContext context, IBattleChara? target)
+    {
         var actionManager = SafeGameAccess.GetActionManager(null);
         if (actionManager == null)
-        {
-            context.Debug.NinjutsuState = "ActionManager unavailable";
-            return;
-        }
+            return false;
 
         var adjustedId = actionManager->GetAdjustedActionId(NINActions.Ninjutsu.ActionId);
+        if (!HermesNinjutsuSlotProbe.IsRabbitMediumCurrent(adjustedId))
+            return false;
+
         if (actionManager->GetActionStatus(ActionType.Action, adjustedId) != 0)
-        {
-            context.Debug.NinjutsuState = $"Waiting for {ninjutsuAction.Name}";
-            return;
-        }
+            return false;
 
-        if (actionManager->UseAction(ActionType.Action, NINActions.Ninjutsu.ActionId, targetId))
-        {
-            context.Debug.PlannedAction = ninjutsuAction.Name;
-            context.Debug.NinjutsuState = $"Executed {ninjutsuAction.Name}";
-            mudraHelper.CompleteSequence();
+        var targetId = target?.GameObjectId ?? context.Player.GameObjectId;
+        if (!actionManager->UseAction(ActionType.Action, NINActions.Ninjutsu.ActionId, targetId))
+            return false;
 
-            var ninjutsuType = GetNinjutsuDescription(targetNinjutsu, context.HasKassatsu);
-            var conceptId = GetNinjutsuConceptId(targetNinjutsu);
-            TrainingHelper.Decision(context.TrainingService)
-                .Action(ninjutsuAction.ActionId, ninjutsuAction.Name)
-                .AsMeleeDamage()
-                .Target(target?.Name?.TextValue ?? "Self")
-                .Reason($"Executing {ninjutsuAction.Name} ({ninjutsuType})",
-                    GetNinjutsuExplanation(targetNinjutsu, context.HasKassatsu))
-                .Factors(GetNinjutsuFactors(targetNinjutsu, context))
-                .Alternatives(GetNinjutsuAlternatives(targetNinjutsu))
-                .Tip(GetNinjutsuTip(targetNinjutsu))
-                .Concept(conceptId)
-                .Record();
-            context.TrainingService?.RecordConceptApplication(conceptId, true, ninjutsuType);
-        }
-    }
-
-    private bool ShouldStartNinjutsu(IHermesContext context, byte level, int enemyCount)
-    {
-        if (!context.Configuration.Ninja.EnableNinjutsu) return false;
-        if (level < NINActions.Ten.MinLevel) return false;
-        if (!context.ActionService.IsActionReady(NINActions.Ten.ActionId)) return false;
-        if (context.HasKassatsu) return true;
-        if (NeedsSuiton(context, level)) return true;
-        return context.CanExecuteOgcd;
-    }
-
-    private bool NeedsSuiton(IHermesContext context, byte level)
-    {
-        if (level < NINActions.Suiton.MinLevel) return false;
-        if (context.HasSuiton) return false;
-        var kunaiAction = level >= NINActions.KunaisBane.MinLevel ? NINActions.KunaisBane : NINActions.TrickAttack;
-        return context.ActionService.IsActionReady(kunaiAction.ActionId);
+        context.ActionService.NotifyActionExecuted(NINActions.RabbitMedium, adjustedId);
+        return true;
     }
 
     private void StartNinjutsuSequence(IHermesContext context, IBattleChara? target, int enemyCount)
     {
-        var level = context.Player.Level;
-        var needsSuiton = NeedsSuiton(context, level);
+        if (HermesNinjutsuMudraExecutor.IsRabbitFailureSlot(context))
+        {
+            context.Debug.NinjutsuState = "Waiting to clear Rabbit Medium";
+            return;
+        }
 
-        var ninjutsu = MudraHelper.GetRecommendedNinjutsu(
-            level, context.HasKassatsu, needsSuiton, enemyCount,
-            context.Configuration.Ninja.UseDotonForAoE,
-            context.Configuration.Ninja.DotonMinTargets);
+        var slotId = HermesNinjutsuSlotProbe.GetEffectiveSlotId(context.ActionService);
+        if (!HermesNinjutsuSlotProbe.IsNoActiveNinjutsu(slotId))
+        {
+            context.Debug.NinjutsuState = "Waiting for ninjutsu slot clear";
+            return;
+        }
+
+        if (context.HasGameMudraStatus)
+        {
+            context.Debug.NinjutsuState = "Waiting for mudra status clear";
+            return;
+        }
+
+        var level = context.Player.Level;
+        var needsSuiton = NeedsSuiton(context, level, enemyCount);
+
+        var ninjutsu = ResolveNinjutsuTarget(context, level, enemyCount, needsSuiton);
 
         if (ninjutsu == NINActions.NinjutsuType.None)
         {
@@ -200,98 +398,10 @@ public sealed class NinjutsuModule : IHermesModule
             return;
         }
 
+        _mudraCountZeroStuckFrames = 0;
         context.MudraHelper.StartSequence(ninjutsu);
         context.Debug.NinjutsuState = $"Starting {ninjutsu}";
-
-        InputNextMudra(context);
-    }
-
-    private unsafe void HandleTenChiJin(IHermesContext context, IBattleChara? target, int enemyCount)
-    {
-        if (!context.Configuration.Ninja.EnableTenChiJin) return;
-        if (!context.CanExecuteGcd)
-        {
-            context.Debug.NinjutsuState = "TCJ: Waiting for GCD";
-            return;
-        }
-
-        var stacks = context.TenChiJinStacks;
-        var targetId = target?.GameObjectId ?? context.Player.GameObjectId;
-
-        uint baseActionId;
-        Models.Action.ActionDefinition displayAction;
-        string actionName;
-
-        if (stacks >= 3)
-        {
-            baseActionId = NINActions.Ten.ActionId;
-            displayAction = NINActions.FumaShuriken;
-            actionName = "TCJ: Fuma Shuriken";
-        }
-        else if (stacks == 2)
-        {
-            baseActionId = NINActions.Chi.ActionId;
-            if (enemyCount >= context.Configuration.Ninja.AoEMinTargets)
-            {
-                displayAction = NINActions.Katon;
-                actionName = "TCJ: Katon";
-            }
-            else
-            {
-                displayAction = NINActions.Raiton;
-                actionName = "TCJ: Raiton";
-            }
-        }
-        else if (stacks == 1)
-        {
-            baseActionId = NINActions.Jin.ActionId;
-            if (enemyCount >= context.Configuration.Ninja.AoEMinTargets)
-            {
-                displayAction = NINActions.Doton;
-                actionName = "TCJ: Doton";
-            }
-            else
-            {
-                displayAction = NINActions.Suiton;
-                actionName = "TCJ: Suiton";
-            }
-        }
-        else
-        {
-            context.Debug.NinjutsuState = "TCJ complete";
-            return;
-        }
-
-        context.Debug.NinjutsuState = $"TCJ: Waiting for {displayAction.Name}";
-
-        var actionManager = SafeGameAccess.GetActionManager(null);
-        if (actionManager == null) return;
-
-        var adjustedId = actionManager->GetAdjustedActionId(baseActionId);
-        if (actionManager->GetActionStatus(ActionType.Action, adjustedId) != 0) return;
-
-        if (actionManager->UseAction(ActionType.Action, baseActionId, targetId))
-        {
-            context.Debug.PlannedAction = displayAction.Name;
-            context.Debug.NinjutsuState = actionName;
-
-            var tcjConceptId = stacks == 1
-                ? (enemyCount >= context.Configuration.Ninja.AoEMinTargets ? NinConcepts.AoeNinjutsu : NinConcepts.Suiton)
-                : NinConcepts.TcjOptimization;
-            TrainingHelper.Decision(context.TrainingService)
-                .Action(displayAction.ActionId, displayAction.Name)
-                .AsMeleeBurst()
-                .Target(target?.Name?.TextValue ?? "Target")
-                .Reason($"TCJ step {4 - stacks}/3: {displayAction.Name}",
-                    "Ten Chi Jin lets you use three Ninjutsu instantly. Standard sequence: Fuma Shuriken (Ten) → " +
-                    "Raiton/Katon (Chi) → Suiton/Doton (Jin). Movement cancels TCJ.")
-                .Factors(new[] { "TCJ active", $"Step {4 - stacks} of 3", $"{enemyCount} enemies nearby" })
-                .Alternatives(new[] { "Cannot deviate — TCJ sequences are locked in order" })
-                .Tip("TCJ is cancelled by movement.")
-                .Concept(tcjConceptId)
-                .Record();
-            context.TrainingService?.RecordConceptApplication(tcjConceptId, true, $"TCJ step {4 - stacks}");
-        }
+        ContinueMudraSequence(context, target);
     }
 
     private static string GetNinjutsuDescription(NINActions.NinjutsuType ninjutsu, bool hasKassatsu)
@@ -363,37 +473,5 @@ public sealed class NinjutsuModule : IHermesModule
         NINActions.NinjutsuType.Raiton => "Raiton → Raiju is free damage.",
         NINActions.NinjutsuType.Katon => "With Kassatsu, this becomes Goka Mekkyaku.",
         _ => "Master your mudra sequences."
-    };
-
-    private static Models.Action.ActionDefinition? GetNinjutsuAction(
-        NINActions.NinjutsuType ninjutsu, bool hasKassatsu, byte level)
-    {
-        if (hasKassatsu)
-        {
-            return ninjutsu switch
-            {
-                NINActions.NinjutsuType.Katon or NINActions.NinjutsuType.GokaMekkyaku
-                    when level >= NINActions.GokaMekkyaku.MinLevel => NINActions.GokaMekkyaku,
-                NINActions.NinjutsuType.Hyoton or NINActions.NinjutsuType.HyoshoRanryu
-                    when level >= NINActions.HyoshoRanryu.MinLevel => NINActions.HyoshoRanryu,
-                NINActions.NinjutsuType.Raiton => NINActions.Raiton,
-                _ => GetBaseNinjutsuAction(ninjutsu)
-            };
-        }
-        return GetBaseNinjutsuAction(ninjutsu);
-    }
-
-    private static Models.Action.ActionDefinition? GetBaseNinjutsuAction(NINActions.NinjutsuType ninjutsu) => ninjutsu switch
-    {
-        NINActions.NinjutsuType.FumaShuriken => NINActions.FumaShuriken,
-        NINActions.NinjutsuType.Raiton => NINActions.Raiton,
-        NINActions.NinjutsuType.Katon => NINActions.Katon,
-        NINActions.NinjutsuType.Hyoton => NINActions.Hyoton,
-        NINActions.NinjutsuType.Huton => NINActions.Huton,
-        NINActions.NinjutsuType.Doton => NINActions.Doton,
-        NINActions.NinjutsuType.Suiton => NINActions.Suiton,
-        NINActions.NinjutsuType.GokaMekkyaku => NINActions.GokaMekkyaku,
-        NINActions.NinjutsuType.HyoshoRanryu => NINActions.HyoshoRanryu,
-        _ => null
     };
 }

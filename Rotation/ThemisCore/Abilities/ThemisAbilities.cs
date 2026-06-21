@@ -1,5 +1,6 @@
 using Olympus.Data;
 using Olympus.Rotation.Common.Scheduling;
+using Olympus.Rotation.ThemisCore.Context;
 
 namespace Olympus.Rotation.ThemisCore.Abilities;
 
@@ -151,6 +152,11 @@ public static class ThemisAbilities
     {
         Action = PLDActions.Intervene,
         Toggle = cfg => cfg.Tank.EnableIntervene,
+        // RSR parity (PLD_Reborn.AttackAbility): Intervene has 2 charges; outside Fight or Flight
+        // hold one charge so the burst window always has a gap-closer/weave charge available
+        // (RSR: usedUp: UseInterveneFight && HasFightOrFlight).
+        ChargeHold = ChargeHoldPolicy.HoldOneForBurst(
+            ctx => ctx is IThemisContext t && t.HasFightOrFlight),
     };
 
     // --- Ranged filler ---

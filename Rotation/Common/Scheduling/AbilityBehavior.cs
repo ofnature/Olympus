@@ -66,4 +66,11 @@ public sealed record AbilityBehavior
     /// Instants (CastTime = 0) are never blocked regardless.
     /// </summary>
     public bool MechanicGate { get; init; }
+
+    /// <summary>
+    /// Optional charge-reserve policy for multi-charge abilities. When set, the scheduler keeps
+    /// charges in reserve outside the burst window (see <see cref="ChargeHoldPolicy"/>). Null
+    /// means "no reserve — spend charges freely."
+    /// </summary>
+    public ChargeHoldPolicy? ChargeHold { get; init; }
 }

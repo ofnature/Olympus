@@ -163,6 +163,15 @@ public sealed class GeneralSection
                 "Auto-targeting ignores enemies with invulnerability effects (boss phase transitions, immune adds, invulnerable objects). Prevents wasting actions on targets that take no damage."),
             this.save);
 
+        ConfigUIHelpers.Toggle(
+            Loc.T(LocalizedStrings.Targeting.IncludeHostilesWithoutPersonalCombatFlag,
+                "Include hostiles without your in-combat flag"),
+            () => this.config.Targeting.IncludeHostilesWithoutPersonalCombatFlag,
+            v => this.config.Targeting.IncludeHostilesWithoutPersonalCombatFlag = v,
+            Loc.T(LocalizedStrings.Targeting.IncludeHostilesWithoutPersonalCombatFlagDesc,
+                "In alliance raids, mobs tagged by other parties often lack your personal in-combat flag until you hit them. Enable to keep attacking valid contribution targets. Also activates automatically while group-combat assist is enabled and allies are fighting."),
+            this.save);
+
         ConfigUIHelpers.Spacing();
 
         // Movement tolerance
@@ -191,6 +200,17 @@ public sealed class GeneralSection
                 this.save();
             }
             ImGui.TextDisabled(Loc.T(LocalizedStrings.General.StartOnAutoAttackDesc, "When enabled, Olympus starts executing the rotation as soon as auto-attack is active on a target, before the server sets the in-combat flag."));
+
+            ConfigUIHelpers.Spacing();
+
+            var enableOnPartyInCombat = this.config.EnableOnPartyInCombat;
+            if (ImGui.Checkbox(Loc.T(LocalizedStrings.General.StartOnPartyInCombat, "Start rotation when group is in combat"), ref enableOnPartyInCombat))
+            {
+                this.config.EnableOnPartyInCombat = enableOnPartyInCombat;
+                this.save();
+            }
+            ImGui.TextDisabled(Loc.T(LocalizedStrings.General.StartOnPartyInCombatDesc,
+                "When enabled, Olympus runs the rotation while any party member or Trust ally is fighting, even before you personally enter combat. Use Tank Assist targeting to automatically attack what your tank is hitting."));
 
             ConfigUIHelpers.EndIndent();
         }

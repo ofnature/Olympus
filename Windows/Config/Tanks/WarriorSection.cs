@@ -213,8 +213,12 @@ public sealed class WarriorSection
             ImGui.BulletText(Loc.T(LocalizedStrings.Warrior.Orogeny, "Orogeny"));
 
             ConfigUIHelpers.Spacing();
-            ImGui.TextDisabled(Loc.T(LocalizedStrings.Tank.UsesSharedAoESettings, "Uses shared tank AoE settings."));
-            ImGui.TextDisabled(Loc.TFormat(LocalizedStrings.Tank.CurrentMinTargets, "Current min targets: {0}", config.Tank.AoEMinTargets));
+            TankAoEConfigHelper.DrawAoESettings(
+                config,
+                JobRegistry.Warrior,
+                () => config.Tank.WarriorAoEMinTargetsOverride,
+                v => config.Tank.WarriorAoEMinTargetsOverride = v,
+                save);
 
             ConfigUIHelpers.EndIndent();
         }

@@ -30,8 +30,14 @@ public interface IHermesContext : IMeleeDpsRotationContext
 
     #region Mudra State
 
+    /// <summary>Game Mudra buff (status 496). RSR mudra gate input.</summary>
+    bool HasGameMudraStatus { get; }
+
+    /// <summary>Plugin MudraHelper sequence active (debug only — not a GCD/oGCD block).</summary>
+    bool IsMudraSequenceActive { get; }
+
     /// <summary>
-    /// Whether a mudra sequence is currently in progress.
+    /// Combined mudra activity for debug (game status OR helper sequence).
     /// </summary>
     bool IsMudraActive { get; }
 
@@ -142,6 +148,16 @@ public interface IHermesContext : IMeleeDpsRotationContext
     /// Remaining duration of Dokumori on target.
     /// </summary>
     float DokumoriRemaining { get; }
+
+    /// <summary>
+    /// RSR InMug — within ~19s of Mug/Dokumori use.
+    /// </summary>
+    bool InMug { get; }
+
+    /// <summary>
+    /// RSR InTrickAttack — within ~17s of Trick Attack/Kunai's Bane use.
+    /// </summary>
+    bool InTrickAttack { get; }
 
     #endregion
 

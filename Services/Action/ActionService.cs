@@ -39,12 +39,19 @@ public sealed unsafe class ActionService : IActionService
     // GCD tracking state
     private float _lastGcdTotal;
     private float _lastGcdElapsed;
+
+    // Group 57 reports a 0 total while the GCD is ready, which is exactly when modules evaluate
+    // the next cast. Cache the last rolling total so GCD-relative timing has a stable duration.
+    private float _lastKnownGcdTotal = 2.5f;
     private float _lastAnimationLock;
     private bool _lastIsCasting;
 
     // Last executed action (for debugging)
     private ActionDefinition? _lastExecutedAction;
     private DateTime _lastExecuteTime;
+
+    // Minimal action history (last GCD / last oGCD id) for oGCD sequencing consumers.
+    private readonly ActionHistory _history = new();
 
     // Track oGCD usage per GCD cycle (allows up to 2 weaves)
     private int _ogcdsUsedThisCycle;
@@ -58,6 +65,13 @@ public sealed unsafe class ActionService : IActionService
 
     /// <summary>Time remaining on GCD (0 if ready).</summary>
     public float GcdRemaining => Math.Max(0, _lastGcdTotal - _lastGcdElapsed);
+
+    /// <summary>
+    /// Live GCD duration in seconds (recast group 57 total), scaled by skill speed / haste.
+    /// Falls back to the last rolling value while the GCD is ready (group 57 reports 0 then),
+    /// defaulting to 2.5s before the first GCD has rolled.
+    /// </summary>
+    public float GcdDuration => _lastKnownGcdTotal;
 
     /// <summary>Animation lock remaining.</summary>
     public float AnimationLockRemaining => Math.Max(0, _lastAnimationLock);
@@ -77,6 +91,55 @@ public sealed unsafe class ActionService : IActionService
 
     /// <summary>Last executed action (for debugging).</summary>
     public ActionDefinition? LastExecutedAction => _lastExecutedAction;
+
+    /// <inheritdoc/>
+    public uint LastOgcdId => _history.LastOgcdId;
+
+    /// <inheritdoc/>
+    public bool WasLastGcd(uint actionId) => _history.WasLastGcd(actionId);
+
+    /// <inheritdoc/>
+    public bool WasLastOgcd(uint actionId) => _history.WasLastOgcd(actionId);
+
+    /// <inheritdoc/>
+    public bool WasLastAction(uint actionId) => _history.WasLastAction(actionId);
+
+    /// <inheritdoc/>
+    public void RecordActionExecuted(uint actionId) => _history.RecordAction(actionId);
+
+    /// <inheritdoc/>
+    public void RecordGcdExecuted(uint actionId) => _history.RecordGcd(actionId);
+
+    /// <inheritdoc/>
+    public void NotifyActionExecuted(ActionDefinition action, uint recordActionId = 0)
+    {
+        var historyId = recordActionId != 0 ? recordActionId : action.ActionId;
+
+        _lastExecutedAction = action;
+        _lastExecuteTime = DateTime.UtcNow;
+
+        if (action.IsGCD)
+        {
+            _history.RecordGcd(historyId);
+            _gcdSubmittedThisCycle = true;
+
+            // Raw ActionManager dispatches (Hermes mudra/ninjutsu/TCJ) bypass ExecuteGcd but still consume GCD.
+            var actionManager = SafeGameAccess.GetActionManager(_errorMetrics);
+            if (actionManager is not null)
+            {
+                var recastActionId = recordActionId != 0 ? recordActionId : action.ActionId;
+                var gcdDuration = actionManager->GetRecastTime(ActionType.Action, recastActionId);
+                _actionTracker.LogGcdCast(gcdDuration);
+            }
+        }
+        else
+        {
+            _history.RecordOgcd(historyId);
+        }
+
+        _actionTracker.LogAttempt(action.ActionId, null, null, ActionResult.Success, 0);
+        RaiseActionExecuted(action);
+    }
 
     /// <summary>
     /// Fired after a successful action execution. Used by the action feed overlay.
@@ -122,6 +185,8 @@ public sealed unsafe class ActionService : IActionService
         {
             _lastGcdTotal = recastDetail->Total;
             _lastGcdElapsed = recastDetail->Elapsed;
+            if (_lastGcdTotal > 0)
+                _lastKnownGcdTotal = _lastGcdTotal;
         }
         else
         {
@@ -142,6 +207,8 @@ public sealed unsafe class ActionService : IActionService
         {
             CurrentGcdState = GcdState.Ready;
             _ogcdsUsedThisCycle = 0; // Reset for new GCD cycle
+            // New GCD cycle — allow submission (NotifyActionExecuted / queue-window paths
+            // can leave this set while GcdRemaining is still 0, which deadlocks ExecuteGcd).
             _gcdSubmittedThisCycle = false;
         }
         else if (GcdRemaining <= FFXIVTimings.QueueWindow)
@@ -156,6 +223,7 @@ public sealed unsafe class ActionService : IActionService
         else
         {
             CurrentGcdState = GcdState.Rolling;
+            _gcdSubmittedThisCycle = false;
         }
     }
 
@@ -173,8 +241,8 @@ public sealed unsafe class ActionService : IActionService
         if (actionManager is null)
             return false;
 
-        // If we already queued a GCD for this cycle, don't spam UseAction every frame during the queue window.
-        if (_gcdSubmittedThisCycle && GcdRemaining > 0)
+        // If we already submitted a GCD for this cycle, don't spam UseAction every frame.
+        if (_gcdSubmittedThisCycle)
             return false;
 
         // Do NOT pre-check GetActionStatus here: while the global GCD is rolling it returns 583 ("not ready"),
@@ -184,11 +252,11 @@ public sealed unsafe class ActionService : IActionService
 
         if (result)
         {
-            if (GcdRemaining > 0)
-                _gcdSubmittedThisCycle = true;
+            _gcdSubmittedThisCycle = true;
 
             _lastExecutedAction = action;
             _lastExecuteTime = DateTime.UtcNow;
+            _history.RecordGcd(action.ActionId);
 
             // Track for statistics
             var gcdDuration = actionManager->GetRecastTime(ActionType.Action, action.ActionId);
@@ -225,6 +293,7 @@ public sealed unsafe class ActionService : IActionService
         {
             _lastExecutedAction = action;
             _lastExecuteTime = DateTime.UtcNow;
+            _history.RecordOgcd(action.ActionId);
             _ogcdsUsedThisCycle++; // Increment oGCD count for double-weave tracking
             _actionTracker.LogAttempt(action.ActionId, null, null, ActionResult.Success, 0);
             RaiseActionExecuted(action);
@@ -258,6 +327,7 @@ public sealed unsafe class ActionService : IActionService
         {
             _lastExecutedAction = action;
             _lastExecuteTime = DateTime.UtcNow;
+            _history.RecordOgcd(action.ActionId);
             _ogcdsUsedThisCycle++; // Increment oGCD count for double-weave tracking
             _actionTracker.LogAttempt(action.ActionId, null, null, ActionResult.Success, 0);
             RaiseActionExecuted(action);
@@ -286,18 +356,18 @@ public sealed unsafe class ActionService : IActionService
 
         // Same spam guard as ExecuteGcd — the Raw bypass is for validation checks,
         // not for cycle accounting.
-        if (_gcdSubmittedThisCycle && GcdRemaining > 0)
+        if (_gcdSubmittedThisCycle)
             return false;
 
         var result = actionManager->UseAction(ActionType.Action, rawDispatchId, targetId);
 
         if (result)
         {
-            if (GcdRemaining > 0)
-                _gcdSubmittedThisCycle = true;
+            _gcdSubmittedThisCycle = true;
 
             _lastExecutedAction = action;
             _lastExecuteTime = DateTime.UtcNow;
+            _history.RecordGcd(action.ActionId);
 
             var gcdDuration = actionManager->GetRecastTime(ActionType.Action, rawDispatchId);
             _actionTracker.LogGcdCast(gcdDuration);
@@ -322,6 +392,7 @@ public sealed unsafe class ActionService : IActionService
         {
             _lastExecutedAction = action;
             _lastExecuteTime = DateTime.UtcNow;
+            _history.RecordOgcd(action.ActionId);
             _ogcdsUsedThisCycle++;
             _actionTracker.LogAttempt(action.ActionId, null, null, ActionResult.Success, 0);
             RaiseActionExecuted(action);
@@ -442,6 +513,16 @@ public sealed unsafe class ActionService : IActionService
         return Math.Max(0, total - elapsed);
     }
 
+    /// <inheritdoc />
+    public float GetRecastTimeElapsed(uint actionId)
+    {
+        var actionManager = SafeGameAccess.GetActionManager(_errorMetrics);
+        if (actionManager is null)
+            return 0f;
+
+        return actionManager->GetRecastTimeElapsed(ActionType.Action, actionId);
+    }
+
     /// <summary>
     /// Checks if a specific action is ready to use.
     /// For charge-based abilities, returns true if any charges are available.
@@ -454,16 +535,18 @@ public sealed unsafe class ActionService : IActionService
         return GetCurrentCharges(actionId) > 0;
     }
 
-    /// <summary>
-    /// Checks if a specific action can be executed right now.
-    /// </summary>
+    /// <inheritdoc/>
     public bool CanExecuteAction(ActionDefinition action)
+        => CanExecuteActionId(GetAdjustedActionId(action.ActionId));
+
+    /// <inheritdoc/>
+    public bool CanExecuteActionId(uint actionId)
     {
         var actionManager = SafeGameAccess.GetActionManager(_errorMetrics);
         if (actionManager is null)
             return false;
 
-        return actionManager->GetActionStatus(ActionType.Action, action.ActionId) == 0;
+        return actionManager->GetActionStatus(ActionType.Action, actionId) == 0;
     }
 
     /// <summary>

@@ -28,6 +28,11 @@ public interface IThemisContext : ITankRotationContext
     bool HasFightOrFlight { get; }
 
     /// <summary>
+    /// Whether Goring Blade Ready (the Fight or Flight proc) is currently active.
+    /// </summary>
+    bool HasGoringBladeReady { get; }
+
+    /// <summary>
     /// Remaining duration of Fight or Flight buff (seconds).
     /// </summary>
     float FightOrFlightRemaining { get; }
@@ -132,6 +137,9 @@ public interface IThemisContext : ITankRotationContext
     /// Null if training mode is not available.
     /// </summary>
     ITrainingService? TrainingService { get; }
+
+    // TimeToKillService is inherited from IRotationContext (default member);
+    // ThemisContext provides the concrete instance.
 
     #endregion
 

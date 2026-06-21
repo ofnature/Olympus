@@ -7,6 +7,7 @@ using Olympus.Rotation.Common.RoleActionHelpers;
 using Olympus.Rotation.Common.Scheduling;
 using Olympus.Rotation.HermesCore.Abilities;
 using Olympus.Rotation.HermesCore.Context;
+using Olympus.Rotation.HermesCore.Helpers;
 using Olympus.Services;
 using Olympus.Services.Targeting;
 using Olympus.Services.Training;
@@ -25,17 +26,20 @@ public sealed class DamageModule : IHermesModule
 
     private readonly IBurstWindowService? _burstWindowService;
     private readonly ISmartAoEService? _smartAoEService;
+    private readonly IHermesNinjutsuExecutor _executor;
 
-    public DamageModule(IBurstWindowService? burstWindowService = null, ISmartAoEService? smartAoEService = null)
+    public DamageModule(
+        IBurstWindowService? burstWindowService = null,
+        ISmartAoEService? smartAoEService = null,
+        IHermesNinjutsuExecutor? executor = null)
     {
         _burstWindowService = burstWindowService;
         _smartAoEService = smartAoEService;
+        _executor = executor ?? new HermesNinjutsuExecutor();
     }
 
     private bool ShouldHoldForBurst(float thresholdSeconds = 8f) =>
         BurstHoldHelper.ShouldHoldForBurst(_burstWindowService, thresholdSeconds);
-
-    private const int KazematoiLowThreshold = 1;
 
     public bool TryExecute(IHermesContext context, bool isMoving) => false;
 
@@ -43,6 +47,8 @@ public sealed class DamageModule : IHermesModule
 
     public void CollectCandidates(IHermesContext context, RotationScheduler scheduler, bool isMoving)
     {
+        context.Debug.DamageState = "";
+
         if (!context.InCombat)
         {
             context.Debug.DamageState = "Not in combat";
@@ -77,11 +83,34 @@ public sealed class DamageModule : IHermesModule
         context.Debug.NearbyEnemies = rawEnemyCount;
         var enemyCount = aoeEnabled ? rawEnemyCount : 0;
 
-        // oGCDs: Ninki spenders
-        TryPushNinkiSpender(context, scheduler, target, enemyCount);
+        // Role oGCDs are safe during mudra — RSR blocks them at base layer, but Feint/Second Wind
+        // live in DamageModule and must not interrupt hand-sign sequences (BuffModule owns burst oGCDs).
         TryPushFeint(context, scheduler, target);
         TryPushSecondWind(context, scheduler);
         TryPushBloodbath(context, scheduler);
+
+        context.Debug.IsTcjStepPending = _executor.IsTcjStepPending;
+        if (_executor.IsTcjStepPending)
+        {
+            context.Debug.DamageState = "Paused (TCJ step pending)";
+            return;
+        }
+
+        // RSR 496 gate + reserve GCD when mudra/ninjutsu step is ready (NinjutsuModule runs first).
+        // Allow combo filler only while Ten/mudra is on CD during a queued sequence (ABB).
+        if (HermesMudraGate.ShouldBlockComboGcds(context))
+        {
+            context.Debug.DamageState = "Stalled (mudra status)";
+            return;
+        }
+
+        if (HermesBurstPrepHelper.ShouldHoldComboGcds(context, context.MudraHelper, _burstWindowService))
+        {
+            context.Debug.DamageState = "Burst prep — holding GCD for Kunai's Bane";
+            return;
+        }
+
+        TryPushNinkiSpender(context, scheduler, target, enemyCount);
 
         // GCDs
         TryPushRaiju(context, scheduler, target);
@@ -99,7 +128,15 @@ public sealed class DamageModule : IHermesModule
         var ninkiOvercapThreshold = context.Configuration.Ninja.NinkiOvercapThreshold;
 
         if (context.Ninki < ninkiMinGauge) return;
-        if (context.Configuration.Ninja.EnableBurstPooling && context.Configuration.Ninja.SaveNinkiForBurst && ShouldHoldForBurst(8f) && context.Ninki < ninkiOvercapThreshold) return;
+        if (context.Configuration.Ninja.EnableBurstPooling
+            && context.Configuration.Ninja.SaveNinkiForBurst
+            && ShouldHoldForBurst(8f)
+            && context.Ninki < ninkiOvercapThreshold)
+            return;
+
+        // RSR: (!InMug || InTrickAttack) — skip when not pooling so Ninki is spent on CD.
+        if (context.InMug && !context.InTrickAttack && HermesBurnHelper.ShouldPoolForRaidBurst(context))
+            return;
 
         var aoeThreshold = context.Configuration.Ninja.AoEMinTargets;
 
@@ -278,7 +315,8 @@ public sealed class DamageModule : IHermesModule
         var player = context.Player;
         var level = player.Level;
         var aoeThreshold = context.Configuration.Ninja.AoEMinTargets;
-        var useAoe = enemyCount >= aoeThreshold && level >= NINActions.DeathBlossom.MinLevel;
+        var suppressAoE = HermesBurstPrepHelper.ShouldSuppressAoE(context, enemyCount, aoeThreshold);
+        var useAoe = !suppressAoE && enemyCount >= aoeThreshold && level >= NINActions.DeathBlossom.MinLevel;
         if (useAoe) TryPushAoeCombo(context, scheduler, target, enemyCount);
         else TryPushSingleTargetCombo(context, scheduler, target);
     }
@@ -289,15 +327,13 @@ public sealed class DamageModule : IHermesModule
         var level = player.Level;
         var comboStep = context.ComboStep;
 
+        // Step 3 finishers at p6 — no early return (Nike/Themis parity)
         if (comboStep == 2 && context.LastComboAction == NINActions.GustSlash.ActionId)
-        {
-            TryPushComboFinisher(context, scheduler, target);
-            return;
-        }
+            TryPushComboFinishers(context, scheduler, target);
 
+        // Step 2 at p5 — no early return
         if (comboStep == 1 && context.LastComboAction == NINActions.SpinningEdge.ActionId
-            && level >= NINActions.GustSlash.MinLevel
-            && context.ActionService.IsActionReady(NINActions.GustSlash.ActionId))
+            && level >= NINActions.GustSlash.MinLevel)
         {
             scheduler.PushGcd(HermesAbilities.GustSlash, target.GameObjectId, priority: 5,
                 onDispatched: _ =>
@@ -316,94 +352,120 @@ public sealed class DamageModule : IHermesModule
                         .Record();
                     context.TrainingService?.RecordConceptApplication(NinConcepts.ComboBasics, true, "Combo step 2");
                 });
-            return;
         }
 
-        if (context.ActionService.IsActionReady(NINActions.SpinningEdge.ActionId))
+        // Starter / ActionStatus fallback at p7 — always queued
+        if (level >= NINActions.SpinningEdge.MinLevel)
         {
-            scheduler.PushGcd(HermesAbilities.SpinningEdge, target.GameObjectId, priority: 6,
+            var atComboStep2 = comboStep == 2
+                && context.LastComboAction == NINActions.GustSlash.ActionId;
+
+            scheduler.PushGcd(HermesAbilities.SpinningEdge, target.GameObjectId, priority: 7,
                 onDispatched: _ =>
                 {
                     context.Debug.PlannedAction = NINActions.SpinningEdge.Name;
-                    context.Debug.DamageState = "Spinning Edge (Combo 1)";
+                    context.Debug.DamageState = atComboStep2
+                        ? "Stalled (combo step 2 — no finisher)"
+                        : "Spinning Edge (Combo 1)";
                     TrainingHelper.Decision(context.TrainingService)
                         .Action(NINActions.SpinningEdge.ActionId, NINActions.SpinningEdge.Name)
                         .AsCombo(1).Target(target.Name?.TextValue ?? "Target")
-                        .Reason("Spinning Edge — starting the 3-hit ST combo",
-                            "Spinning Edge starts NIN's single-target combo.")
-                        .Factors("No higher-priority GCD available")
+                        .Reason(atComboStep2
+                            ? "Spinning Edge fallback — finishers blocked at combo step 2"
+                            : "Spinning Edge — starting the 3-hit ST combo",
+                            atComboStep2
+                                ? "When Aeolian Edge and Armor Crush fail ActionStatus, restart combo to preserve GCD uptime."
+                                : "Spinning Edge starts NIN's single-target combo.")
+                        .Factors(atComboStep2 ? "Combo step 2 stall recovery" : "No higher-priority GCD available")
                         .Alternatives("Use Raiju if proc is active")
                         .Tip("Always complete the full 3-step combo.")
                         .Concept(NinConcepts.ComboBasics)
                         .Record();
-                    context.TrainingService?.RecordConceptApplication(NinConcepts.ComboBasics, true, "Combo step 1");
+                    context.TrainingService?.RecordConceptApplication(NinConcepts.ComboBasics, true,
+                        atComboStep2 ? "Combo step 2 fallback" : "Combo step 1");
                 });
         }
     }
 
-    private void TryPushComboFinisher(IHermesContext context, RotationScheduler scheduler, IBattleChara target)
+    private void TryPushComboFinishers(IHermesContext context, RotationScheduler scheduler, IBattleChara target)
     {
         var level = context.Player.Level;
-        bool useArmorCrush = level >= NINActions.ArmorCrush.MinLevel && context.Kazematoi <= KazematoiLowThreshold;
+        var kazematoi = context.Kazematoi;
 
-        if (useArmorCrush && context.ActionService.IsActionReady(NINActions.ArmorCrush.ActionId))
+        if (level < NINActions.AeolianEdge.MinLevel)
+            return;
+
+        if (level < NINActions.ArmorCrush.MinLevel)
         {
-            bool correctPositional = context.IsAtFlank || context.HasTrueNorth || context.TargetHasPositionalImmunity;
-            if (context.Configuration.Ninja.EnforcePositionals && !correctPositional && !context.Configuration.Ninja.AllowPositionalLoss) return;
-            scheduler.PushGcd(HermesAbilities.ArmorCrush, target.GameObjectId, priority: 4,
-                onDispatched: _ =>
-                {
-                    context.Debug.PlannedAction = NINActions.ArmorCrush.Name;
-                    context.Debug.DamageState = $"Armor Crush {(correctPositional ? "(flank)" : "(WRONG)")}";
-                    TrainingHelper.Decision(context.TrainingService)
-                        .Action(NINActions.ArmorCrush.ActionId, NINActions.ArmorCrush.Name)
-                        .AsPositional(correctPositional, "Flank").Target(target.Name?.TextValue ?? "Target")
-                        .Reason($"Armor Crush for Kazematoi stacks ({context.Kazematoi} → {context.Kazematoi + 2})",
-                            "Armor Crush is a flank positional that grants 2 Kazematoi stacks.")
-                        .Factors($"Kazematoi low ({context.Kazematoi})", correctPositional ? "Correct flank" : "MISSED flank")
-                        .Alternatives("Use Aeolian Edge")
-                        .Tip("Armor Crush builds Kazematoi.")
-                        .Concept(NinConcepts.KazematoiManagement)
-                        .Record();
-                    context.TrainingService?.RecordConceptApplication(NinConcepts.KazematoiManagement, correctPositional, "Flank positional");
-                });
+            PushAeolianEdge(context, scheduler, target, priority: 6);
             return;
         }
 
-        if (level >= NINActions.AeolianEdge.MinLevel && context.ActionService.IsActionReady(NINActions.AeolianEdge.ActionId))
+        if (HermesKazematoiRules.ShouldBuildWithArmorCrush(kazematoi))
         {
-            bool correctPositional = context.IsAtRear || context.HasTrueNorth || context.TargetHasPositionalImmunity;
-            if (context.Configuration.Ninja.EnforcePositionals && !correctPositional && !context.Configuration.Ninja.AllowPositionalLoss) return;
-            scheduler.PushGcd(HermesAbilities.AeolianEdge, target.GameObjectId, priority: 4,
-                onDispatched: _ =>
-                {
-                    context.Debug.PlannedAction = NINActions.AeolianEdge.Name;
-                    context.Debug.DamageState = $"Aeolian Edge {(correctPositional ? "(rear)" : "(WRONG)")} +Kaze:{context.Kazematoi}";
-                    TrainingHelper.Decision(context.TrainingService)
-                        .Action(NINActions.AeolianEdge.ActionId, NINActions.AeolianEdge.Name)
-                        .AsPositional(correctPositional, "Rear").Target(target.Name?.TextValue ?? "Target")
-                        .Reason("Aeolian Edge for damage",
-                            "Aeolian Edge is a rear positional and your main combo finisher.")
-                        .Factors($"Kazematoi available ({context.Kazematoi})", correctPositional ? "Correct rear" : "MISSED rear")
-                        .Alternatives("Use Armor Crush if low Kazematoi")
-                        .Tip("Aeolian Edge is your bread-and-butter finisher.")
-                        .Concept(NinConcepts.Positionals)
-                        .Record();
-                    context.TrainingService?.RecordConceptApplication(NinConcepts.Positionals, correctPositional, "Rear positional");
-                });
+            PushArmorCrush(context, scheduler, target, priority: 6);
             return;
         }
 
-        // Low-level fallback: Gust Slash
-        if (context.ActionService.IsActionReady(NINActions.GustSlash.ActionId))
+        if (HermesKazematoiRules.ShouldSpendWithAeolian(kazematoi))
         {
-            scheduler.PushGcd(HermesAbilities.GustSlash, target.GameObjectId, priority: 4,
-                onDispatched: _ =>
-                {
-                    context.Debug.PlannedAction = NINActions.GustSlash.Name;
-                    context.Debug.DamageState = "Gust Slash (no finisher)";
-                });
+            PushAeolianEdge(context, scheduler, target, priority: 6);
+
+            if (HermesKazematoiRules.ShouldFallbackArmorCrush(kazematoi))
+                PushArmorCrush(context, scheduler, target, priority: 6);
         }
+    }
+
+    private static void PushArmorCrush(
+        IHermesContext context, RotationScheduler scheduler, IBattleChara target, int priority)
+    {
+        var correctPositional = context.IsAtFlank || context.HasTrueNorth || context.TargetHasPositionalImmunity;
+        if (!HermesPositionalHelper.CanPushPositionalFinisher(context, correctPositional))
+            return;
+
+        scheduler.PushGcd(HermesAbilities.ArmorCrush, target.GameObjectId, priority: priority,
+            onDispatched: _ =>
+            {
+                context.Debug.PlannedAction = NINActions.ArmorCrush.Name;
+                context.Debug.DamageState = $"Armor Crush {(correctPositional ? "(flank)" : "(WRONG)")}";
+                TrainingHelper.Decision(context.TrainingService)
+                    .Action(NINActions.ArmorCrush.ActionId, NINActions.ArmorCrush.Name)
+                    .AsPositional(correctPositional, "Flank").Target(target.Name?.TextValue ?? "Target")
+                    .Reason($"Armor Crush for Kazematoi stacks ({context.Kazematoi} → {context.Kazematoi + 2})",
+                        "Armor Crush is a flank positional that grants 2 Kazematoi stacks.")
+                    .Factors($"Kazematoi low ({context.Kazematoi})", correctPositional ? "Correct flank" : "MISSED flank")
+                    .Alternatives("Use Aeolian Edge")
+                    .Tip("Armor Crush builds Kazematoi.")
+                    .Concept(NinConcepts.KazematoiManagement)
+                    .Record();
+                context.TrainingService?.RecordConceptApplication(NinConcepts.KazematoiManagement, correctPositional, "Flank positional");
+            });
+    }
+
+    private static void PushAeolianEdge(
+        IHermesContext context, RotationScheduler scheduler, IBattleChara target, int priority)
+    {
+        var correctPositional = context.IsAtRear || context.HasTrueNorth || context.TargetHasPositionalImmunity;
+        if (!HermesPositionalHelper.CanPushPositionalFinisher(context, correctPositional))
+            return;
+
+        scheduler.PushGcd(HermesAbilities.AeolianEdge, target.GameObjectId, priority: priority,
+            onDispatched: _ =>
+            {
+                context.Debug.PlannedAction = NINActions.AeolianEdge.Name;
+                context.Debug.DamageState = $"Aeolian Edge {(correctPositional ? "(rear)" : "(WRONG)")} +Kaze:{context.Kazematoi}";
+                TrainingHelper.Decision(context.TrainingService)
+                    .Action(NINActions.AeolianEdge.ActionId, NINActions.AeolianEdge.Name)
+                    .AsPositional(correctPositional, "Rear").Target(target.Name?.TextValue ?? "Target")
+                    .Reason("Aeolian Edge for damage",
+                        "Aeolian Edge is a rear positional and your main combo finisher.")
+                    .Factors($"Kazematoi available ({context.Kazematoi})", correctPositional ? "Correct rear" : "MISSED rear")
+                    .Alternatives("Use Armor Crush if low Kazematoi")
+                    .Tip("Aeolian Edge is your bread-and-butter finisher.")
+                    .Concept(NinConcepts.Positionals)
+                    .Record();
+                context.TrainingService?.RecordConceptApplication(NinConcepts.Positionals, correctPositional, "Rear positional");
+            });
     }
 
     private void TryPushAoeCombo(IHermesContext context, RotationScheduler scheduler, IBattleChara target, int enemyCount)
@@ -413,7 +475,7 @@ public sealed class DamageModule : IHermesModule
 
         if (comboStep == 1 && context.LastComboAction == NINActions.DeathBlossom.ActionId
             && level >= NINActions.HakkeMujinsatsu.MinLevel
-            && context.ActionService.IsActionReady(NINActions.HakkeMujinsatsu.ActionId))
+            && !context.ActionService.WasLastGcd(NINActions.HakkeMujinsatsu.ActionId))
         {
             scheduler.PushGcd(HermesAbilities.HakkeMujinsatsu, target.GameObjectId, priority: 5,
                 onDispatched: _ =>
@@ -435,26 +497,23 @@ public sealed class DamageModule : IHermesModule
             return;
         }
 
-        if (context.ActionService.IsActionReady(NINActions.DeathBlossom.ActionId))
-        {
-            scheduler.PushGcd(HermesAbilities.DeathBlossom, target.GameObjectId, priority: 6,
-                onDispatched: _ =>
-                {
-                    context.Debug.PlannedAction = NINActions.DeathBlossom.Name;
-                    context.Debug.DamageState = "Death Blossom (AoE 1)";
-                    TrainingHelper.Decision(context.TrainingService)
-                        .Action(NINActions.DeathBlossom.ActionId, NINActions.DeathBlossom.Name)
-                        .AsAoE(enemyCount).Target($"{enemyCount} enemies")
-                        .Reason("Death Blossom — starting AoE combo",
-                            "Death Blossom is NIN's AoE combo starter.")
-                        .Factors($"{enemyCount} enemies nearby")
-                        .Alternatives("Use Spinning Edge (1-2 targets)")
-                        .Tip("Switch to AoE combo at 3+ enemies.")
-                        .Concept(NinConcepts.AoeCombo)
-                        .Record();
-                    context.TrainingService?.RecordConceptApplication(NinConcepts.AoeCombo, true, "AoE combo step 1");
-                });
-        }
+        scheduler.PushGcd(HermesAbilities.DeathBlossom, target.GameObjectId, priority: 6,
+            onDispatched: _ =>
+            {
+                context.Debug.PlannedAction = NINActions.DeathBlossom.Name;
+                context.Debug.DamageState = "Death Blossom (AoE 1)";
+                TrainingHelper.Decision(context.TrainingService)
+                    .Action(NINActions.DeathBlossom.ActionId, NINActions.DeathBlossom.Name)
+                    .AsAoE(enemyCount).Target($"{enemyCount} enemies")
+                    .Reason("Death Blossom — starting AoE combo",
+                        "Death Blossom is NIN's AoE combo starter.")
+                    .Factors($"{enemyCount} enemies nearby")
+                    .Alternatives("Use Spinning Edge (1-2 targets)")
+                    .Tip("Switch to AoE combo at 3+ enemies.")
+                    .Concept(NinConcepts.AoeCombo)
+                    .Record();
+                context.TrainingService?.RecordConceptApplication(NinConcepts.AoeCombo, true, "AoE combo step 1");
+            });
     }
 
     #endregion

@@ -192,8 +192,12 @@ public sealed class PaladinSection
             ImGui.BulletText(Loc.T(LocalizedStrings.Paladin.TotalEclipseCombo, "Total Eclipse combo"));
 
             ConfigUIHelpers.Spacing();
-            ImGui.TextDisabled(Loc.T(LocalizedStrings.Tank.UsesSharedAoESettings, "Uses shared tank AoE settings."));
-            ImGui.TextDisabled(Loc.TFormat(LocalizedStrings.Tank.CurrentMinTargets, "Current min targets: {0}", config.Tank.AoEMinTargets));
+            TankAoEConfigHelper.DrawAoESettings(
+                config,
+                JobRegistry.Paladin,
+                () => config.Tank.PaladinAoEMinTargetsOverride,
+                v => config.Tank.PaladinAoEMinTargetsOverride = v,
+                save);
 
             ConfigUIHelpers.EndIndent();
         }

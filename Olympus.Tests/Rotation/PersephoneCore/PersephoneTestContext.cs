@@ -73,6 +73,8 @@ public static class PersephoneTestContext
         bool hasIfritsFavor = false,
         bool hasTitansFavor = false,
         bool hasGarudasFavor = false,
+        bool hasRubysGlimmer = false,
+        bool mountainBusterReady = false,
         bool hasRadiantAegis = false,
         // Cooldowns
         bool searingLightReady = false,
@@ -170,6 +172,8 @@ public static class PersephoneTestContext
         mock.Setup(x => x.HasIfritsFavor).Returns(hasIfritsFavor);
         mock.Setup(x => x.HasTitansFavor).Returns(hasTitansFavor);
         mock.Setup(x => x.HasGarudasFavor).Returns(hasGarudasFavor);
+        mock.Setup(x => x.HasRubysGlimmer).Returns(hasRubysGlimmer);
+        mock.Setup(x => x.MountainBusterReady).Returns(mountainBusterReady);
         mock.Setup(x => x.HasRadiantAegis).Returns(hasRadiantAegis);
 
         // Cooldowns

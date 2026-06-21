@@ -61,7 +61,13 @@ public sealed class PositionalMovementService : IPositionalMovementService
             return;
         }
 
-        if (WouldClipGcd(request.ActionService, request.PlayerPosition, request.PlayerHitboxRadius, target, anticipation.Value.Required))
+        if (WouldClipGcd(
+                request.ActionService,
+                request.PlayerPosition,
+                request.PlayerHitboxRadius,
+                target,
+                anticipation.Value.Required,
+                request.AllowMovementDuringActionLock))
         {
             SetSkipped("would clip GCD");
             return;
@@ -152,10 +158,13 @@ public sealed class PositionalMovementService : IPositionalMovementService
         Vector3 playerPosition,
         float playerHitboxRadius,
         PositionalMovementTarget target,
-        PositionalType required)
+        PositionalType required,
+        bool allowMovementDuringActionLock)
     {
-        if (actionService.IsCasting
-            || actionService.AnimationLockRemaining > PositionalMovementConstants.MovementStartMaxAnimationLockSeconds)
+        if (!allowMovementDuringActionLock
+            && (actionService.IsCasting
+                || actionService.AnimationLockRemaining
+                    > PositionalMovementConstants.MovementStartMaxAnimationLockSeconds))
             return true;
 
         var standRequest = new PositionalStandRequest(

@@ -1,9 +1,11 @@
 using Dalamud.Plugin.Services;
 using Moq;
+using Olympus.Data;
 using Olympus.Models.Action;
 using Olympus.Rotation.Common;
 using Olympus.Rotation.Common.Scheduling;
 using Olympus.Services.Action;
+using Olympus.Tests.Mocks;
 using Xunit;
 
 namespace Olympus.Tests.Rotation.Common.Scheduling;
@@ -15,10 +17,24 @@ public class RotationSchedulerTests
         Mock<IJobGauges>? jobGauges = null,
         Configuration? config = null)
     {
-        actionService ??= new Mock<IActionService>();
+        actionService ??= MockBuilders.CreateMockActionService();
+        EnsureGcdActionStatusDefaults(actionService);
         jobGauges ??= new Mock<IJobGauges>();
         config ??= new Configuration();
         return new RotationScheduler(actionService.Object, jobGauges.Object, config);
+    }
+
+    /// <summary>
+    /// Applies GCD action-status gate defaults on custom mocks. Called at the end of
+    /// <see cref="Build"/> so individual tests can override with a later Setup.
+    /// Does not touch <see cref="IActionService.GetAdjustedActionId"/> — tests that
+    /// need non-identity mappings must set that up before dispatch.
+    /// </summary>
+    private static void EnsureGcdActionStatusDefaults(Mock<IActionService> mock)
+    {
+        mock.Setup(x => x.CanExecuteActionId(It.IsAny<uint>())).Returns(true);
+        mock.Setup(x => x.CanExecuteAction(It.IsAny<ActionDefinition>())).Returns(true);
+        mock.Setup(x => x.GcdRemaining).Returns(0f);
     }
 
     [Fact]
@@ -350,14 +366,15 @@ public class RotationSchedulerTests
     {
         // Non-charge GCDs bypass the pre-cooldown gate (because GetCurrentCharges returns
         // 0 during the global GCD roll, which would falsely reject queue-window dispatches).
-        // A GCD that is actually on its own independent cooldown is rejected at dispatch
-        // time: ExecuteGcd returns false when UseAction rejects the action. The scheduler
-        // records "DispatchRejected" and moves to the next candidate.
+        // A GCD that is actually on its own independent cooldown is rejected either by the
+        // action-manager pre-gate (ActionStatus) or at dispatch time when ExecuteGcd returns
+        // false (DispatchRejected).
         var actionService = new Mock<IActionService>();
         actionService.Setup(x => x.IsActionReady(It.IsAny<uint>())).Returns(false);
         actionService.Setup(x => x.GetCooldownRemaining(It.IsAny<uint>())).Returns(3.2f);
         actionService.Setup(x => x.ExecuteGcd(It.IsAny<ActionDefinition>(), It.IsAny<ulong>())).Returns(false);
         var scheduler = Build(actionService);
+        actionService.Setup(x => x.CanExecuteActionId(It.IsAny<uint>())).Returns(false);
         var behavior = TestBehaviors.InstantGcd(actionId: 9001);
 
         var ctx = CreateContextWithPlayerLevel(80);
@@ -366,7 +383,8 @@ public class RotationSchedulerTests
         var result = scheduler.DispatchGcd(ctx);
 
         Assert.False(result.Dispatched);
-        Assert.Contains(result.GateFailReasons, r => r.Contains("DispatchRejected"));
+        Assert.Contains(result.GateFailReasons,
+            r => r.Contains("ActionStatus") || r.Contains("DispatchRejected"));
     }
 
     [Fact]
@@ -376,12 +394,14 @@ public class RotationSchedulerTests
         // the global GCD (group 57) is still rolling, which makes GetCurrentCharges (and
         // thus IsActionReady) return 0 for plain GCDs. A pre-cooldown gate using IsActionReady
         // would incorrectly reject these dispatches even though UseAction would accept them
-        // and queue the action for rollover. The scheduler skips the pre-gate for GCDs, so
-        // ExecuteGcd (which mirrors UseAction's queue-window semantics) gets to decide.
+        // and queue the action for rollover. The action-status gate is also skipped during
+        // the queue window (GetActionStatus returns 583); ExecuteGcd gets to decide.
         var actionService = new Mock<IActionService>();
         actionService.Setup(x => x.IsActionReady(It.IsAny<uint>())).Returns(false); // global GCD rolling
         actionService.Setup(x => x.ExecuteGcd(It.IsAny<ActionDefinition>(), It.IsAny<ulong>())).Returns(true); // UseAction accepts queue-window
         var scheduler = Build(actionService);
+        actionService.Setup(x => x.GcdRemaining).Returns(0.3f);
+        actionService.Setup(x => x.CanExecuteActionId(It.IsAny<uint>())).Returns(false);
         var behavior = TestBehaviors.InstantGcd(actionId: 9101);
 
         var ctx = CreateContextWithPlayerLevel(80);
@@ -390,9 +410,76 @@ public class RotationSchedulerTests
         var result = scheduler.DispatchGcd(ctx);
 
         Assert.True(result.Dispatched);
+        actionService.Verify(x => x.CanExecuteActionId(It.IsAny<uint>()), Times.Never);
         actionService.Verify(x => x.ExecuteGcd(
             It.Is<ActionDefinition>(a => a.ActionId == 9101),
             It.IsAny<ulong>()), Times.Once);
+    }
+
+    [Fact]
+    public void Dispatch_Gcd_ActionStatusBlocksWhenNotInQueueWindow()
+    {
+        var actionService = new Mock<IActionService>();
+        actionService.Setup(x => x.ExecuteGcd(It.IsAny<ActionDefinition>(), It.IsAny<ulong>())).Returns(true);
+        var scheduler = Build(actionService);
+        actionService.Setup(x => x.CanExecuteActionId(It.IsAny<uint>())).Returns(false);
+        actionService.Setup(x => x.GcdRemaining).Returns(0f);
+        var behavior = TestBehaviors.InstantGcd(actionId: 9102);
+
+        var ctx = CreateContextWithPlayerLevel(80);
+        scheduler.PushGcd(behavior, targetId: 0, priority: 10);
+
+        var result = scheduler.DispatchGcd(ctx);
+
+        Assert.False(result.Dispatched);
+        Assert.Contains(result.GateFailReasons, r => r.Contains("ActionStatus"));
+        actionService.Verify(x => x.ExecuteGcd(It.IsAny<ActionDefinition>(), It.IsAny<ulong>()), Times.Never);
+    }
+
+    [Fact]
+    public void Dispatch_Gcd_CanExecuteActionUsesAdjustedActionId()
+    {
+        const uint baseId = 100u;
+        const uint adjustedId = 200u;
+        var actionService = new Mock<IActionService>();
+        actionService.Setup(x => x.GetAdjustedActionId(baseId)).Returns(adjustedId);
+        actionService.Setup(x => x.ExecuteGcd(It.IsAny<ActionDefinition>(), It.IsAny<ulong>())).Returns(true);
+        var scheduler = Build(actionService);
+        actionService.Setup(x => x.CanExecuteActionId(adjustedId)).Returns(true);
+        var behavior = TestBehaviors.InstantGcd(actionId: baseId);
+
+        var ctx = CreateContextWithPlayerLevel(80);
+        scheduler.PushGcd(behavior, targetId: 0, priority: 10);
+
+        var result = scheduler.DispatchGcd(ctx);
+
+        Assert.True(result.Dispatched);
+        actionService.Verify(x => x.GetAdjustedActionId(baseId), Times.Once);
+        actionService.Verify(x => x.CanExecuteActionId(adjustedId), Times.Once);
+        actionService.Verify(x => x.CanExecuteActionId(baseId), Times.Never);
+    }
+
+    [Fact]
+    public void Dispatch_GcdRaw_SkipsActionStatusGate()
+    {
+        var actionService = new Mock<IActionService>();
+        actionService.Setup(x => x.ExecuteGcdRaw(
+                It.IsAny<ActionDefinition>(), It.IsAny<uint>(), It.IsAny<ulong>()))
+            .Returns(true);
+        var scheduler = Build(actionService);
+        actionService.Setup(x => x.CanExecuteActionId(It.IsAny<uint>())).Returns(false);
+        actionService.Setup(x => x.GcdRemaining).Returns(0f);
+        var behavior = TestBehaviors.InstantGcd(actionId: 9103) with { ReplacementBaseId = 5000u };
+
+        var ctx = CreateContextWithPlayerLevel(80);
+        scheduler.PushGcd(behavior, targetId: 0, priority: 10);
+
+        var result = scheduler.DispatchGcd(ctx);
+
+        Assert.True(result.Dispatched);
+        actionService.Verify(x => x.CanExecuteActionId(It.IsAny<uint>()), Times.Never);
+        actionService.Verify(x => x.ExecuteGcdRaw(
+            It.IsAny<ActionDefinition>(), 5000u, It.IsAny<ulong>()), Times.Once);
     }
 
     [Fact]
@@ -634,6 +721,111 @@ public class RotationSchedulerTests
         var result = scheduler.DispatchOgcd(ctx);
 
         Assert.True(result.Dispatched);
+    }
+
+    [Fact]
+    public void Dispatch_ChargeHold_OutsideBurst_ReservesLastCharge()
+    {
+        var actionService = new Mock<IActionService>();
+        actionService.Setup(x => x.GetCurrentCharges(It.IsAny<uint>())).Returns(1u);
+        var scheduler = Build(actionService);
+
+        var behavior = TestBehaviors.InstantOgcd(actionId: 20001) with
+        {
+            ChargeHold = ChargeHoldPolicy.HoldOneForBurst(_ => false),
+        };
+        var ctx = CreateContextWithPlayerLevel(80);
+        scheduler.PushOgcd(behavior, targetId: 0, priority: 1);
+
+        var result = scheduler.DispatchOgcd(ctx);
+
+        Assert.False(result.Dispatched);
+        Assert.Contains(result.GateFailReasons, r => r.Contains("ChargeHold"));
+    }
+
+    [Fact]
+    public void Dispatch_ChargeHold_OutsideBurst_SpendsAboveReserve()
+    {
+        var actionService = new Mock<IActionService>();
+        actionService.Setup(x => x.GetCurrentCharges(It.IsAny<uint>())).Returns(2u);
+        actionService.Setup(x => x.ExecuteOgcd(It.IsAny<ActionDefinition>(), It.IsAny<ulong>())).Returns(true);
+        var scheduler = Build(actionService);
+
+        var behavior = TestBehaviors.InstantOgcd(actionId: 20002) with
+        {
+            ChargeHold = ChargeHoldPolicy.HoldOneForBurst(_ => false),
+        };
+        var ctx = CreateContextWithPlayerLevel(80);
+        scheduler.PushOgcd(behavior, targetId: 0, priority: 1);
+
+        var result = scheduler.DispatchOgcd(ctx);
+
+        Assert.True(result.Dispatched);
+    }
+
+    [Fact]
+    public void Dispatch_ChargeHold_InBurst_SpendsReservedCharge()
+    {
+        var actionService = new Mock<IActionService>();
+        actionService.Setup(x => x.GetCurrentCharges(It.IsAny<uint>())).Returns(1u);
+        actionService.Setup(x => x.ExecuteOgcd(It.IsAny<ActionDefinition>(), It.IsAny<ulong>())).Returns(true);
+        var scheduler = Build(actionService);
+
+        var behavior = TestBehaviors.InstantOgcd(actionId: 20003) with
+        {
+            ChargeHold = ChargeHoldPolicy.HoldOneForBurst(_ => true),
+        };
+        var ctx = CreateContextWithPlayerLevel(80);
+        scheduler.PushOgcd(behavior, targetId: 0, priority: 1);
+
+        var result = scheduler.DispatchOgcd(ctx);
+
+        Assert.True(result.Dispatched);
+    }
+
+    [Fact]
+    public void Dispatch_ChargeHold_NoCharges_SkipsCandidate()
+    {
+        var actionService = new Mock<IActionService>();
+        actionService.Setup(x => x.GetCurrentCharges(It.IsAny<uint>())).Returns(0u);
+        var scheduler = Build(actionService);
+
+        var behavior = TestBehaviors.InstantOgcd(actionId: 20004) with
+        {
+            ChargeHold = ChargeHoldPolicy.HoldOneForBurst(_ => true),
+        };
+        var ctx = CreateContextWithPlayerLevel(80);
+        scheduler.PushOgcd(behavior, targetId: 0, priority: 1);
+
+        var result = scheduler.DispatchOgcd(ctx);
+
+        Assert.False(result.Dispatched);
+        Assert.Contains(result.GateFailReasons, r => r.Contains("no charges"));
+    }
+
+    [Fact]
+    public void Dispatch_ChargeHold_PredicateThrows_RecordsErrorAndSkips()
+    {
+        var actionService = new Mock<IActionService>();
+        actionService.Setup(x => x.GetCurrentCharges(It.IsAny<uint>())).Returns(2u);
+        var errorMetrics = new Mock<Olympus.Services.IErrorMetricsService>();
+        var scheduler = new RotationScheduler(
+            actionService.Object, new Mock<IJobGauges>().Object, new Configuration(), null, errorMetrics.Object);
+
+        var behavior = TestBehaviors.InstantOgcd(actionId: 20005) with
+        {
+            ChargeHold = ChargeHoldPolicy.HoldOneForBurst(
+                _ => throw new System.InvalidOperationException("bad burst check")),
+        };
+        var ctx = CreateContextWithPlayerLevel(80);
+        scheduler.PushOgcd(behavior, targetId: 0, priority: 1);
+
+        var result = scheduler.DispatchOgcd(ctx);
+
+        Assert.False(result.Dispatched);
+        errorMetrics.Verify(
+            x => x.RecordError("Scheduler", It.Is<string>(s => s.Contains("ChargeHold"))),
+            Times.Once);
     }
 
     private static IRotationContext CreateContextWithPlayerLevel(byte level)

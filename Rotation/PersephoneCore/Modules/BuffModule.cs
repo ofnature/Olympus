@@ -167,7 +167,7 @@ public sealed class BuffModule : IPersephoneModule
         if (!context.Configuration.Summoner.EnableMountainBuster) return;
         if (target == null) return;
         if (context.Player.Level < SMNActions.MountainBuster.MinLevel) return;
-        if (!context.HasTitansFavor) return;
+        if (!context.MountainBusterReady) return;
 
         scheduler.PushOgcd(PersephoneAbilities.MountainBuster, target.GameObjectId, priority: 2,
             onDispatched: _ =>
@@ -256,7 +256,7 @@ public sealed class BuffModule : IPersephoneModule
         if (!context.Configuration.Summoner.EnableSearingFlash) return;
         if (target == null) return;
         if (context.Player.Level < SMNActions.SearingFlash.MinLevel) return;
-        if (!context.HasSearingLight) return;
+        if (!context.HasRubysGlimmer) return;
         if (!context.ActionService.IsActionReady(SMNActions.SearingFlash.ActionId)) return;
 
         scheduler.PushOgcd(PersephoneAbilities.SearingFlash, target.GameObjectId, priority: 3,
@@ -285,15 +285,22 @@ public sealed class BuffModule : IPersephoneModule
     {
         if (!context.Configuration.Summoner.EnableEnergyDrain) return;
         if (target == null) return;
+        if (!context.IsDemiSummonActive) return;
         var player = context.Player;
         if (player.Level < SMNActions.EnergyDrain.MinLevel) return;
         if (!context.EnergyDrainReady) return;
         if (context.HasAetherflow) return;
 
-        var enemyCount = context.TargetingService.CountEnemiesInRange(5f, player);
-        var useAoe = enemyCount >= 3 && player.Level >= SMNActions.EnergySiphon.MinLevel;
-        var action = useAoe ? SMNActions.EnergySiphon : SMNActions.EnergyDrain;
-        var ability = useAoe ? PersephoneAbilities.EnergySiphon : PersephoneAbilities.EnergyDrain;
+        var aoeEnabled = context.Configuration.Summoner.EnableAoERotation;
+        var rawEnemyCount = context.TargetingService.CountEnemiesInRange(5f, player);
+        var enemyCount = aoeEnabled ? rawEnemyCount : 0;
+        var useAoe = enemyCount >= context.Configuration.Summoner.AoEMinTargets;
+        var action = useAoe && player.Level >= SMNActions.EnergySiphon.MinLevel
+            ? SMNActions.EnergySiphon
+            : SMNActions.EnergyDrain;
+        var ability = action.ActionId == SMNActions.EnergySiphon.ActionId
+            ? PersephoneAbilities.EnergySiphon
+            : PersephoneAbilities.EnergyDrain;
 
         scheduler.PushOgcd(ability, target.GameObjectId, priority: 4,
             onDispatched: _ =>

@@ -19,6 +19,13 @@ public interface IActionService
     float GcdRemaining { get; }
 
     /// <summary>
+    /// Live GCD duration in seconds, scaled by skill speed / haste. Stable while the GCD is
+    /// ready (unlike <see cref="GcdRemaining"/>, which reports 0 at that moment); use for
+    /// GCD-relative timing such as DoT refresh windows.
+    /// </summary>
+    float GcdDuration { get; }
+
+    /// <summary>
     /// Animation lock remaining.
     /// </summary>
     float AnimationLockRemaining { get; }
@@ -49,6 +56,12 @@ public interface IActionService
     float GetCooldownRemaining(uint actionId);
 
     /// <summary>
+    /// Seconds since this action was last executed (0 if never / off cooldown).
+    /// Used for NIN Mug/Trick burst window detection — mirrors RSR Cooldown.ElapsedAfter.
+    /// </summary>
+    float GetRecastTimeElapsed(uint actionId);
+
+    /// <summary>
     /// Gets the number of available weave slots before the GCD is ready.
     /// </summary>
     int GetAvailableWeaveSlots();
@@ -70,8 +83,17 @@ public interface IActionService
 
     /// <summary>
     /// Checks if a specific action can be executed right now.
+    /// Resolves <see cref="GetAdjustedActionId"/> on <paramref name="action"/>.ActionId
+    /// before querying the action manager (RSR ActionManagerStatusValid parity).
     /// </summary>
     bool CanExecuteAction(ActionDefinition action);
+
+    /// <summary>
+    /// Checks whether the action manager reports the given action ID as executable
+    /// (<c>GetActionStatus == 0</c>). Used by the GCD scheduler gate after adjusted-ID
+    /// resolution.
+    /// </summary>
+    bool CanExecuteActionId(uint actionId);
 
     /// <summary>
     /// Gets the current number of charges available for an action.
@@ -161,4 +183,36 @@ public interface IActionService
     /// <param name="preferHq">When true, dispatches the HQ variant (NQ + 1_000_000).</param>
     /// <param name="targetId">Target object ID. Pass 0 for self.</param>
     bool ExecuteItem(uint itemId, bool preferHq, ulong targetId);
+
+    /// <summary>
+    /// Action ID of the most recently dispatched oGCD this session (0 if none yet).
+    /// Minimal action-history surface for oGCD sequencing (e.g. NIN Trick Attack after Mug).
+    /// </summary>
+    uint LastOgcdId { get; }
+
+    /// <summary>True if the most recently dispatched GCD matches <paramref name="actionId"/> (false for 0).</summary>
+    bool WasLastGcd(uint actionId);
+
+    /// <summary>True if the most recently dispatched oGCD matches <paramref name="actionId"/> (false for 0).</summary>
+    bool WasLastOgcd(uint actionId);
+
+    /// <summary>True if the most recent dispatched action matches (RSR IsLastAction parity).</summary>
+    bool WasLastAction(uint actionId);
+
+    /// <summary>Records any successful raw ActionManager dispatch by action ID.</summary>
+    void RecordActionExecuted(uint actionId);
+
+    /// <summary>Records a successful raw ActionManager GCD dispatch (e.g. TCJ ninjutsu via mudra buttons).</summary>
+    void RecordGcdExecuted(uint actionId);
+
+    /// <summary>
+    /// Records a successful raw ActionManager dispatch and raises the action feed event.
+    /// Does not touch scheduler cycle accounting (<c>_gcdSubmittedThisCycle</c> / oGCD weave slots).
+    /// </summary>
+    /// <param name="action">Logical action for feed display and tracker.</param>
+    /// <param name="recordActionId">
+    /// ID stored in action history for <see cref="WasLastAction"/> parity.
+    /// When 0, uses <paramref name="action"/>.ActionId.
+    /// </param>
+    void NotifyActionExecuted(ActionDefinition action, uint recordActionId = 0);
 }

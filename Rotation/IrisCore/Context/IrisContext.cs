@@ -284,7 +284,8 @@ public sealed class IrisContext : IIrisContext
             FFXIVConstants.CasterTargetingRange,
             player);
         NearbyEnemyCount = CountNearbyEnemies(player, 5f);
-        ShouldUseAoe = PCTActions.ShouldUseAoe(NearbyEnemyCount, player.Level);
+        ShouldUseAoe = PCTActions.ShouldUseAoe(
+            NearbyEnemyCount, player.Level, configuration.Pictomancer.AoEMinTargets);
 
         // Burst window check
         IsInBurstWindow = HasStarryMuse;

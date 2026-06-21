@@ -22,6 +22,7 @@ public class SpellCandidateEvaluatorTests
     {
         public GcdState CurrentGcdState => GcdState.Ready;
         public float GcdRemaining => 0f;
+        public float GcdDuration => 2.5f;
         public float AnimationLockRemaining => 0f;
         public bool IsCasting => false;
         public bool CanExecuteGcd => true;
@@ -49,12 +50,14 @@ public class SpellCandidateEvaluatorTests
 
         public bool IsActionReady(uint actionId) => readyActions.Contains(actionId);
         public float GetCooldownRemaining(uint actionId) => cooldowns.GetValueOrDefault(actionId, 0f);
+        public float GetRecastTimeElapsed(uint actionId) => 0f;
         public int GetAvailableWeaveSlots() => 2;
         public bool ExecuteGcd(ActionDefinition action, ulong targetId) => true;
         public bool ExecuteDirectionalGcd(ActionDefinition action, ulong optimalTargetId) => true;
         public bool ExecuteOgcd(ActionDefinition action, ulong targetId) => true;
         public bool ExecuteGroundTargetedOgcd(ActionDefinition action, Vector3 targetPosition) => true;
         public bool CanExecuteAction(ActionDefinition action) => true;
+        public bool CanExecuteActionId(uint actionId) => true;
         public uint GetCurrentCharges(uint actionId) => readyActions.Contains(actionId) ? 1u : 0u;
         public ushort GetMaxCharges(uint actionId, uint level) => 1;
         public bool IsSafeToWeave(float oGcdAnimationLock = 0.6f) => true;
@@ -63,6 +66,13 @@ public class SpellCandidateEvaluatorTests
         public bool ExecuteOgcdRaw(ActionDefinition action, uint rawDispatchId, ulong targetId) => true;
         public uint GetAdjustedActionId(uint baseActionId) => baseActionId;
         public bool PlayerHasStatus(uint statusId) => false;
+        public uint LastOgcdId => 0u;
+        public bool WasLastGcd(uint actionId) => false;
+        public bool WasLastOgcd(uint actionId) => false;
+        public bool WasLastAction(uint actionId) => false;
+        public void RecordGcdExecuted(uint actionId) { }
+        public void RecordActionExecuted(uint actionId) { }
+        public void NotifyActionExecuted(ActionDefinition action, uint recordActionId = 0) { }
         public bool ExecuteItem(uint itemId, bool preferHq, ulong targetId) => false;
         public IWeaveOptimizer WeaveOptimizer { get; } = new MockWeaveOptimizer();
     }

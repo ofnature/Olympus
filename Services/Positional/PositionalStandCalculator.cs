@@ -7,6 +7,14 @@ namespace Olympus.Services.Positional;
 /// <summary>
 /// Inputs for computing a clamped positional stand point (pure geometry, no IPC).
 /// </summary>
+public readonly record struct MeleeApproachStandRequest(
+    Vector3 PlayerPosition,
+    float PlayerHitboxRadius,
+    Vector3 TargetPosition,
+    float TargetHitboxRadius,
+    float GcdRemainingSeconds = float.NaN,
+    float StandRadiusOffset = PositionalMovementConstants.DefaultStandRadiusOffset);
+
 public readonly record struct PositionalStandRequest(
     Vector3 PlayerPosition,
     float PlayerHitboxRadius,
@@ -38,6 +46,28 @@ public static class PositionalStandCalculator
         var clamped = ClampHorizontalDisplacement(request.PlayerPosition, ideal, maxMove);
         var floorY = float.IsNaN(request.FloorY) ? request.TargetPosition.Y : request.FloorY;
         return SnapToFloorPlane(clamped, floorY);
+    }
+
+    /// <summary>
+    /// Stand point on the player→target line at melee distance (burst approach / gap close).
+    /// Clamped to one GCD of movement for positional weaving.
+    /// </summary>
+    public static Vector3 CalculateMeleeApproach(in MeleeApproachStandRequest request)
+    {
+        var ideal = ComputeMeleeApproachPoint(in request);
+        var distToIdeal = HorizontalDistance(request.PlayerPosition, ideal);
+        var maxMove = ComputeMaxHorizontalMoveYalms(distToIdeal, request.GcdRemainingSeconds);
+        var clamped = ClampHorizontalDisplacement(request.PlayerPosition, ideal, maxMove);
+        return SnapToFloorPlane(clamped, request.TargetPosition.Y);
+    }
+
+    /// <summary>
+    /// Full-distance melee stand for burst gap-close — vNav runs the entire path in one queue.
+    /// </summary>
+    public static Vector3 CalculateBurstMeleeApproach(in MeleeApproachStandRequest request)
+    {
+        var ideal = ComputeMeleeApproachPoint(in request);
+        return SnapToFloorPlane(ideal, request.TargetPosition.Y);
     }
 
     /// <summary>
@@ -81,6 +111,23 @@ public static class PositionalStandCalculator
             return 0f;
 
         return horizontalDistanceYalms / PositionalMovementConstants.MoveSpeedYalmsPerSecond;
+    }
+
+    private static Vector3 ComputeMeleeApproachPoint(in MeleeApproachStandRequest request)
+    {
+        var toPlayer = request.PlayerPosition - request.TargetPosition;
+        toPlayer.Y = 0f;
+
+        var dist = toPlayer.Length();
+        var standDistance = request.TargetHitboxRadius + request.StandRadiusOffset;
+        if (dist <= standDistance + 0.25f)
+            return request.PlayerPosition;
+
+        if (dist < 1e-6f)
+            return request.TargetPosition + Vector3.UnitZ * standDistance;
+
+        var dir = toPlayer / dist;
+        return request.TargetPosition + dir * standDistance;
     }
 
     private static Vector3 ComputeIdealStandPoint(in PositionalStandRequest request)
