@@ -6,6 +6,7 @@ using Olympus.Rotation.Common.RoleActionHelpers;
 using Olympus.Rotation.Common.Scheduling;
 using Olympus.Rotation.IrisCore.Abilities;
 using Olympus.Rotation.IrisCore.Context;
+using Olympus.Rotation.IrisCore.Helpers;
 using Olympus.Services;
 using Olympus.Services.Training;
 
@@ -90,6 +91,12 @@ public sealed class BuffModule : IIrisModule
 
         if (context.MogReady && level >= PCTActions.MogOfTheAges.MinLevel)
         {
+            if (IrisBurstHelper.ShouldHoldMogPortrait(context, _burstWindowService))
+            {
+                context.Debug.BuffState = "Holding Mog for burst";
+                return;
+            }
+
             scheduler.PushOgcd(IrisAbilities.MogOfTheAges, target.GameObjectId, priority: 1,
                 onDispatched: _ =>
                 {
@@ -211,6 +218,11 @@ public sealed class BuffModule : IIrisModule
         if (!context.StrikingMuseReady) return;
         if (!context.HasWeaponCanvas) return;
         if (context.HasHammerTime) return;
+        if (IrisBurstHelper.ShouldHoldStrikingMuse(context, context.ActionService, _burstWindowService))
+        {
+            context.Debug.BuffState = "Holding Striking Muse for Starry burst";
+            return;
+        }
 
         scheduler.PushOgcd(IrisAbilities.StrikingMuse, player.GameObjectId, priority: 3,
             onDispatched: _ =>

@@ -56,9 +56,19 @@ public sealed unsafe class ActionService : IActionService
     // Track oGCD usage per GCD cycle (allows up to 2 weaves)
     private int _ogcdsUsedThisCycle;
 
-    // Guard so modules can't spam UseAction every frame during the ~0.5s queue window.
-    // Set on successful submit while GcdRemaining > 0; cleared at true rollover (GcdRemaining == 0).
+    // Guard so modules can't spam UseAction every frame while GcdRemaining stays at 0
+    // after a successful submit but before recast group 57 activates.
     private bool _gcdSubmittedThisCycle;
+    private bool _recastGroupWasActive;
+    private bool _gcdRecastSeenSinceSubmit;
+    private float _peakRecastElapsedSinceSubmit;
+    private float _peakRecastTotalSinceSubmit;
+    private DateTime _nextGcdAttemptAllowed = DateTime.MinValue;
+
+    private const float MinRecastCompletionRatio = 0.85f;
+    private const double UncommittedSubmitStaleSeconds = 0.75;
+    private const double PartialRecastStaleSeconds = 2.5;
+    private const double FailedSubmitBackoffSeconds = 0.5;
 
     /// <summary>Current GCD state.</summary>
     public GcdState CurrentGcdState { get; private set; } = GcdState.Ready;
@@ -178,10 +188,56 @@ public sealed unsafe class ActionService : IActionService
         // Group 57 is hardcoded by the game as the global GCD recast group
         // Works for all jobs (caster, healer, tank, melee, ranged)
         var recastDetail = actionManager->GetRecastGroupDetail(57);
+        var recastActive = recastDetail is not null && recastDetail->IsActive;
+
+        if (recastActive && _gcdSubmittedThisCycle && recastDetail is not null)
+        {
+            _gcdRecastSeenSinceSubmit = true;
+            if (recastDetail->Elapsed > _peakRecastElapsedSinceSubmit)
+                _peakRecastElapsedSinceSubmit = recastDetail->Elapsed;
+            if (recastDetail->Total > _peakRecastTotalSinceSubmit)
+                _peakRecastTotalSinceSubmit = recastDetail->Total;
+        }
+
+        // Current GCD far enough along — release the guard so the queue window can submit the next GCD.
+        if (_gcdSubmittedThisCycle && recastActive && HasCompletedSubmittedRecast())
+            _gcdSubmittedThisCycle = false;
+
+        // Clear the submit guard once per GCD cycle when group 57 finishes a real roll.
+        // Ignore brief recast blips from rejected UseAction calls (common spam source).
+        if (_recastGroupWasActive && !recastActive)
+        {
+            if (ShouldClearGcdSubmitGuard())
+                _gcdSubmittedThisCycle = false;
+
+            _peakRecastElapsedSinceSubmit = 0;
+            _peakRecastTotalSinceSubmit = 0;
+            _gcdRecastSeenSinceSubmit = false;
+        }
+
+        var secondsSinceSubmit = (DateTime.UtcNow - _lastExecuteTime).TotalSeconds;
+
+        // Stale guard: submit accepted but recast group 57 never activated.
+        if (_gcdSubmittedThisCycle && !_gcdRecastSeenSinceSubmit
+            && secondsSinceSubmit > UncommittedSubmitStaleSeconds)
+        {
+            _gcdSubmittedThisCycle = false;
+            _nextGcdAttemptAllowed = DateTime.UtcNow.AddSeconds(FailedSubmitBackoffSeconds);
+        }
+
+        // Stale guard: recast blip without a full roll (guard would otherwise stay latched indefinitely).
+        if (_gcdSubmittedThisCycle && _gcdRecastSeenSinceSubmit && !HasCompletedSubmittedRecast()
+            && secondsSinceSubmit > PartialRecastStaleSeconds)
+        {
+            _gcdSubmittedThisCycle = false;
+            _nextGcdAttemptAllowed = DateTime.UtcNow.AddSeconds(FailedSubmitBackoffSeconds);
+        }
+
+        _recastGroupWasActive = recastActive;
 
         _lastAnimationLock = actionManager->AnimationLock;
 
-        if (recastDetail is not null && recastDetail->IsActive)
+        if (recastActive)
         {
             _lastGcdTotal = recastDetail->Total;
             _lastGcdElapsed = recastDetail->Elapsed;
@@ -207,9 +263,6 @@ public sealed unsafe class ActionService : IActionService
         {
             CurrentGcdState = GcdState.Ready;
             _ogcdsUsedThisCycle = 0; // Reset for new GCD cycle
-            // New GCD cycle — allow submission (NotifyActionExecuted / queue-window paths
-            // can leave this set while GcdRemaining is still 0, which deadlocks ExecuteGcd).
-            _gcdSubmittedThisCycle = false;
         }
         else if (GcdRemaining <= FFXIVTimings.QueueWindow)
         {
@@ -223,7 +276,6 @@ public sealed unsafe class ActionService : IActionService
         else
         {
             CurrentGcdState = GcdState.Rolling;
-            _gcdSubmittedThisCycle = false;
         }
     }
 
@@ -245,21 +297,28 @@ public sealed unsafe class ActionService : IActionService
         if (_gcdSubmittedThisCycle)
             return false;
 
+        if (DateTime.UtcNow < _nextGcdAttemptAllowed)
+            return false;
+
         // Do NOT pre-check GetActionStatus here: while the global GCD is rolling it returns 583 ("not ready"),
         // but UseAction still accepts the call in the last ~0.5s and queues the action to fire on rollover.
         // Pre-checking defeats the server-side action queue, so we delegate the "can fire now?" decision to UseAction.
-        var result = actionManager->UseAction(ActionType.Action, action.ActionId, targetId);
+        var dispatchId = actionManager->GetAdjustedActionId(action.ActionId);
+        var result = actionManager->UseAction(ActionType.Action, dispatchId, targetId);
 
         if (result)
         {
             _gcdSubmittedThisCycle = true;
+            _gcdRecastSeenSinceSubmit = false;
+            _peakRecastElapsedSinceSubmit = 0;
+            _peakRecastTotalSinceSubmit = 0;
 
             _lastExecutedAction = action;
             _lastExecuteTime = DateTime.UtcNow;
             _history.RecordGcd(action.ActionId);
 
             // Track for statistics
-            var gcdDuration = actionManager->GetRecastTime(ActionType.Action, action.ActionId);
+            var gcdDuration = actionManager->GetRecastTime(ActionType.Action, dispatchId);
             _actionTracker.LogGcdCast(gcdDuration);
             _actionTracker.LogAttempt(action.ActionId, null, null, ActionResult.Success, 0);
             RaiseActionExecuted(action);
@@ -359,11 +418,17 @@ public sealed unsafe class ActionService : IActionService
         if (_gcdSubmittedThisCycle)
             return false;
 
+        if (DateTime.UtcNow < _nextGcdAttemptAllowed)
+            return false;
+
         var result = actionManager->UseAction(ActionType.Action, rawDispatchId, targetId);
 
         if (result)
         {
             _gcdSubmittedThisCycle = true;
+            _gcdRecastSeenSinceSubmit = false;
+            _peakRecastElapsedSinceSubmit = 0;
+            _peakRecastTotalSinceSubmit = 0;
 
             _lastExecutedAction = action;
             _lastExecuteTime = DateTime.UtcNow;
@@ -599,6 +664,14 @@ public sealed unsafe class ActionService : IActionService
     {
         return ActionManager.GetMaxCharges(actionId, level);
     }
+
+    private bool HasCompletedSubmittedRecast()
+        => _gcdRecastSeenSinceSubmit
+           && _peakRecastTotalSinceSubmit > 0f
+           && _peakRecastElapsedSinceSubmit >= _peakRecastTotalSinceSubmit * MinRecastCompletionRatio;
+
+    private bool ShouldClearGcdSubmitGuard()
+        => _gcdSubmittedThisCycle && HasCompletedSubmittedRecast();
 
     private void RaiseActionExecuted(ActionDefinition action)
     {

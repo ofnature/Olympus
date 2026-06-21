@@ -174,6 +174,7 @@ public static class LocalizedStrings
         public const string UsePictomancyTooltip = "DrawHelper.UsePictomancyTooltip";
         public const string MaxAlpha = "DrawHelper.MaxAlpha";
         public const string ClipToGameUI = "DrawHelper.ClipToGameUI";
+        public const string ClipToGameUITooltip = "DrawHelper.ClipToGameUITooltip";
         public const string EnemyHitboxesHeader = "DrawHelper.EnemyHitboxesHeader";
         public const string ShowEnemyHitboxes = "DrawHelper.ShowEnemyHitboxes";
         public const string MeleeRangeHeader = "DrawHelper.MeleeRangeHeader";

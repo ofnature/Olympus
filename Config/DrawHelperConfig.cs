@@ -11,7 +11,10 @@ public sealed class DrawHelperConfig
     // Pictomancy backend
     public bool UsePictomancy { get; set; } = true;
     public float PictomancyMaxAlpha { get; set; } = 0.5f;
-    public bool PictomancyClipNativeUI { get; set; } = true;
+    /// <summary>
+    /// Clip overlays behind native UI (cast bar, etc.). Requires Pictomancy struct parity; off by default.
+    /// </summary>
+    public bool PictomancyClipNativeUI { get; set; } = false;
 
     // Enemy hitboxes
     public bool ShowEnemyHitboxes { get; set; } = false;

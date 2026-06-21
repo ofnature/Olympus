@@ -7,7 +7,6 @@ using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
-using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Common.Component.BGCollision;
 using Olympus.Config;
 using Olympus.Rotation;
@@ -19,7 +18,7 @@ using Olympus.Services.Targeting;
 namespace Olympus.Windows;
 
 /// <summary>
-/// Fullscreen transparent window for Pictomancy world-space drawing.
+/// Fullscreen transparent overlay for world-space drawing (Pictomancy or 2D fallback).
 /// Includes AoE test mode with mouse-to-world simulation and fake enemies.
 /// </summary>
 public sealed class DrawCanvas : Window
@@ -116,8 +115,6 @@ public sealed class DrawCanvas : Window
         _drawing.BeginFrame();
         try
         {
-            if (!_drawing.IsDrawing) return;
-
             var player = _objectTable.LocalPlayer;
             if (player == null) return;
 
@@ -401,7 +398,7 @@ public sealed class DrawCanvas : Window
                 || npcKind == Olympus.Compat.BattleNpcKinds.NpcPartyMember)
                 continue;
             if ((npc.StatusFlags & StatusFlags.Hostile) == 0) continue;
-            if (!CanAttack(npc)) continue;
+            if (!EnemyAttackability.IsPlayerAttackable(npc)) continue;
 
             var dist = Vector3.Distance(_simPlayerPos, npc.Position);
             if (dist > 50f) continue;
@@ -413,18 +410,6 @@ public sealed class DrawCanvas : Window
             enemies.Add(new TestEnemy { Position = fake.Position, HitboxRadius = fake.Radius, IsFake = true });
 
         return enemies;
-    }
-
-    private static unsafe bool CanAttack(IGameObject target)
-    {
-        try
-        {
-            const uint heavySwingId = 31;
-            var targetStruct = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)target.Address;
-            if (targetStruct == null) return false;
-            return ActionManager.CanUseActionOnTarget(heavySwingId, targetStruct);
-        }
-        catch { return false; }
     }
 
     // ── Standard drawing features ──
@@ -440,6 +425,7 @@ public sealed class DrawCanvas : Window
                 || npcKind == Olympus.Compat.BattleNpcKinds.NpcPartyMember)
                 continue;
             if ((npc.StatusFlags & StatusFlags.Hostile) == 0) continue;
+            if (!EnemyAttackability.IsPlayerAttackable(npc)) continue;
 
             var dist = Vector3.Distance(player.Position, npc.Position);
             if (dist > 50f) continue;

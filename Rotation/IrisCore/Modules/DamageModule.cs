@@ -6,6 +6,7 @@ using Olympus.Rotation.Common.Helpers;
 using Olympus.Rotation.Common.Scheduling;
 using Olympus.Rotation.IrisCore.Abilities;
 using Olympus.Rotation.IrisCore.Context;
+using Olympus.Rotation.IrisCore.Helpers;
 using Olympus.Services;
 using Olympus.Services.Targeting;
 using Olympus.Services.Training;
@@ -29,9 +30,6 @@ public sealed class DamageModule : IIrisModule
         _burstWindowService = burstWindowService;
         _smartAoEService = smartAoEService;
     }
-
-    private bool ShouldHoldForBurst(float thresholdSeconds = 8f) =>
-        BurstHoldHelper.ShouldHoldForBurst(_burstWindowService, thresholdSeconds);
 
     public bool TryExecute(IIrisContext context, bool isMoving) => false;
 
@@ -88,6 +86,9 @@ public sealed class DamageModule : IIrisModule
         if (!isMoving) TryPushRepaintMotif(context, scheduler);
     }
 
+    private ulong ResolveTargetId(IIrisContext context, IBattleChara target, uint actionId, bool useAoeBranch) =>
+        IrisSmartAoEHelper.ResolveGcdTargetId(_smartAoEService, context, target, actionId, useAoeBranch);
+
     private void TryPushAddle(IIrisContext context, RotationScheduler scheduler, IBattleChara target)
     {
         var player = context.Player;
@@ -122,8 +123,9 @@ public sealed class DamageModule : IIrisModule
         var prepaintOption = context.Configuration.Pictomancer.PrepaintOption;
 
         var paintLandscape = prepaintOption == PrepaintOption.All || prepaintOption == PrepaintOption.LandscapeOnly;
-        if (paintLandscape && context.Configuration.Pictomancer.EnableLandscapeMotif && context.NeedsLandscapeMotif
-            && level >= PCTActions.StarrySkyMotif.MinLevel)
+        if (paintLandscape && CanPaintStarrySkyMotif(context) && context.NeedsLandscapeMotif
+            && level >= PCTActions.StarrySkyMotif.MinLevel
+            && IrisActionProbes.IsStarrySkyMotifReady(context.ActionService))
         {
             scheduler.PushGcd(IrisAbilities.StarrySkyMotif, player.GameObjectId, priority: 1,
                 onDispatched: _ =>
@@ -153,8 +155,9 @@ public sealed class DamageModule : IIrisModule
         }
 
         var paintWeapon = prepaintOption == PrepaintOption.All || prepaintOption == PrepaintOption.WeaponOnly;
-        if (paintWeapon && context.Configuration.Pictomancer.EnableWeaponMotif && context.NeedsWeaponMotif
-            && level >= PCTActions.WeaponMotif.MinLevel)
+        if (paintWeapon && CanPaintHammerMotif(context) && context.NeedsWeaponMotif
+            && level >= PCTActions.WeaponMotif.MinLevel
+            && IrisActionProbes.IsHammerMotifReady(context.ActionService))
         {
             scheduler.PushGcd(IrisAbilities.HammerMotif, player.GameObjectId, priority: 1,
                 onDispatched: _ =>
@@ -173,8 +176,9 @@ public sealed class DamageModule : IIrisModule
         var player = context.Player;
         var level = player.Level;
 
-        if (context.Configuration.Pictomancer.EnableLandscapeMotif && context.NeedsLandscapeMotif
-            && level >= PCTActions.StarrySkyMotif.MinLevel)
+        if (CanPaintStarrySkyMotif(context) && context.NeedsLandscapeMotif
+            && level >= PCTActions.StarrySkyMotif.MinLevel
+            && IrisActionProbes.IsStarrySkyMotifReady(context.ActionService))
         {
             if (MechanicCastGate.ShouldBlock(context, PCTActions.StarrySkyMotif.CastTime))
             {
@@ -212,8 +216,9 @@ public sealed class DamageModule : IIrisModule
             }
         }
 
-        if (context.Configuration.Pictomancer.EnableWeaponMotif && context.NeedsWeaponMotif
-            && level >= PCTActions.WeaponMotif.MinLevel)
+        if (CanPaintHammerMotif(context) && context.NeedsWeaponMotif
+            && level >= PCTActions.WeaponMotif.MinLevel
+            && IrisActionProbes.IsHammerMotifReady(context.ActionService))
         {
             if (MechanicCastGate.ShouldBlock(context, PCTActions.HammerMotif.CastTime))
             {
@@ -231,6 +236,12 @@ public sealed class DamageModule : IIrisModule
 
     private void TryPushRepaintMotif(IIrisContext context, RotationScheduler scheduler)
     {
+        if (IrisBurstHelper.ShouldHoldRepaint(context, _burstWindowService))
+        {
+            context.Debug.DamageState = "Holding repaint for burst";
+            return;
+        }
+
         var player = context.Player;
         var level = player.Level;
         if (context.IsCasting) return;
@@ -257,8 +268,9 @@ public sealed class DamageModule : IIrisModule
             }
         }
 
-        if (context.Configuration.Pictomancer.EnableWeaponMotif && context.NeedsWeaponMotif
-            && level >= PCTActions.WeaponMotif.MinLevel)
+        if (CanPaintHammerMotif(context) && context.NeedsWeaponMotif
+            && level >= PCTActions.WeaponMotif.MinLevel
+            && IrisActionProbes.IsHammerMotifReady(context.ActionService))
         {
             if (MechanicCastGate.ShouldBlock(context, PCTActions.HammerMotif.CastTime))
             {
@@ -274,8 +286,9 @@ public sealed class DamageModule : IIrisModule
             return;
         }
 
-        if (context.Configuration.Pictomancer.EnableLandscapeMotif && context.NeedsLandscapeMotif
-            && level >= PCTActions.StarrySkyMotif.MinLevel)
+        if (CanPaintStarrySkyMotif(context) && context.NeedsLandscapeMotif
+            && level >= PCTActions.StarrySkyMotif.MinLevel
+            && IrisActionProbes.IsStarrySkyMotifReady(context.ActionService))
         {
             if (MechanicCastGate.ShouldBlock(context, PCTActions.StarrySkyMotif.CastTime))
             {
@@ -293,10 +306,49 @@ public sealed class DamageModule : IIrisModule
 
     private static ActionDefinition GetCreatureMotifOrdered(IIrisContext context, byte level)
     {
-        var count = context.LivingMuseCharges;
+        var motif = IrisActionProbes.GetNextCreatureMotif(context.ActionService, level, context.LivingMuseCharges);
+        if (IsCreatureMotifEnabled(context, motif))
+            return motif;
+
+        foreach (var candidate in new[] { PCTActions.PomMotif, PCTActions.WingMotif, PCTActions.ClawMotif, PCTActions.MawMotif })
+        {
+            if (level < candidate.MinLevel) continue;
+            if (!IsCreatureMotifEnabled(context, candidate)) continue;
+            if (IsCreatureMotifProbeReady(context, candidate))
+                return candidate;
+        }
+
         if (context.Configuration.Pictomancer.CreatureMotifOrder == CreatureOrder.MawClawWingPom)
-            count ^= 1;
-        return PCTActions.GetCreatureMotif(level, count);
+            return PCTActions.GetCreatureMotif(level, context.LivingMuseCharges ^ 1);
+
+        return PCTActions.GetCreatureMotif(level, context.LivingMuseCharges);
+    }
+
+    private static bool IsCreatureMotifProbeReady(IIrisContext context, ActionDefinition motif)
+    {
+        if (motif.ActionId == PCTActions.PomMotif.ActionId) return IrisActionProbes.IsPomMotifReady(context.ActionService);
+        if (motif.ActionId == PCTActions.WingMotif.ActionId) return IrisActionProbes.IsWingMotifReady(context.ActionService);
+        if (motif.ActionId == PCTActions.ClawMotif.ActionId) return IrisActionProbes.IsClawMotifReady(context.ActionService);
+        if (motif.ActionId == PCTActions.MawMotif.ActionId) return IrisActionProbes.IsMawMotifReady(context.ActionService);
+        return true;
+    }
+
+    private static bool CanPaintHammerMotif(IIrisContext context) =>
+        context.Configuration.Pictomancer.EnableWeaponMotif
+        && context.Configuration.Pictomancer.EnableHammerMotif;
+
+    private static bool CanPaintStarrySkyMotif(IIrisContext context) =>
+        context.Configuration.Pictomancer.EnableLandscapeMotif
+        && context.Configuration.Pictomancer.EnableStarrySkyMotif;
+
+    private static bool ShouldUseSubtractiveRoute(IIrisContext context)
+    {
+        if (!context.Configuration.Pictomancer.EnableSubtractiveCombo)
+            return false;
+
+        return context.HasSubtractivePalette
+               || context.HasSubtractiveSpectrum
+               || context.IsInSubtractiveCombo;
     }
 
     private static bool IsCreatureMotifEnabled(IIrisContext context, ActionDefinition motif)
@@ -377,8 +429,21 @@ public sealed class DamageModule : IIrisModule
         var level = context.Player.Level;
         if (level < PCTActions.HammerStamp.MinLevel) return;
         if (!context.HasHammerTime && !context.IsInHammerCombo) return;
-        if (context.Configuration.Pictomancer.EnableBurstPooling && ShouldHoldForBurst(8f) && context.HammerComboStep == 0) return;
+        if (IrisBurstHelper.ShouldHoldHammerStart(context, context.ActionService, _burstWindowService)) return;
         if (!context.Configuration.Pictomancer.UseHammerDuringBurst && context.IsInBurstWindow) return;
+
+        if (!IrisActionProbes.CanStartHammerStamp(
+                context.ActionService,
+                context.HasHammerTime,
+                context.HammerTimeStacks,
+                context.HammerComboStep))
+            return;
+
+        if (context.HammerComboStep == 1 && !IrisActionProbes.IsHammerBrushReady(context.ActionService))
+            return;
+
+        if (context.HammerComboStep == 2 && !IrisActionProbes.IsPolishingHammerReady(context.ActionService))
+            return;
 
         var hammerAction = PCTActions.GetHammerComboAction(context.HammerComboStep, level);
         if (hammerAction == null) return;
@@ -472,7 +537,7 @@ public sealed class DamageModule : IIrisModule
             return;
         }
 
-        scheduler.PushGcd(ability, target.GameObjectId, priority: 7,
+        scheduler.PushGcd(ability, ResolveTargetId(context, target, comboAction.ActionId, context.ShouldUseAoe), priority: 7,
             onDispatched: _ =>
             {
                 context.Debug.PlannedAction = comboAction.Name;
@@ -482,6 +547,9 @@ public sealed class DamageModule : IIrisModule
 
     private void TryPushBaseCombo(IIrisContext context, RotationScheduler scheduler, IBattleChara target)
     {
+        if (ShouldUseSubtractiveRoute(context))
+            return;
+
         var comboAction = PCTActions.GetBaseComboAction(context.BaseComboStep, context.ShouldUseAoe, context.Player.Level);
         var ability = MapBaseCombo(comboAction);
         var castTime = context.HasInstantCast ? 0f : comboAction.CastTime;
@@ -491,7 +559,7 @@ public sealed class DamageModule : IIrisModule
             return;
         }
 
-        scheduler.PushGcd(ability, target.GameObjectId, priority: 8,
+        scheduler.PushGcd(ability, ResolveTargetId(context, target, comboAction.ActionId, context.ShouldUseAoe), priority: 8,
             onDispatched: _ =>
             {
                 context.Debug.PlannedAction = comboAction.Name;

@@ -391,7 +391,7 @@ public sealed class Plugin : IDalamudPlugin
             objectTable,
             dataManager);
 
-        this.drawingService = new DrawingService(pluginInterface, configuration.DrawHelper, log);
+        this.drawingService = new DrawingService(pluginInterface, configuration.DrawHelper, gameGui, log);
         this.drawCanvas = new DrawCanvas(drawingService, configuration, objectTable, clientState, targetManager, gameGui, positionalService, rotationManager);
         this.updateCheckerService = new UpdateCheckerService(PluginVersion, notificationManager, log);
         this.configWindow = new ConfigWindow(configuration, SaveConfiguration, updateCheckerService, textureProvider);

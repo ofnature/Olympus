@@ -1016,6 +1016,9 @@ public sealed class TargetingService : ITargetingService
             HasInvulnerabilityStatus(npc))
             return false;
 
+        if (!EnemyAttackability.IsPlayerAttackable(npc))
+            return false;
+
         return true;
     }
 
@@ -1042,6 +1045,9 @@ public sealed class TargetingService : ITargetingService
             HasInvulnerabilityStatus(npc))
             return false;
 
+        if (!EnemyAttackability.IsPlayerAttackable(npc))
+            return false;
+
         return true;
     }
 
@@ -1051,6 +1057,9 @@ public sealed class TargetingService : ITargetingService
             return false;
 
         if ((byte)enemy.BattleNpcKind != Olympus.Compat.BattleNpcKinds.Combatant && enemy.SubKind != 0)
+            return false;
+
+        if (!EnemyAttackability.IsPlayerAttackable(enemy))
             return false;
 
         return DistanceHelper.IsInRange(player.Position, enemy.Position, maxRange + enemy.HitboxRadius + player.HitboxRadius);

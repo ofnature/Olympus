@@ -188,7 +188,8 @@ public sealed class IrisContext : IIrisContext
         ITimelineService? timelineService = null,
         IPluginLog? log = null,
         IPartyCoordinationService? partyCoordinationService = null,
-        ITrainingService? trainingService = null)
+        ITrainingService? trainingService = null,
+        ISmartAoEService? smartAoEService = null)
     {
         Player = player;
         InCombat = inCombat;
@@ -268,24 +269,44 @@ public sealed class IrisContext : IIrisContext
         HasMonochromeTones = statusHelper.HasMonochromeTones(player);
 
         // Instant cast check
-        HasInstantCast = HasSwiftcast || HasRainbowBright;
+        HasInstantCast = HasSwiftcast || HasRainbowBright || HasHyperphantasia;
 
-        // Determine combo state
-        DetermineComboState(comboAction, comboTimer, player.Level,
-            out var baseStep, out var isSubtractive, out var hammerStep, out var inHammer);
-        BaseComboStep = baseStep;
-        IsInSubtractiveCombo = isSubtractive || HasSubtractivePalette;
-        HammerComboStep = hammerStep;
-        IsInHammerCombo = inHammer || HasHammerTime;
-
-        // Calculate nearby enemies
+        // Enemy count / AoE mode must be resolved before combo step (adjusted-id probes are AoE-aware).
         _currentTarget = targetingService.FindEnemy(
             configuration.Targeting.EnemyStrategy,
             FFXIVConstants.CasterTargetingRange,
             player);
-        NearbyEnemyCount = CountNearbyEnemies(player, 5f);
+        var aoeRadius = PCTActions.Fire2InRed.Radius;
+        NearbyEnemyCount = _currentTarget is IBattleNpc battleTarget
+            ? targetingService.CountEnemiesInRangeOfTarget(aoeRadius, battleTarget, player)
+            : targetingService.CountEnemiesInRange(aoeRadius, player);
+        var aoeEnemyCount = IrisSmartAoEHelper.RefineEnemyCountForAoE(
+            smartAoEService, player, configuration, NearbyEnemyCount);
         ShouldUseAoe = PCTActions.ShouldUseAoe(
-            NearbyEnemyCount, player.Level, configuration.Pictomancer.AoEMinTargets);
+            aoeEnemyCount,
+            player.Level,
+            configuration.Pictomancer.AoEMinTargets,
+            configuration.Pictomancer.EnableAoERotation);
+
+        var useSubtractiveRoute = configuration.Pictomancer.EnableSubtractiveCombo
+                                  && (HasSubtractivePalette || HasSubtractiveSpectrum);
+
+        DetermineComboState(
+            actionService,
+            comboAction,
+            comboTimer,
+            player.Level,
+            ShouldUseAoe,
+            useSubtractiveRoute,
+            out var baseStep,
+            out var isSubtractive,
+            out var hammerStep,
+            out var inHammer);
+        BaseComboStep = baseStep;
+        IsInSubtractiveCombo = isSubtractive || HasSubtractivePalette;
+        HammerComboStep = IrisActionProbes.ResolveHammerComboStep(
+            actionService, hammerStep, HasHammerTime, HammerTimeStacks);
+        IsInHammerCombo = inHammer || HasHammerTime;
 
         // Burst window check
         IsInBurstWindow = HasStarryMuse;
@@ -303,16 +324,19 @@ public sealed class IrisContext : IIrisContext
         var level = player.Level;
         StarryMuseReady = level >= PCTActions.StarryMuse.MinLevel &&
                          HasLandscapeCanvas &&
-                         actionService.IsActionReady(PCTActions.StarryMuse.ActionId);
+                         actionService.IsActionReady(PCTActions.StarryMuse.ActionId) &&
+                         IrisActionProbes.IsStarryMuseReady(actionService);
         LivingMuseReady = level >= PCTActions.LivingMuse.MinLevel &&
                          HasCreatureCanvas &&
-                         actionService.IsActionReady(PCTActions.LivingMuse.ActionId);
+                         actionService.IsActionReady(PCTActions.LivingMuse.ActionId) &&
+                         IrisActionProbes.IsLivingMuseReadyForCreature(actionService, CreatureMotifType);
         LivingMuseCharges = level >= PCTActions.LivingMuse.MinLevel
             ? (int)actionService.GetCurrentCharges(PCTActions.LivingMuse.ActionId)
             : 0;
         StrikingMuseReady = level >= PCTActions.StrikingMuse.MinLevel &&
                           HasWeaponCanvas &&
-                          actionService.IsActionReady(PCTActions.StrikingMuse.ActionId);
+                          actionService.IsActionReady(PCTActions.StrikingMuse.ActionId) &&
+                          IrisActionProbes.IsStrikingMuseReady(actionService);
         SubtractivePaletteReady = level >= PCTActions.SubtractivePalette.MinLevel &&
                                  CanUseSubtractivePalette &&
                                  !HasSubtractivePalette &&
@@ -332,77 +356,42 @@ public sealed class IrisContext : IIrisContext
         UpdateDebugState();
     }
 
-    private void DetermineComboState(uint comboAction, float comboTimer, byte level,
-        out int baseStep, out bool isSubtractive, out int hammerStep, out bool inHammer)
+    private static void DetermineComboState(
+        IActionService actionService,
+        uint comboAction,
+        float comboTimer,
+        byte level,
+        bool shouldUseAoe,
+        bool useSubtractiveRoute,
+        out int baseStep,
+        out bool isSubtractive,
+        out int hammerStep,
+        out bool inHammer)
     {
-        baseStep = 0;
-        isSubtractive = false;
         hammerStep = 0;
         inHammer = false;
 
-        // No combo if timer expired
-        if (comboTimer <= 0)
-            return;
-
-        // Check base combo actions
-        if (comboAction == PCTActions.FireInRed.ActionId || comboAction == PCTActions.Fire2InRed.ActionId)
+        if (comboTimer > 0)
         {
-            baseStep = 1;
-            isSubtractive = false;
-        }
-        else if (comboAction == PCTActions.AeroInGreen.ActionId || comboAction == PCTActions.Aero2InGreen.ActionId)
-        {
-            baseStep = 2;
-            isSubtractive = false;
-        }
-        // Check subtractive combo actions
-        else if (comboAction == PCTActions.BlizzardInCyan.ActionId || comboAction == PCTActions.Blizzard2InCyan.ActionId)
-        {
-            baseStep = 1;
-            isSubtractive = true;
-        }
-        else if (comboAction == PCTActions.StoneInYellow.ActionId || comboAction == PCTActions.Stone2InYellow.ActionId)
-        {
-            baseStep = 2;
-            isSubtractive = true;
-        }
-        // Check hammer combo
-        else if (comboAction == PCTActions.HammerStamp.ActionId)
-        {
-            hammerStep = 1;
-            inHammer = true;
-        }
-        else if (comboAction == PCTActions.HammerBrush.ActionId)
-        {
-            hammerStep = 2;
-            inHammer = true;
-        }
-    }
-
-    private int CountNearbyEnemies(IPlayerCharacter player, float radius)
-    {
-        var count = 0;
-        var playerPos = player.Position;
-
-        foreach (var obj in ObjectTable)
-        {
-            if (obj is not IBattleNpc npc)
-                continue;
-
-            // Skip non-hostile NPCs
-            if (npc.SubKind != 5) // BattleNpcSubKind.Enemy
-                continue;
-
-            // Skip dead enemies
-            if (npc.CurrentHp == 0)
-                continue;
-
-            var distance = System.Numerics.Vector3.Distance(playerPos, npc.Position);
-            if (distance <= radius + 25f) // Add targeting range
-                count++;
+            if (comboAction == PCTActions.HammerStamp.ActionId)
+            {
+                hammerStep = 1;
+                inHammer = true;
+            }
+            else if (comboAction == PCTActions.HammerBrush.ActionId)
+            {
+                hammerStep = 2;
+                inHammer = true;
+            }
         }
 
-        return count;
+        IrisActionProbes.ResolveBaseComboStep(
+            actionService,
+            shouldUseAoe,
+            level,
+            useSubtractiveRoute,
+            out baseStep,
+            out isSubtractive);
     }
 
     private (float avgHpPercent, float lowestHpPercent, int injuredCount) CalculatePartyHealth(IPlayerCharacter player)

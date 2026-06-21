@@ -43,13 +43,14 @@ public sealed class DrawHelperSection
         ImGui.Text(Loc.T(LocalizedStrings.DrawHelper.RenderingHeader, "Rendering"));
         var usePicto = dh.UsePictomancy;
         if (ImGui.Checkbox(Loc.T(LocalizedStrings.DrawHelper.UsePictomancy, "Use Pictomancy (3D rendering)"), ref usePicto)) { dh.UsePictomancy = usePicto; save(); }
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip(Loc.T(LocalizedStrings.DrawHelper.UsePictomancyTooltip, "Requires Pictomancy plugin. Falls back gracefully if unavailable."));
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(Loc.T(LocalizedStrings.DrawHelper.UsePictomancyTooltip, "Uses bundled Pictomancy for 3D overlays. When disabled or unavailable, Draw Helper falls back to a 2D screen projection."));
 
         var alpha = dh.PictomancyMaxAlpha;
         if (ImGui.SliderFloat(Loc.T(LocalizedStrings.DrawHelper.MaxAlpha, "Max Alpha"), ref alpha, 0.1f, 1f, "%.2f")) { dh.PictomancyMaxAlpha = alpha; save(); }
 
         var clipUi = dh.PictomancyClipNativeUI;
         if (ImGui.Checkbox(Loc.T(LocalizedStrings.DrawHelper.ClipToGameUI, "Clip to game UI"), ref clipUi)) { dh.PictomancyClipNativeUI = clipUi; save(); }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(Loc.T(LocalizedStrings.DrawHelper.ClipToGameUITooltip, "Hides overlays behind the cast bar and other native UI. May break after game patches; Draw Helper disables it automatically if Pictomancy throws."));
 
         ImGui.Spacing();
 

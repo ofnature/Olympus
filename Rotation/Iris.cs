@@ -108,7 +108,8 @@ public sealed class Iris : BaseCasterDpsRotation<IIrisContext, IIrisModule>
         IPartyCoordinationService? partyCoordinationService = null,
         ITrainingService? trainingService = null,
         Olympus.Services.Consumables.ITinctureDispatcher? tinctureDispatcher = null,
-        Olympus.Services.Pull.IPullIntentService? pullIntentService = null)
+        Olympus.Services.Pull.IPullIntentService? pullIntentService = null,
+        ISmartAoEService? smartAoEService = null)
         : base(
             log,
             actionTracker,
@@ -125,6 +126,7 @@ public sealed class Iris : BaseCasterDpsRotation<IIrisContext, IIrisModule>
             debuffDetectionService,
             burstWindowService,
             errorMetrics,
+            smartAoEService: smartAoEService,
             tinctureDispatcher: tinctureDispatcher,
             pullIntentService: pullIntentService)
     {
@@ -219,7 +221,8 @@ public sealed class Iris : BaseCasterDpsRotation<IIrisContext, IIrisModule>
             timelineService: _timelineService,
             log: Log,
             partyCoordinationService: _partyCoordinationService,
-            trainingService: _trainingService);
+            trainingService: _trainingService,
+            smartAoEService: SmartAoEService);
     }
 
     /// <inheritdoc />

@@ -966,8 +966,11 @@ public static class PCTActions
     /// <summary>
     /// Determines if we should use AoE rotation based on enemy count.
     /// </summary>
-    public static bool ShouldUseAoe(int enemyCount, byte level, int minTargets)
+    public static bool ShouldUseAoe(int enemyCount, byte level, int minTargets, bool aoeEnabled = true)
     {
+        if (!aoeEnabled)
+            return false;
+
         return enemyCount >= minTargets && level >= Fire2InRed.MinLevel;
     }
 
