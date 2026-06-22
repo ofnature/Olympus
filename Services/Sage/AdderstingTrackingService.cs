@@ -1,5 +1,6 @@
 using System;
-using FFXIVClientStructs.FFXIV.Client.Game;
+using Dalamud.Game.ClientState.JobGauge.Types;
+using Dalamud.Plugin.Services;
 
 namespace Olympus.Services.Sage;
 
@@ -11,6 +12,13 @@ namespace Olympus.Services.Sage;
 /// </summary>
 public sealed class AdderstingTrackingService : IAdderstingTrackingService
 {
+    private readonly IJobGauges _jobGauges;
+
+    public AdderstingTrackingService(IJobGauges jobGauges)
+    {
+        _jobGauges = jobGauges;
+    }
+
     /// <summary>
     /// Maximum Addersting stacks.
     /// </summary>
@@ -68,24 +76,13 @@ public sealed class AdderstingTrackingService : IAdderstingTrackingService
     }
 
     /// <summary>
-    /// Gets the Addersting stack count from the game's job gauge.
-    /// Sage gauge: byte 0 = Addersgall, byte 1 = Addersting
+    /// Gets the Addersting stack count from Dalamud's typed Sage gauge.
     /// </summary>
-    private static unsafe int GetAdderstingStacks()
+    private int GetAdderstingStacks()
     {
         try
         {
-            var jobGauge = JobGaugeManager.Instance();
-            if (jobGauge == null)
-                return 0;
-
-            var gaugeData = jobGauge->CurrentGauge;
-            var rawGauge = (byte*)&gaugeData;
-
-            // Sage gauge layout:
-            // byte 0: Addersgall stacks (0-3)
-            // byte 1: Addersting stacks (0-3)
-            return rawGauge[1];
+            return _jobGauges.Get<SGEGauge>().Addersting;
         }
         catch
         {

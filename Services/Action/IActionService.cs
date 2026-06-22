@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 using Olympus.Models.Action;
 
@@ -44,6 +45,12 @@ public interface IActionService
     /// Whether we can weave an oGCD right now.
     /// </summary>
     bool CanExecuteOgcd { get; }
+
+    /// <summary>
+    /// Optional Sage guard: return true to block Kardia (24285) at the action layer.
+    /// Set/cleared by Asclepius each rotation frame.
+    /// </summary>
+    Func<ulong, bool>? KardiaRecastGuard { get; set; }
 
     /// <summary>
     /// Checks if a specific action is off cooldown.

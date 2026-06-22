@@ -52,6 +52,13 @@ public static class HealingTab
             ImGui.Spacing();
         }
 
+        // Sage Kardia target vs tank (pre-pull monitoring)
+        if (IsSectionVisible(config, "Kardia") && snapshot.Healing.HasKardiaInfo)
+        {
+            DrawKardia(snapshot);
+            ImGui.Spacing();
+        }
+
         // Shadow HP Section (collapsible)
         if (IsSectionVisible(config, "ShadowHp"))
         {
@@ -312,29 +319,142 @@ public static class HealingTab
     {
         var healing = snapshot.Healing;
 
-        ImGui.Text(Loc.T(LocalizedStrings.Debug.RecentHeals, "Recent Heals"));
-        ImGui.SameLine();
-        ImGui.TextColored(DebugColors.Heal, Loc.TFormat(LocalizedStrings.Debug.Total, "(Total: {0:N0} HP)", healing.TotalRecentHealAmount));
+        ImGui.Text(Loc.T(LocalizedStrings.Debug.RecentHeals, "Healing Abilities"));
         ImGui.Separator();
 
-        if (healing.RecentHeals.Count == 0)
+        if (healing.HealingAbilityLastUsed.Count == 0)
         {
             ImGui.TextColored(DebugColors.Dim, Loc.T(LocalizedStrings.Debug.NoHealsYet, "No heals yet"));
             return;
         }
 
-        // Show last 5 heals
-        var displayCount = Math.Min(5, healing.RecentHeals.Count);
-        for (var i = 0; i < displayCount; i++)
-        {
-            var heal = healing.RecentHeals[i];
+        if (!ImGui.BeginTable("HealingAbilityLastUsed", 2,
+                ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+            return;
 
-            ImGui.TextColored(DebugColors.Dim, $"{heal.SecondsAgo:F1}s ago");
-            ImGui.SameLine();
-            ImGui.TextColored(DebugColors.Heal, $"+{heal.Amount}");
-            ImGui.SameLine();
-            ImGui.Text($"{heal.ActionName} -> {heal.TargetName}");
+        ImGui.TableSetupColumn("Ability", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("Last Used", ImGuiTableColumnFlags.WidthFixed, 90);
+        ImGui.TableHeadersRow();
+
+        foreach (var ability in healing.HealingAbilityLastUsed)
+        {
+            ImGui.TableNextRow();
+
+            ImGui.TableNextColumn();
+            ImGui.Text(ability.ActionName);
+
+            ImGui.TableNextColumn();
+            if (ability.SecondsSinceLastUse is float seconds)
+            {
+                ImGui.TextColored(DebugColors.Dim, $"{seconds:F1}s ago");
+            }
+            else
+            {
+                ImGui.TextColored(DebugColors.Dim, "—");
+            }
         }
+
+        ImGui.EndTable();
+    }
+
+    private static void DrawKardia(DebugSnapshot snapshot)
+    {
+        var healing = snapshot.Healing;
+        var onTank = healing.TankHasKardion
+                     || (healing.KardiaTargetGameObjectId != 0
+                         && healing.KardiaTargetGameObjectId == healing.TankGameObjectId);
+
+        ImGui.Text(Loc.T(LocalizedStrings.Debug.SgeKardia, "Kardia"));
+        ImGui.SameLine();
+        var stateColor = onTank ? DebugColors.Success : DebugColors.Warning;
+        ImGui.TextColored(stateColor, $"[{healing.KardiaState}]");
+        ImGui.Separator();
+
+        if (!ImGui.BeginTable("HealingKardiaTable", 2,
+                ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+            return;
+
+        ImGui.TableSetupColumn("Label", ImGuiTableColumnFlags.WidthFixed, 110);
+        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text("Kardion Target");
+        ImGui.TableNextColumn();
+        if (healing.KardiaTargetGameObjectId != 0)
+            ImGui.Text($"{healing.KardiaTargetName} ({healing.KardiaTargetGameObjectId})");
+        else if (healing.TankHasKardion)
+            ImGui.Text($"{healing.TankTargetName} ({healing.TankGameObjectId})");
+        else
+            ImGui.TextColored(DebugColors.Dim, "None");
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text("Tank");
+        ImGui.TableNextColumn();
+        if (healing.TankGameObjectId != 0)
+            ImGui.Text($"{healing.TankTargetName} ({healing.TankGameObjectId})");
+        else
+            ImGui.TextColored(DebugColors.Dim, "None");
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text("Tank Kardion");
+        ImGui.TableNextColumn();
+        if (healing.TankGameObjectId == 0)
+            ImGui.TextColored(DebugColors.Dim, "No tank");
+        else if (healing.TankHasKardion)
+            ImGui.TextColored(DebugColors.Success, "Yes");
+        else
+            ImGui.TextColored(DebugColors.Warning, "No");
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text("Match");
+        ImGui.TableNextColumn();
+        if (healing.TankGameObjectId == 0)
+            ImGui.TextColored(DebugColors.Dim, "No tank");
+        else if (onTank)
+            ImGui.TextColored(DebugColors.Success, "Kardion on tank");
+        else
+            ImGui.TextColored(DebugColors.Warning, "Not on tank");
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text("Olympus cast");
+        ImGui.TableNextColumn();
+        if (healing.KardiaExecutedThisFrame)
+            ImGui.TextColored(DebugColors.Warning, "Yes (this frame)");
+        else if (healing.KardiaLastCastUtc is { } lastCast)
+            ImGui.TextColored(DebugColors.Warning, $"{FormatAge(lastCast)} ago");
+        else
+            ImGui.TextColored(DebugColors.Dim, "Never");
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text("Olympus blocked");
+        ImGui.TableNextColumn();
+        if (healing.KardiaBlockedThisFrame)
+            ImGui.TextColored(DebugColors.Success, "Yes (this frame)");
+        else
+            ImGui.TextColored(DebugColors.Dim, "No");
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text("Last error");
+        ImGui.TableNextColumn();
+        if (healing.KardiaLastErrorUtc is { } lastError)
+            ImGui.TextColored(DebugColors.Warning, $"{healing.KardiaLastError} ({FormatAge(lastError)} ago)");
+        else
+            ImGui.TextColored(DebugColors.Dim, "None");
+
+        ImGui.EndTable();
+    }
+
+    private static string FormatAge(DateTime utcTimestamp)
+    {
+        var seconds = (DateTime.UtcNow - utcTimestamp).TotalSeconds;
+        return seconds < 60 ? $"{seconds:F1}s" : $"{seconds / 60:F1}m";
     }
 
     private static void DrawShadowHpTracking(DebugSnapshot snapshot)

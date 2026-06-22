@@ -3,6 +3,7 @@ using Olympus.Config;
 using Olympus.Data;
 using Olympus.Rotation.AsclepiusCore.Abilities;
 using Olympus.Rotation.AsclepiusCore.Context;
+using Olympus.Rotation.AsclepiusCore.Helpers;
 using Olympus.Rotation.Common.Scheduling;
 using Olympus.Services.Training;
 
@@ -29,7 +30,7 @@ public sealed class PhysisIIHandler : IHealingHandler
         if (player.Level < SGEActions.PhysisII.MinLevel) return;
         if (!context.ActionService.IsActionReady(SGEActions.PhysisII.ActionId)) { context.Debug.PhysisIIState = "On CD"; return; }
 
-        var (avgHp, _, injuredCount) = context.PartyHelper.CalculatePartyHealthMetrics(player);
+        var (avgHp, _, injuredCount) = AsclepiusPartyMetrics.GetAoEHealMetrics(context.PartyHelper, player);
         if (injuredCount < config.AoEHealMinTargets) { context.Debug.PhysisIIState = $"{injuredCount} injured"; return; }
         if (avgHp > config.PhysisIIThreshold) { context.Debug.PhysisIIState = $"Avg HP {avgHp:P0}"; return; }
 

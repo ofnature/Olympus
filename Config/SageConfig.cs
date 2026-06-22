@@ -158,6 +158,14 @@ public sealed class SageConfig
     /// </summary>
     public bool EnablePneuma { get; set; } = true;
 
+    /// <summary>
+    /// Restrict cast-time GCD heals (Diagnosis / Prognosis) to when there is no co-healer covering the
+    /// party. With a co-healer present, non-critical healing is left to oGCDs (and the co-healer) so the
+    /// Sage keeps DPS uptime, matching RSR's "GCD heal only when sole healer" default. Critical targets
+    /// (below the GCD emergency threshold) still get a GCD heal regardless. Default true.
+    /// </summary>
+    public bool RestrictGcdHealsWithCoHealer { get; set; } = true;
+
     #endregion
 
     #region Healing Thresholds
@@ -165,7 +173,7 @@ public sealed class SageConfig
     /// <summary>
     /// HP threshold to trigger Diagnosis.
     /// </summary>
-    private float _diagnosisThreshold = 0.40f;
+    private float _diagnosisThreshold = 0.65f;
     public float DiagnosisThreshold
     {
         get => _diagnosisThreshold;
@@ -273,6 +281,12 @@ public sealed class SageConfig
     }
 
     /// <summary>
+    /// How to count injured allies for AoE heal thresholds.
+    /// TankCentered counts members within Prognosis radius of the tank (dungeon pulls).
+    /// </summary>
+    public SageAoEHealCountMode AoEHealCountMode { get; set; } = SageAoEHealCountMode.PartyWide;
+
+    /// <summary>
     /// HP threshold for AoE healing (Prognosis, Ixochole, etc.).
     /// </summary>
     private float _aoeHealThreshold = 0.70f;
@@ -320,6 +334,27 @@ public sealed class SageConfig
     /// Whether to avoid overwriting existing shields with Eukrasian heals.
     /// </summary>
     public bool AvoidOverwritingShields { get; set; } = true;
+
+    /// <summary>
+    /// Treat Eukrasian shields (E.Diagnosis / E.Prognosis) as mitigation rather than reactive heals.
+    /// When true, shields fire proactively for an incoming tankbuster/raidwide (or a low-HP backstop)
+    /// instead of every time someone dips below the shield HP threshold. This mirrors RSR's split of
+    /// "Defense" (mechanic-driven) from "Heal" (HP-driven) and prevents the shield-spam loop that wastes
+    /// GCDs, caps Addersting, and starves Addersgall oGCD heals. Default true.
+    /// </summary>
+    public bool EukrasianShieldsForMitigation { get; set; } = true;
+
+    /// <summary>
+    /// HP backstop for mitigation-mode shields. When no tankbuster/raidwide is detected, a shield is
+    /// still applied to a target at or below this HP so genuine danger is covered. Kept low so shields
+    /// do not fire on routine chip damage. Only used when <see cref="EukrasianShieldsForMitigation"/> is on.
+    /// </summary>
+    private float _eukrasianShieldHpBackstop = 0.50f;
+    public float EukrasianShieldHpBackstop
+    {
+        get => _eukrasianShieldHpBackstop;
+        set => _eukrasianShieldHpBackstop = Math.Clamp(value, 0f, 1f);
+    }
 
     #endregion
 
@@ -419,9 +454,38 @@ public sealed class SageConfig
         set => _aoeDamageMinTargets = Math.Clamp(value, 1, 10);
     }
 
+    /// <summary>
+    /// How to count enemies for AoE damage. TargetCentered uses the current enemy target.
+    /// </summary>
+    public SageAoEDamageCountMode AoEDamageCountMode { get; set; } = SageAoEDamageCountMode.TargetCentered;
+
     #endregion
 
     // Lucid Dreaming moved to HealerSharedConfig.
+}
+
+/// <summary>
+/// Anchor for counting injured allies when deciding AoE heals.
+/// </summary>
+public enum SageAoEHealCountMode
+{
+    /// <summary>Count injured members across the whole party.</summary>
+    PartyWide,
+
+    /// <summary>Count injured members within heal radius of the tank.</summary>
+    TankCentered,
+}
+
+/// <summary>
+/// Anchor for counting enemies when deciding AoE damage.
+/// </summary>
+public enum SageAoEDamageCountMode
+{
+    /// <summary>Count enemies within radius of the player.</summary>
+    PlayerCentered,
+
+    /// <summary>Count enemies within radius of the current target.</summary>
+    TargetCentered,
 }
 
 /// <summary>

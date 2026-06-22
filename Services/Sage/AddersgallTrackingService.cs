@@ -1,5 +1,6 @@
 using System;
-using FFXIVClientStructs.FFXIV.Client.Game;
+using Dalamud.Game.ClientState.JobGauge.Types;
+using Dalamud.Plugin.Services;
 
 namespace Olympus.Services.Sage;
 
@@ -11,6 +12,13 @@ namespace Olympus.Services.Sage;
 /// </summary>
 public sealed class AddersgallTrackingService : IAddersgallTrackingService
 {
+    private readonly IJobGauges _jobGauges;
+
+    public AddersgallTrackingService(IJobGauges jobGauges)
+    {
+        _jobGauges = jobGauges;
+    }
+
     /// <summary>
     /// Maximum Addersgall stacks.
     /// </summary>
@@ -99,25 +107,13 @@ public sealed class AddersgallTrackingService : IAddersgallTrackingService
     }
 
     /// <summary>
-    /// Gets the Addersgall stack count from the game's job gauge.
-    /// Sage gauge: byte 0 = Addersgall, byte 1 = Addersting, short = timer (in centiseconds)
+    /// Gets the Addersgall stack count from Dalamud's typed Sage gauge.
     /// </summary>
-    private static unsafe int GetAddersgallStacks()
+    private int GetAddersgallStacks()
     {
         try
         {
-            var jobGauge = JobGaugeManager.Instance();
-            if (jobGauge == null)
-                return 0;
-
-            var gaugeData = jobGauge->CurrentGauge;
-            var rawGauge = (byte*)&gaugeData;
-
-            // Sage gauge layout:
-            // byte 0: Addersgall stacks (0-3)
-            // byte 1: Addersting stacks (0-3)
-            // bytes 2-3: Timer in centiseconds (little endian)
-            return rawGauge[0];
+            return _jobGauges.Get<SGEGauge>().Addersgall;
         }
         catch
         {
@@ -127,21 +123,13 @@ public sealed class AddersgallTrackingService : IAddersgallTrackingService
 
     /// <summary>
     /// Gets the Addersgall timer remaining in seconds.
+    /// The game stores this in milliseconds; convert to seconds for callers.
     /// </summary>
-    private static unsafe float GetAddersgallTimer()
+    private float GetAddersgallTimer()
     {
         try
         {
-            var jobGauge = JobGaugeManager.Instance();
-            if (jobGauge == null)
-                return 0f;
-
-            var gaugeData = jobGauge->CurrentGauge;
-            var rawGauge = (byte*)&gaugeData;
-
-            // Timer is stored as centiseconds (hundredths of a second) in bytes 2-3
-            var timerCentiseconds = (ushort)(rawGauge[2] | (rawGauge[3] << 8));
-            return timerCentiseconds / 100f;
+            return _jobGauges.Get<SGEGauge>().AddersgallTimer / 1000f;
         }
         catch
         {

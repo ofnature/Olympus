@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Olympus.Rotation.AsclepiusCore.Context;
+using Olympus.Rotation.AsclepiusCore.Helpers;
 using Olympus.Rotation.AsclepiusCore.Modules.Healing;
 using Olympus.Rotation.Common.Scheduling;
 
@@ -20,6 +21,7 @@ public sealed class HealingModule : IAsclepiusModule
     {
         _handlers = new List<IHealingHandler>
         {
+            new SwiftcastEmergencyHandler(),
             new SingleTargetOgcdHandler(),
             new IxocholeHandler(),
             new KeracholeHandler(),
@@ -58,7 +60,7 @@ public sealed class HealingModule : IAsclepiusModule
         context.Debug.AddersgallTimer = context.AddersgallTimer;
         context.Debug.AdderstingStacks = context.AdderstingStacks;
 
-        var (avgHp, lowestHp, injuredCount) = context.PartyHelper.CalculatePartyHealthMetrics(context.Player);
+        var (avgHp, lowestHp, injuredCount) = AsclepiusPartyMetrics.GetAoEHealMetrics(context.PartyHelper, context.Player);
         context.Debug.AoEInjuredCount = injuredCount;
         context.Debug.PlayerHpPercent = context.Player.MaxHp > 0
             ? (float)context.Player.CurrentHp / context.Player.MaxHp

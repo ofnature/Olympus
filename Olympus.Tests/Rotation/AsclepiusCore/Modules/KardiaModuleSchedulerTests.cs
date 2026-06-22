@@ -1,8 +1,7 @@
-using Dalamud.Game.ClientState.Objects.Types;
 using Moq;
 using Olympus.Data;
+using Olympus.Models.Action;
 using Olympus.Rotation.AsclepiusCore.Modules;
-using Olympus.Services.Action;
 using Olympus.Tests.Mocks;
 using Olympus.Tests.Rotation.Common.Scheduling;
 using Xunit;
@@ -10,16 +9,14 @@ using Xunit;
 namespace Olympus.Tests.Rotation.AsclepiusCore.Modules;
 
 /// <summary>
-/// Scheduler-push tests for KardiaModule. The distinctive behavior is that Kardia
-/// pushes at priority 0 — beating Resurrection (1-2) — so Kardia placement always
-/// wins when no Kardia is on the tank.
+/// Kardia dispatches directly (not via scheduler) so the recast gate always runs.
 /// </summary>
 public class KardiaModuleSchedulerTests
 {
     private readonly KardiaModule _module = new();
 
     [Fact]
-    public void CollectCandidates_KardiaNotPlaced_PushesKardiaAtPriorityZero()
+    public void CollectCandidates_KardiaNotPlaced_ExecutesKardiaDirectly()
     {
         var config = AsclepiusTestContext.CreateDefaultSageConfiguration();
         config.Sage.AutoKardia = true;
@@ -44,14 +41,14 @@ public class KardiaModuleSchedulerTests
 
         _module.CollectCandidates(context, scheduler, isMoving: false);
 
-        var queue = scheduler.InspectOgcdQueue();
-        var kardiaCandidate = Assert.Single(queue, c => c.Behavior.Action.ActionId == SGEActions.Kardia.ActionId);
-        Assert.Equal(0, kardiaCandidate.Priority);
-        Assert.Equal(tank.Object.GameObjectId, kardiaCandidate.TargetId);
+        actionService.Verify(
+            x => x.ExecuteOgcd(It.Is<ActionDefinition>(a => a.ActionId == SGEActions.Kardia.ActionId), tank.Object.GameObjectId),
+            Times.Once);
+        Assert.DoesNotContain(scheduler.InspectOgcdQueue(), c => c.Behavior.Action.ActionId == SGEActions.Kardia.ActionId);
     }
 
     [Fact]
-    public void CollectCandidates_KardiaAlreadyOnTank_PushesNothing()
+    public void CollectCandidates_KardiaAlreadyOnTank_DoesNotExecuteKardia()
     {
         var config = AsclepiusTestContext.CreateDefaultSageConfiguration();
         config.Sage.AutoKardia = true;
@@ -63,8 +60,6 @@ public class KardiaModuleSchedulerTests
 
         var actionService = MockBuilders.CreateMockActionService(canExecuteOgcd: true);
 
-        // Kardia is already placed on the tank — TryPushPlaceKardia should skip; TryPushEnsureKardiaOnTank
-        // should also skip (already on correct target).
         var context = AsclepiusTestContext.Create(
             config: config,
             partyHelper: partyHelper,
@@ -79,12 +74,13 @@ public class KardiaModuleSchedulerTests
 
         _module.CollectCandidates(context, scheduler, isMoving: false);
 
-        var queue = scheduler.InspectOgcdQueue();
-        Assert.DoesNotContain(queue, c => c.Behavior.Action.ActionId == SGEActions.Kardia.ActionId);
+        actionService.Verify(
+            x => x.ExecuteOgcd(It.Is<ActionDefinition>(a => a.ActionId == SGEActions.Kardia.ActionId), It.IsAny<ulong>()),
+            Times.Never);
     }
 
     [Fact]
-    public void CollectCandidates_AutoKardiaDisabled_PushesNothing()
+    public void CollectCandidates_AutoKardiaDisabled_DoesNotExecuteKardia()
     {
         var config = AsclepiusTestContext.CreateDefaultSageConfiguration();
         config.Sage.AutoKardia = false;
@@ -103,7 +99,8 @@ public class KardiaModuleSchedulerTests
 
         _module.CollectCandidates(context, scheduler, isMoving: false);
 
-        var queue = scheduler.InspectOgcdQueue();
-        Assert.DoesNotContain(queue, c => c.Behavior.Action.ActionId == SGEActions.Kardia.ActionId);
+        actionService.Verify(
+            x => x.ExecuteOgcd(It.Is<ActionDefinition>(a => a.ActionId == SGEActions.Kardia.ActionId), It.IsAny<ulong>()),
+            Times.Never);
     }
 }

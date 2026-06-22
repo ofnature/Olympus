@@ -5,6 +5,7 @@ using Olympus.Data;
 using Olympus.Models.Action;
 using Olympus.Rotation.AsclepiusCore.Abilities;
 using Olympus.Rotation.AsclepiusCore.Context;
+using Olympus.Rotation.AsclepiusCore.Helpers;
 using Olympus.Rotation.Common.Helpers;
 using Olympus.Rotation.Common.Modules;
 using Olympus.Rotation.Common.Scheduling;
@@ -273,7 +274,9 @@ public sealed class DamageModule : BaseDamageModule<IAsclepiusContext>, IAsclepi
         var aoeCastTime = context.HasSwiftcast ? 0f : aoeAction.CastTime;
         if (MechanicCastGate.ShouldBlock(context, aoeCastTime)) { SetAoEDpsState(context, "Holding: mechanic imminent"); return; }
 
-        var enemyCount = context.TargetingService.CountEnemiesInRange(aoeAction.Radius, context.Player);
+        var enemyCount = context.PartyHelper is AsclepiusPartyHelper sageParty
+            ? sageParty.CountEnemiesForAoEDamage(context.Player, aoeAction.Radius, context.TargetingService)
+            : context.TargetingService.CountEnemiesInRange(aoeAction.Radius, context.Player);
         SetAoEDpsEnemyCount(context, enemyCount);
         if (enemyCount < AoEMinTargets(context)) { SetAoEDpsState(context, $"{enemyCount} < {AoEMinTargets(context)} min"); return; }
 

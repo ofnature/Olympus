@@ -3,6 +3,7 @@ using Olympus.Config;
 using Olympus.Data;
 using Olympus.Rotation.AsclepiusCore.Abilities;
 using Olympus.Rotation.AsclepiusCore.Context;
+using Olympus.Rotation.AsclepiusCore.Helpers;
 using Olympus.Rotation.Common.Scheduling;
 using Olympus.Services.Training;
 
@@ -15,7 +16,8 @@ public sealed class PrognosisHandler : IHealingHandler
 
     public void CollectCandidates(IAsclepiusContext context, RotationScheduler scheduler, bool isMoving)
     {
-        if (isMoving) return;
+        // Swiftcast makes Prognosis instant, so it can still fire as an emergency AoE heal while moving.
+        if (isMoving && !context.HasSwiftcast) return;
 
         var config = context.Configuration.Sage;
         var player = context.Player;
@@ -23,10 +25,21 @@ public sealed class PrognosisHandler : IHealingHandler
         if (!config.EnablePrognosis) return;
         if (player.Level < SGEActions.Prognosis.MinLevel) return;
 
-        var (avgHp, _, injuredCount) = context.PartyHelper.CalculatePartyHealthMetrics(player);
+        var (avgHp, _, injuredCount) = AsclepiusPartyMetrics.GetAoEHealMetrics(context.PartyHelper, player);
 
         if (injuredCount < config.AoEHealMinTargets) { context.Debug.AoEStatus = $"{injuredCount} < {config.AoEHealMinTargets} injured"; return; }
         if (avgHp > config.AoEHealThreshold) { context.Debug.AoEStatus = $"Avg HP {avgHp:P0}"; return; }
+
+        // GCD-heal gating: with a co-healer covering the party, leave non-critical AoE healing to
+        // oGCDs (Ixochole/Kerachole/Holos) and the co-healer; only hard-cast Prognosis when the party
+        // is genuinely critical (below the GCD-emergency threshold).
+        if (config.RestrictGcdHealsWithCoHealer
+            && context.CoHealerDetectionService?.HasCoHealer == true
+            && avgHp > context.Configuration.Healing.GcdEmergencyThreshold)
+        {
+            context.Debug.AoEStatus = "Co-healer covering";
+            return;
+        }
 
         var action = SGEActions.Prognosis;
         var castTimeMs = (int)(action.CastTime * 1000);

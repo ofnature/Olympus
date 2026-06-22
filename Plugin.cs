@@ -494,6 +494,7 @@ public sealed class Plugin : IDalamudPlugin
         highEndContentService.OnTerritoryChanged(zoneId);
         dutyContentService.OnTerritoryChanged(zoneId, highEndContentService.IsHighEndZone, partyList.Length);
         dutyConfigurationService.Refresh();
+        rotationManager.NotifyTerritoryChanged(zoneId);
         consumableService.OnTerritoryChanged();
         timelineService.LoadForZone(zoneId);
         combatEventService.Clear();

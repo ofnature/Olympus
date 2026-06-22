@@ -28,11 +28,18 @@ public class ShieldHealingHandlerSchedulerTests
         config.Sage.EnableEukrasianPrognosis = true;
         config.Sage.AoEHealMinTargets = 2;
         config.Sage.AoEHealThreshold = 0.85f;
+        // Mitigation model: with no tankbuster/raidwide detected, shields fire on the low-HP backstop.
+        config.Sage.EukrasianShieldsForMitigation = true;
+        config.Sage.EukrasianShieldHpBackstop = 0.50f;
+        // Disable Addersgall oGCD heals so the shield does not yield the weave to an emergency heal —
+        // this isolates the Eukrasia direct-dispatch carve-out (no heal available to take the weave).
+        config.Sage.EnableDruochole = false;
+        config.Sage.EnableTaurochole = false;
 
         var partyHelper = MockBuilders.CreateMockPartyHelper();
-        // Party at 70% with 4 injured — meets the AoE threshold for Eukrasian Prognosis activation.
+        // Party at 45% avg / 45% lowest with 4 injured — below the shield HP backstop.
         partyHelper.Setup(p => p.CalculatePartyHealthMetrics(It.IsAny<Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter>()))
-            .Returns((avgHpPercent: 0.70f, lowestHpPercent: 0.50f, injuredCount: 4));
+            .Returns((avgHpPercent: 0.45f, lowestHpPercent: 0.45f, injuredCount: 4));
 
         var actionService = MockBuilders.CreateMockActionService(canExecuteGcd: true);
         actionService.Setup(x => x.ExecuteOgcd(

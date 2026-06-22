@@ -217,10 +217,12 @@ public sealed class DebugService
         var pendingHeals = BuildPendingHeals();
         var recentHeals = BuildRecentHeals();
         var shadowHpEntries = BuildShadowHpEntries();
+        var healingAbilityLastUsed = BuildHealingAbilityLastUsed();
 
         // Get debug state from active rotation (if it's a healer)
         var activeRotation = _rotationManager.ActiveRotation;
         var debug = activeRotation?.DebugState;
+        var sageDebug = GetAsclepiusDebugState();
 
         return new DebugHealingState
         {
@@ -238,8 +240,55 @@ public sealed class DebugService
             LastHealStats = debug?.LastHealStats ?? "N/A",
             RecentHeals = recentHeals,
             TotalRecentHealAmount = recentHeals.Sum(h => h.Amount),
+            HealingAbilityLastUsed = healingAbilityLastUsed,
+            HasKardiaInfo = sageDebug != null,
+            KardiaState = sageDebug?.KardiaState ?? "N/A",
+            KardiaTargetGameObjectId = sageDebug?.KardiaTargetGameObjectId ?? 0,
+            KardiaTargetName = sageDebug?.KardiaTargetName ?? "None",
+            TankGameObjectId = sageDebug?.TankGameObjectId ?? 0,
+            TankTargetName = sageDebug?.TankTargetName ?? "None",
+            TankHasKardion = sageDebug?.TankHasKardion ?? false,
+            KardiaBlockedThisFrame = sageDebug?.KardiaBlockedThisFrame ?? false,
+            KardiaExecutedThisFrame = sageDebug?.KardiaExecutedThisFrame ?? false,
+            KardiaLastCastUtc = sageDebug?.KardiaLastCastUtc,
+            KardiaLastErrorUtc = sageDebug?.KardiaLastErrorUtc,
+            KardiaLastError = sageDebug?.KardiaLastError ?? "None",
             ShadowHpEntries = shadowHpEntries
         };
+    }
+
+    private List<DebugHealingAbilityLastUsed> BuildHealingAbilityLastUsed()
+    {
+        var playerLevel = GetPlayerLevel();
+        var jobId = SpellChecklistRegistry.NormalizeJobId(GetJobId());
+        if (playerLevel == 0 || jobId == 0)
+            return [];
+
+        var seen = new HashSet<uint>();
+        var result = new List<DebugHealingAbilityLastUsed>();
+
+        foreach (var (category, action) in SpellStatusRegistry.GetActions(jobId, playerLevel, RoleDebugTab.Healing))
+        {
+            if (!seen.Add(action.ActionId))
+                continue;
+
+            DateTime? lastUsed = null;
+            if (_combatEventService.TryGetLastLocalAbilityUsedUtc(action.ActionId, out var ts))
+                lastUsed = ts;
+
+            result.Add(new DebugHealingAbilityLastUsed
+            {
+                ActionId = action.ActionId,
+                ActionName = action.Name,
+                Category = category,
+                LastUsedUtc = lastUsed,
+            });
+        }
+
+        return result
+            .OrderBy(a => (int)a.Category)
+            .ThenBy(a => a.ActionName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private List<DebugPendingHeal> BuildPendingHeals()

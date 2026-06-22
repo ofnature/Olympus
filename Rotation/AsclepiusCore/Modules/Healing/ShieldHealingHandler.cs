@@ -1,6 +1,7 @@
 using System;
 using Olympus.Config;
 using Olympus.Data;
+using Olympus.Rotation.ApolloCore.Helpers;
 using Olympus.Rotation.AsclepiusCore.Abilities;
 using Olympus.Rotation.AsclepiusCore.Context;
 using Olympus.Rotation.AsclepiusCore.Helpers;
@@ -29,21 +30,40 @@ public sealed class ShieldHealingHandler : IHealingHandler
 
         if (player.Level < SGEActions.Eukrasia.MinLevel) return;
 
+        var (avgHp, lowestHp, injuredCount) = AsclepiusPartyMetrics.GetAoEHealMetrics(context.PartyHelper, player);
+        var (shouldActivateForAoE, shouldActivateForSt) = EvaluateShieldNeed(context, config, avgHp, lowestHp, injuredCount);
+
         if (context.HasEukrasia)
         {
-            TryPushEukrasianHealSpell(context, scheduler);
+            // Eukrasia is already up — but only spend it on a shield when one is actually warranted.
+            // Otherwise leave the Eukrasia for the DoT (DamageModule presses Eukrasia for Eukrasian
+            // Dosis) or another Eukrasian spell. Without this gate the shield hijacks every Eukrasia,
+            // looping Eukrasia → E.Diagnosis, eating the weave slot (starving Druochole) and never
+            // letting the DoT apply.
+            if (!shouldActivateForAoE && !shouldActivateForSt)
+            {
+                context.Debug.EukrasiaState = "Idle (no shield needed)";
+                return;
+            }
+
+            TryPushEukrasianHealSpell(context, scheduler, preferAoE: shouldActivateForAoE);
             return;
         }
 
-        var (avgHp, lowestHp, injuredCount) = context.PartyHelper.CalculatePartyHealthMetrics(player);
-
-        var shouldActivateForAoE = config.EnableEukrasianPrognosis &&
-                                   injuredCount >= config.AoEHealMinTargets &&
-                                   avgHp < config.AoEHealThreshold;
-        var shouldActivateForSt = config.EnableEukrasianDiagnosis &&
-                                  lowestHp < config.EukrasianDiagnosisThreshold;
-
         if (!shouldActivateForAoE && !shouldActivateForSt) return;
+
+        // Yield the single weave slot to a life-saving oGCD heal. Direct-dispatching Eukrasia consumes
+        // the weave, so when someone is in the oGCD-emergency band AND we actually have an Addersgall
+        // heal to weave (Druochole/Taurochole), let that heal land first — the shield can follow on the
+        // next weave. When no Addersgall heal is available the shield is the best protection we have, so
+        // do not yield.
+        if (lowestHp <= context.Configuration.Healing.OgcdEmergencyThreshold
+            && context.AddersgallStacks >= 1
+            && (config.EnableDruochole || config.EnableTaurochole))
+        {
+            context.Debug.EukrasiaState = "Yield (emergency heal)";
+            return;
+        }
 
         // Direct-dispatch Eukrasia. The scheduler can't dispatch oGCDs during the GCD pass
         // (CanExecuteOgcd is false), but the game accepts ExecuteOgcd called directly because
@@ -56,15 +76,56 @@ public sealed class ShieldHealingHandler : IHealingHandler
         }
     }
 
-    private void TryPushEukrasianHealSpell(IAsclepiusContext context, RotationScheduler scheduler)
+    /// <summary>
+    /// Decides whether an Eukrasian shield is currently warranted, split into AoE (E.Prognosis) and
+    /// single-target (E.Diagnosis) need. In mitigation mode shields are gated on an incoming
+    /// raidwide/tankbuster (plus a low-HP backstop); in reactive mode they fall back to the legacy HP
+    /// thresholds. Shared by both the activation path and the "Eukrasia already up" path so the shield
+    /// never consumes an Eukrasia that was pressed for something else (e.g. the DoT).
+    /// </summary>
+    private static (bool aoe, bool st) EvaluateShieldNeed(
+        IAsclepiusContext context, SageConfig config, float avgHp, float lowestHp, int injuredCount)
+    {
+        if (config.EukrasianShieldsForMitigation)
+        {
+            // Only a TIMELINE-confirmed mechanic drives a proactive shield. Pattern-based prediction is
+            // too noisy in dungeon/trust content (routine tank melee reads as "tankbusters"), and a
+            // false positive here loops Eukrasia → E.Diagnosis, capping Addersting and starving the
+            // Druochole cap-dump. Dungeons (no timeline) therefore shield only on the HP backstop,
+            // matching the auto-duty-content model (dungeons reactive, raids/trials proactive).
+            var raidwideImminent = TimelineHelper.IsRaidwideImminent(
+                context.TimelineService, context.BossMechanicDetector, context.Configuration, out var raidwideSource)
+                && raidwideSource == "Timeline";
+            var tankBusterImminent = TimelineHelper.IsTankBusterImminent(
+                context.TimelineService, context.BossMechanicDetector, context.Configuration, out var busterSource)
+                && busterSource == "Timeline";
+
+            var aoe = config.EnableEukrasianPrognosis &&
+                      (raidwideImminent ||
+                       (injuredCount >= config.AoEHealMinTargets && avgHp <= config.EukrasianShieldHpBackstop));
+            var st = config.EnableEukrasianDiagnosis &&
+                     (tankBusterImminent || lowestHp <= config.EukrasianShieldHpBackstop);
+            return (aoe, st);
+        }
+
+        // Reactive model (legacy): shield whenever HP dips below the shield threshold.
+        var aoeReactive = config.EnableEukrasianPrognosis &&
+                          injuredCount >= config.AoEHealMinTargets &&
+                          avgHp < config.AoEHealThreshold;
+        var stReactive = config.EnableEukrasianDiagnosis &&
+                         lowestHp < config.EukrasianDiagnosisThreshold;
+        return (aoeReactive, stReactive);
+    }
+
+    private void TryPushEukrasianHealSpell(IAsclepiusContext context, RotationScheduler scheduler, bool preferAoE)
     {
         var config = context.Configuration.Sage;
         var player = context.Player;
 
-        var (avgHp, lowestHp, injuredCount) = context.PartyHelper.CalculatePartyHealthMetrics(player);
+        var (avgHp, lowestHp, injuredCount) = AsclepiusPartyMetrics.GetAoEHealMetrics(context.PartyHelper, player);
 
-        // Prefer AoE if multiple injured
-        if (config.EnableEukrasianPrognosis && injuredCount >= config.AoEHealMinTargets)
+        // Prefer AoE shield when the AoE condition triggered; otherwise fall through to single-target.
+        if (preferAoE && config.EnableEukrasianPrognosis)
         {
             var aoeAction = player.Level >= SGEActions.EukrasianPrognosisII.MinLevel
                 ? SGEActions.EukrasianPrognosisII

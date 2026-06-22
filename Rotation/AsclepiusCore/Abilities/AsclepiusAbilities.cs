@@ -24,6 +24,15 @@ public static class AsclepiusAbilities
         Toggle = cfg => cfg.Resurrection.EnableRaise,
     };
 
+    /// <summary>
+    /// Swiftcast popped to make the next emergency GCD heal (Diagnosis/Prognosis) instant.
+    /// Separate from the raise-gated <see cref="Swiftcast"/> so it is not disabled when raising is off.
+    /// </summary>
+    public static readonly AbilityBehavior SwiftcastHeal = new()
+    {
+        Action = RoleActions.Swiftcast,
+    };
+
     public static readonly AbilityBehavior Esuna = new()
     {
         Action = RoleActions.Esuna,

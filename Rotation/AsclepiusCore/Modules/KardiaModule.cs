@@ -1,9 +1,12 @@
 using System;
+using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Objects.Types;
 using Olympus.Config;
 using Olympus.Data;
+using Olympus.Models.Action;
 using Olympus.Rotation.AsclepiusCore.Abilities;
 using Olympus.Rotation.AsclepiusCore.Context;
+using Olympus.Rotation.AsclepiusCore.Helpers;
 using Olympus.Rotation.Common.Scheduling;
 using Olympus.Services.Training;
 
@@ -22,101 +25,404 @@ public sealed class KardiaModule : IAsclepiusModule
 
     public void CollectCandidates(IAsclepiusContext context, RotationScheduler scheduler, bool isMoving)
     {
-        TryPushPlaceKardia(context, scheduler);
-        TryPushEnsureKardiaOnTank(context, scheduler);
+        // Kardia always dispatches directly through TryExecuteKardia so the recast gate
+        // cannot be bypassed by the scheduler (which calls ExecuteOgcd without that check).
+        TryDispatchKardia(context);
+
+        if (!context.InCombat)
+            return;
+
         TryPushSoteria(context, scheduler);
         TryPushPhilosophia(context, scheduler);
     }
 
     public void UpdateDebugState(IAsclepiusContext context)
     {
-        context.Debug.KardiaTarget = context.HasKardiaPlaced
-            ? $"ID: {context.KardiaTargetId}"
+        var player = context.Player;
+        var tank = context.PartyHelper.FindTankInParty(player);
+        var kardiaTargetId = ResolveKardionBearerId(context, player, tank);
+        var kardiaTargetName = ResolveTargetName(context, kardiaTargetId);
+
+        context.Debug.KardiaTargetGameObjectId = kardiaTargetId;
+        context.Debug.KardiaTargetName = kardiaTargetName;
+        context.Debug.TankGameObjectId = tank?.GameObjectId ?? 0;
+        context.Debug.TankTargetName = tank?.Name?.TextValue ?? "None";
+        context.Debug.TankHasKardion = tank != null
+            && AsclepiusStatusHelper.TankHasKardion(
+                player, tank, context.ObjectTable, context.PartyList, kardiaTargetId);
+        context.Debug.KardiaTarget = kardiaTargetId != 0
+            ? $"{kardiaTargetName} ({kardiaTargetId})"
             : "None";
-        context.Debug.KardiaState = context.HasKardiaPlaced ? "Active" : "Not placed";
+
+        context.Debug.KardiaState = context.HasKardiaPlaced ? "Kardion active" : "No Kardion";
         context.Debug.SoteriaStacks = context.KardiaManager.GetSoteriaStacks(context.Player);
         context.Debug.SoteriaState = context.HasSoteria ? "Active" : "Idle";
         context.Debug.PhilosophiaState = context.HasPhilosophia ? "Active" : "Idle";
     }
 
-    private void TryPushPlaceKardia(IAsclepiusContext context, RotationScheduler scheduler)
+    private void TryDispatchKardia(IAsclepiusContext context)
     {
         var config = context.Configuration.Sage;
         var player = context.Player;
 
         if (!config.AutoKardia) return;
-        if (context.HasKardiaPlaced) return;
         if (player.Level < SGEActions.Kardia.MinLevel) return;
 
-        var target = FindKardiaTarget(context);
-        if (target == null) return;
+        // After a zone change, wait for the new party/tank to spawn before placing Kardia so
+        // the buff lands on the real tank instead of being wasted mid-zoning. Combat overrides
+        // the grace period so an active pull is never left without Kardia.
+        if (!context.InCombat && context.KardiaManager.IsPostZoneWarmupActive)
+        {
+            context.Debug.KardiaState = "Waiting (zoning)";
+            return;
+        }
 
-        var capturedTarget = target;
-        var action = SGEActions.Kardia;
+        var tank = context.PartyHelper.FindTankInParty(player);
+        var desiredTarget = ResolveKardiaDispatchTarget(context, tank);
+        if (desiredTarget == null)
+        {
+            context.Debug.KardiaState = "No target";
+            UpdateKardiaDebugTargets(context, tank, 0, "None");
+            return;
+        }
 
-        scheduler.PushOgcd(AsclepiusAbilities.Kardia, target.GameObjectId, priority: 0,
-            onDispatched: _ =>
-            {
-                context.KardiaManager.RecordSwap(capturedTarget.GameObjectId);
-                context.Debug.PlannedAction = action.Name;
-                context.Debug.PlanningState = "Placing Kardia";
-                context.LogKardiaDecision(capturedTarget.Name?.TextValue ?? "Unknown", "Place", "Tank needs Kardia");
+        PrimeTankKardionLatch(context, player, tank, desiredTarget);
 
-                if (context.TrainingService?.IsTrainingEnabled == true)
-                {
-                    var targetName = capturedTarget.Name?.TextValue ?? "Unknown";
-                    var isTank = context.PartyHelper.FindTankInParty(context.Player)?.GameObjectId == capturedTarget.GameObjectId;
+        var resolvedTargetId = ResolveKardionBearerId(context, player, tank);
+        if (ShouldSuppressKardiaRecast(context, player, tank, desiredTarget, resolvedTargetId))
+        {
+            var resolvedTargetName = ResolveTargetName(context, resolvedTargetId);
+            UpdateKardiaDebugTargets(context, tank, resolvedTargetId, resolvedTargetName);
+            SyncResolvedBearer(context, resolvedTargetId, desiredTarget);
+            context.Debug.PlannedAction = string.Empty;
+            context.Debug.KardiaState = DescribeSuppressedKardiaState(context, tank, desiredTarget);
+            return;
+        }
 
-                    context.TrainingService.RecordDecision(new ActionExplanation
-                    {
-                        Timestamp = DateTime.UtcNow,
-                        ActionId = action.ActionId,
-                        ActionName = "Kardia",
-                        Category = "Healing",
-                        TargetName = targetName,
-                        ShortReason = $"Kardia placed on {targetName}" + (isTank ? " (tank)" : ""),
-                        DetailedReason = $"Kardia placed on {targetName}. Kardia is SGE's signature ability - every time you deal damage, the Kardia target receives a 170 potency heal! This is PASSIVE healing that costs nothing. Always have Kardia active on someone taking damage (usually the tank).",
-                        Factors = new[]
-                        {
-                            isTank ? "Target: Tank (primary damage taker)" : "Target: Lowest HP party member",
-                            "170 potency heal per damaging GCD",
-                            "No cooldown, instant swap",
-                            "FUNDAMENTAL to SGE gameplay",
-                        },
-                        Alternatives = new[]
-                        {
-                            "Could place on different target",
-                            "No alternatives - Kardia should ALWAYS be placed",
-                        },
-                        Tip = "Kardia is SGE's bread and butter! It provides constant healing while you DPS. Always keep it on someone - usually the tank. Swap it to other targets when needed for quick passive healing!",
-                        ConceptId = SgeConcepts.KardiaManagement,
-                        Priority = ExplanationPriority.High,
-                    });
-                }
-            });
+        var resolvedName = ResolveTargetName(context, resolvedTargetId);
+        UpdateKardiaDebugTargets(context, tank, resolvedTargetId, resolvedName);
+
+        if (context.InCombat && !context.CanExecuteOgcd)
+        {
+            context.Debug.KardiaState = "Waiting (weave)";
+            return;
+        }
+
+        if (!context.ActionService.IsActionReady(SGEActions.Kardia.ActionId))
+        {
+            context.Debug.KardiaState = "Waiting (CD/status)";
+            return;
+        }
+
+        var onTank = tank != null && desiredTarget.EntityId == tank.EntityId;
+        var decision = onTank && context.HasKardiaPlaced && context.CanSwapKardia ? "EnsureTank" : "Place";
+        var reason = context.InCombat
+            ? onTank ? "Kardia not on tank, moving back" : "Tank needs Kardia"
+            : "Pre-pull Kardia";
+
+        TryExecuteKardia(context, desiredTarget, decision, reason);
     }
 
-    private void TryPushEnsureKardiaOnTank(IAsclepiusContext context, RotationScheduler scheduler)
+    private static IBattleChara? ResolveKardiaDispatchTarget(IAsclepiusContext context, IBattleChara? tank)
     {
-        if (!context.HasKardiaPlaced) return;
-        if (!context.CanSwapKardia) return;
+        var config = context.Configuration.Sage;
+        if (context.InCombat
+            && config.KardiaSwapEnabled
+            && context.HasKardiaPlaced
+            && context.CanSwapKardia
+            && tank != null
+            && tank.GameObjectId != context.KardiaTargetId
+            && !IsKardiaPlacementSatisfied(context, context.Player, tank, tank))
+        {
+            return tank;
+        }
 
+        return tank ?? FindKardiaTarget(context);
+    }
+
+    private static void PrimeTankKardionLatch(
+        IAsclepiusContext context,
+        IPlayerCharacter player,
+        IBattleChara? tank,
+        IBattleChara desiredTarget)
+    {
+        if (context.KardiaManager.IsTankKardionLatched(desiredTarget.EntityId))
+            return;
+
+        if (tank == null || desiredTarget.EntityId != tank.EntityId)
+            return;
+
+        if (!AsclepiusStatusHelper.HasKardia(player))
+            return;
+
+        if (AsclepiusStatusHelper.InferKardionOnTank(
+                player, tank, context.ObjectTable, context.PartyList))
+        {
+            context.KardiaManager.ConfirmTankKardion(desiredTarget);
+        }
+    }
+
+    private static string DescribeSuppressedKardiaState(
+        IAsclepiusContext context,
+        IBattleChara? tank,
+        IBattleChara desiredTarget)
+    {
+        if (tank != null && desiredTarget.EntityId == tank.EntityId)
+            return context.InCombat ? "Kardion on tank" : "Kardion on tank (pre-pull)";
+
+        return context.InCombat ? "Kardion active" : "Kardion active (pre-pull)";
+    }
+
+    private static bool ShouldSuppressKardiaRecast(
+        IAsclepiusContext context,
+        IPlayerCharacter player,
+        IBattleChara? tank,
+        IBattleChara target,
+        ulong resolvedTargetId)
+    {
+        if (!context.InCombat
+            && tank != null
+            && target.EntityId == tank.EntityId
+            && (context.KardiaManager.IsTankKardionLatched(tank.EntityId)
+                || resolvedTargetId == tank.GameObjectId
+                || AsclepiusStatusHelper.HasKardia(player)))
+        {
+            context.KardiaManager.ConfirmTankKardion(tank);
+            return true;
+        }
+
+        if (tank != null && context.KardiaManager.IsTankKardionLatched(tank.EntityId))
+            return true;
+
+        if (!context.InCombat
+            && tank != null
+            && target.EntityId == tank.EntityId
+            && context.Debug.TankHasKardion)
+        {
+            context.KardiaManager.ConfirmTankKardion(tank);
+            return true;
+        }
+
+        if (context.KardiaManager.IsTankKardionLatched(target.EntityId))
+            return true;
+
+        if (HealingPanelShowsKardionOnTank(context, player, tank, resolvedTargetId))
+            return true;
+
+        return context.KardiaManager.ShouldBlockKardiaRecast(
+            player, target, context.ObjectTable, context.PartyList, tank);
+    }
+
+    private static bool HealingPanelShowsKardionOnTank(
+        IAsclepiusContext context,
+        IPlayerCharacter player,
+        IBattleChara? tank,
+        ulong resolvedTargetId)
+    {
+        if (tank == null)
+            return false;
+
+        if (AsclepiusStatusHelper.TankHasKardion(
+                player, tank, context.ObjectTable, context.PartyList, resolvedTargetId))
+        {
+            context.KardiaManager.ConfirmTankKardion(tank);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsKardiaPlacementSatisfied(
+        IAsclepiusContext context,
+        IPlayerCharacter player,
+        IBattleChara? tank,
+        IBattleChara target)
+    {
+        return context.KardiaManager.ShouldBlockKardiaRecast(
+            player, target, context.ObjectTable, context.PartyList, tank);
+    }
+
+    private static void SyncResolvedBearer(
+        IAsclepiusContext context,
+        ulong resolvedTargetId,
+        IBattleChara desiredTarget)
+    {
+        if (resolvedTargetId != 0)
+        {
+            context.KardiaManager.SyncDetectedBearer(resolvedTargetId);
+            return;
+        }
+
+        if (context.KardiaManager.IsKardionOnTarget(
+                context.Player, desiredTarget, context.ObjectTable, context.PartyList))
+        {
+            context.KardiaManager.SyncDetectedBearer(desiredTarget.GameObjectId);
+        }
+    }
+
+    private static ulong ResolveKardionBearerId(
+        IAsclepiusContext context,
+        IPlayerCharacter player,
+        IBattleChara? tank)
+    {
+        var liveId = AsclepiusStatusHelper.FindKardionTargetId(
+            player,
+            context.ObjectTable,
+            context.PartyList,
+            context.PartyHelper.GetAllPartyMembers(player),
+            tank);
+
+        if (liveId != 0)
+            return liveId;
+
+        if (tank != null
+            && AsclepiusStatusHelper.InferKardionOnTank(player, tank, context.ObjectTable, context.PartyList))
+        {
+            return tank.GameObjectId;
+        }
+
+        return context.KardiaTargetId;
+    }
+
+    private static string ResolveTargetName(IAsclepiusContext context, ulong gameObjectId)
+    {
+        if (gameObjectId == 0)
+            return "None";
+
+        foreach (var member in context.PartyHelper.GetAllPartyMembers(context.Player))
+        {
+            if (member.GameObjectId == gameObjectId)
+                return member.Name?.TextValue ?? $"ID:{gameObjectId}";
+        }
+
+        var obj = context.ObjectTable.SearchById(gameObjectId);
+        return obj?.Name.TextValue ?? $"ID:{gameObjectId}";
+    }
+
+    private static void UpdateKardiaDebugTargets(
+        IAsclepiusContext context,
+        IBattleChara? tank,
+        ulong kardiaTargetId,
+        string kardiaTargetName)
+    {
+        context.Debug.KardiaTargetGameObjectId = kardiaTargetId;
+        context.Debug.KardiaTargetName = kardiaTargetName;
+        context.Debug.TankGameObjectId = tank?.GameObjectId ?? 0;
+        context.Debug.TankTargetName = tank?.Name?.TextValue ?? "None";
+        context.Debug.TankHasKardion = tank != null
+            && AsclepiusStatusHelper.TankHasKardion(
+                context.Player, tank, context.ObjectTable, context.PartyList, kardiaTargetId);
+        context.Debug.KardiaTarget = kardiaTargetId != 0
+            ? $"{kardiaTargetName} ({kardiaTargetId})"
+            : "None";
+    }
+
+    private static string? DescribeKardiaCastError(
+        IAsclepiusContext context,
+        IPlayerCharacter player,
+        IBattleChara? tank,
+        IBattleChara target)
+    {
+        var resolvedTargetId = ResolveKardionBearerId(context, player, tank);
+        if (ShouldSuppressKardiaRecast(context, player, tank, target, resolvedTargetId))
+            return "Unexpected cast — recast should have been suppressed";
+
+        if (context.KardiaManager.ShouldBlockKardiaRecast(
+                player, target, context.ObjectTable, context.PartyList, tank))
+        {
+            return "Unexpected cast — KardiaManager recast block missed";
+        }
+
+        return null;
+    }
+
+    private static bool TryExecuteKardia(
+        IAsclepiusContext context,
+        IBattleChara target,
+        string decision,
+        string reason)
+    {
         var player = context.Player;
         var tank = context.PartyHelper.FindTankInParty(player);
-        if (tank == null) return;
-        if (tank.GameObjectId == context.KardiaTargetId) return;
+        if (context.KardiaManager.ShouldBlockKardiaRecast(
+                player, target, context.ObjectTable, context.PartyList, tank))
+        {
+            return false;
+        }
 
-        var capturedTank = tank;
-        var action = SGEActions.Kardia;
+        if (!context.ActionService.IsActionReady(SGEActions.Kardia.ActionId))
+            return false;
 
-        scheduler.PushOgcd(AsclepiusAbilities.Kardia, tank.GameObjectId, priority: 0,
-            onDispatched: _ =>
+        var castError = DescribeKardiaCastError(context, player, tank, target);
+        if (castError != null)
+        {
+            context.Debug.PinKardiaError(castError);
+            return false;
+        }
+
+        if (!context.ActionService.ExecuteOgcd(SGEActions.Kardia, target.GameObjectId))
+            return false;
+
+        context.Debug.KardiaExecutedThisFrame = true;
+        context.Debug.KardiaLastCastUtc = DateTime.UtcNow;
+        if (DescribeKardiaCastError(context, player, tank, target) is { } postCastError)
+            context.Debug.PinKardiaError(postCastError);
+        else if (!context.InCombat
+                 && tank != null
+                 && target.EntityId == tank.EntityId
+                 && (context.Debug.TankHasKardion || AsclepiusStatusHelper.HasKardia(player)))
+        {
+            context.Debug.PinKardiaError("Unexpected OOC recast on tank — Kardion already active");
+        }
+
+        context.Debug.PlannedAction = "Kardia (cast)";
+        OnKardiaDispatched(context, target, SGEActions.Kardia, decision, reason, tank);
+        return true;
+    }
+
+    private static void OnKardiaDispatched(
+        IAsclepiusContext context,
+        IBattleChara target,
+        ActionDefinition action,
+        string decision,
+        string reason,
+        IBattleChara? tank = null)
+    {
+        context.KardiaManager.RecordSwap(target.GameObjectId, target.EntityId);
+        tank ??= context.PartyHelper.FindTankInParty(context.Player);
+        if (tank != null && target.EntityId == tank.EntityId)
+            context.KardiaManager.ConfirmTankKardion(tank);
+        context.Debug.PlannedAction = "Kardia (cast)";
+        context.Debug.PlanningState = decision == "EnsureTank" ? "Kardia -> Tank" : "Placing Kardia";
+        context.Debug.KardiaState = "Active";
+        context.LogKardiaDecision(target.Name?.TextValue ?? "Unknown", decision, reason);
+
+        if (context.TrainingService?.IsTrainingEnabled != true)
+            return;
+
+        var targetName = target.Name?.TextValue ?? "Unknown";
+        var isTank = context.PartyHelper.FindTankInParty(context.Player)?.GameObjectId == target.GameObjectId;
+
+        context.TrainingService.RecordDecision(new ActionExplanation
+        {
+            Timestamp = DateTime.UtcNow,
+            ActionId = action.ActionId,
+            ActionName = "Kardia",
+            Category = "Healing",
+            TargetName = targetName,
+            ShortReason = $"Kardia placed on {targetName}" + (isTank ? " (tank)" : ""),
+            DetailedReason = $"Kardia placed on {targetName}. Kardia is SGE's signature ability - every time you deal damage, the Kardia target receives a 170 potency heal!",
+            Factors = new[]
             {
-                context.KardiaManager.RecordSwap(capturedTank.GameObjectId);
-                context.Debug.PlannedAction = action.Name;
-                context.Debug.PlanningState = "Kardia -> Tank";
-                context.LogKardiaDecision(capturedTank.Name?.TextValue ?? "Unknown", "EnsureTank", "Kardia not on tank, moving back");
-            });
+                isTank ? "Target: Tank (primary damage taker)" : "Target: Lowest HP party member",
+                "170 potency heal per damaging GCD",
+                "No cooldown, instant swap",
+            },
+            Alternatives = new[] { "No alternatives - Kardia should ALWAYS be placed" },
+            Tip = "Keep Kardia on the tank before pulls so your first Dosis heals them passively.",
+            ConceptId = SgeConcepts.KardiaManagement,
+            Priority = ExplanationPriority.High,
+        });
     }
 
     private void TryPushSoteria(IAsclepiusContext context, RotationScheduler scheduler)
@@ -226,7 +532,7 @@ public sealed class KardiaModule : IAsclepiusModule
             });
     }
 
-    private IBattleChara? FindKardiaTarget(IAsclepiusContext context)
+    private static IBattleChara? FindKardiaTarget(IAsclepiusContext context)
     {
         var player = context.Player;
         var tank = context.PartyHelper.FindTankInParty(player);

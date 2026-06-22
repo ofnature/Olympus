@@ -351,6 +351,30 @@ public static class AsclepiusTestContext
         mock.Setup(x => x.ShouldSwapKardia(It.IsAny<float>(), It.IsAny<float>(), It.IsAny<float>()))
             .Returns(false);
         mock.Setup(x => x.RecordSwap(It.IsAny<ulong>()));
+        mock.Setup(x => x.RecordSwap(It.IsAny<ulong>(), It.IsAny<uint>()));
+        mock.Setup(x => x.SyncDetectedBearer(It.IsAny<ulong>()));
+        mock.Setup(x => x.ConfirmTankKardion(It.IsAny<IBattleChara>()));
+        mock.Setup(x => x.IsTankKardionLatched(It.IsAny<uint>()))
+            .Returns((uint entityId) => hasKardia && kardiaTargetId != 0 && entityId == 1u);
+        mock.Setup(x => x.ShouldBlockKardiaUse(It.IsAny<IPlayerCharacter>(), It.IsAny<ulong>()))
+            .Returns((IPlayerCharacter _, ulong targetId) =>
+                hasKardia && kardiaTargetId != 0 && targetId == kardiaTargetId);
+        mock.Setup(x => x.ShouldBlockKardiaRecast(
+                It.IsAny<IPlayerCharacter>(),
+                It.IsAny<IBattleChara>(),
+                It.IsAny<IObjectTable>(),
+                It.IsAny<IPartyList>(),
+                It.IsAny<IBattleChara?>()))
+            .Returns((IPlayerCharacter _, IBattleChara target, IObjectTable _, IPartyList _, IBattleChara? _) =>
+                hasKardia && kardiaTargetId != 0 && target.GameObjectId == kardiaTargetId);
+        mock.Setup(x => x.IsKardionOnTarget(
+                It.IsAny<IPlayerCharacter>(),
+                It.IsAny<IBattleChara>(),
+                It.IsAny<IObjectTable>(),
+                It.IsAny<IPartyList>(),
+                It.IsAny<IBattleChara?>()))
+            .Returns((IPlayerCharacter _, IBattleChara target, IObjectTable _, IPartyList _, IBattleChara? _) =>
+                hasKardia && kardiaTargetId != 0 && target.GameObjectId == kardiaTargetId);
         mock.Setup(x => x.GetSoteriaStacks(It.IsAny<IPlayerCharacter>())).Returns(0);
         return mock;
     }

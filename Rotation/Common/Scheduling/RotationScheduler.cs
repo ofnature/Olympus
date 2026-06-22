@@ -101,10 +101,17 @@ public sealed class RotationScheduler
         });
 
     public SchedulerDispatchResult DispatchGcd(IRotationContext ctx)
-        => Dispatch(_gcdQueue, ctx, isOgcd: false);
+        => Dispatch(_gcdQueue, ctx, isOgcd: false, maxPriority: null);
 
     public SchedulerDispatchResult DispatchOgcd(IRotationContext ctx)
-        => Dispatch(_ogcdQueue, ctx, isOgcd: true);
+        => Dispatch(_ogcdQueue, ctx, isOgcd: true, maxPriority: null);
+
+    /// <summary>
+    /// Dispatches the highest-priority oGCD candidate at or below <paramref name="maxPriority"/>.
+    /// Used for pre-pull Kardia (priority 0) while out of combat.
+    /// </summary>
+    public SchedulerDispatchResult DispatchOgcd(IRotationContext ctx, int maxPriority)
+        => Dispatch(_ogcdQueue, ctx, isOgcd: true, maxPriority: maxPriority);
 
     /// <summary>Test-only inspection of the GCD queue contents.</summary>
     internal IReadOnlyList<AbilityCandidate> InspectGcdQueue() => _gcdQueue;
@@ -112,7 +119,7 @@ public sealed class RotationScheduler
     /// <summary>Test-only inspection of the oGCD queue contents.</summary>
     internal IReadOnlyList<AbilityCandidate> InspectOgcdQueue() => _ogcdQueue;
 
-    private SchedulerDispatchResult Dispatch(List<AbilityCandidate> queue, IRotationContext ctx, bool isOgcd)
+    private SchedulerDispatchResult Dispatch(List<AbilityCandidate> queue, IRotationContext ctx, bool isOgcd, int? maxPriority)
     {
         _lastFailReasons.Clear();
         if (queue.Count == 0)
@@ -126,6 +133,8 @@ public sealed class RotationScheduler
 
         foreach (var candidate in queue)
         {
+            if (maxPriority is int cap && candidate.Priority > cap)
+                continue;
             var effective = ResolveLevelReplacement(candidate.Behavior, ctx.Player.Level);
 
             // Gate: level

@@ -99,6 +99,9 @@ public sealed unsafe class ActionService : IActionService
     /// <summary>Whether we can weave an oGCD right now.</summary>
     public bool CanExecuteOgcd => IsInWeaveWindow();
 
+    /// <inheritdoc/>
+    public Func<ulong, bool>? KardiaRecastGuard { get; set; }
+
     /// <summary>Last executed action (for debugging).</summary>
     public ActionDefinition? LastExecutedAction => _lastExecutedAction;
 
@@ -336,6 +339,12 @@ public sealed unsafe class ActionService : IActionService
     {
         if (!action.IsOGCD)
             return false;
+
+        if (action.ActionId == ActionIds.Kardia
+            && KardiaRecastGuard?.Invoke(targetId) == true)
+        {
+            return false;
+        }
 
         var actionManager = SafeGameAccess.GetActionManager(_errorMetrics);
         if (actionManager is null)

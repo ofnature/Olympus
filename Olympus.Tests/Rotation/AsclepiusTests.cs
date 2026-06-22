@@ -124,6 +124,23 @@ public class AsclepiusTests
         Assert.Equal(0, debugState.SoteriaStacks);
     }
 
+    [Fact]
+    public void PinKardiaError_OnlyOverwritesWhenMessageChanges()
+    {
+        var debugState = new AsclepiusDebugState();
+
+        debugState.PinKardiaError("Unexpected cast — recast should have been suppressed");
+        var firstUtc = debugState.KardiaLastErrorUtc;
+        Assert.NotNull(firstUtc);
+
+        debugState.PinKardiaError("Unexpected cast — recast should have been suppressed");
+        Assert.Equal(firstUtc, debugState.KardiaLastErrorUtc);
+
+        debugState.PinKardiaError("Unexpected cast — KardiaManager recast block missed");
+        Assert.NotEqual(firstUtc, debugState.KardiaLastErrorUtc);
+        Assert.Equal("Unexpected cast — KardiaManager recast block missed", debugState.KardiaLastError);
+    }
+
     #endregion
 
     #region Context Tests

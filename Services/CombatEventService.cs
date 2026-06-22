@@ -77,6 +77,10 @@ public sealed unsafe class CombatEventService : ICombatEventService, IDisposable
     private const int MaxHealHistory = 20;
     private readonly object healLock = new();
 
+    // Last time each local-player ability resolved (for healing debug panels)
+    private readonly Dictionary<uint, DateTime> lastLocalAbilityUsedUtc = new();
+    private readonly object abilityUseLock = new();
+
     // Overheal statistics tracking (session only)
     private readonly Dictionary<uint, SpellOverhealStats> spellOverhealStats = new();
     private readonly Dictionary<uint, TargetOverhealStats> targetOverhealStats = new();
@@ -221,6 +225,21 @@ public sealed unsafe class CombatEventService : ICombatEventService, IDisposable
         {
             recentHeals.Clear();
         }
+    }
+
+    /// <summary>
+    /// Gets UTC timestamp of the last time the local player resolved this action, if known.
+    /// </summary>
+    public bool TryGetLastLocalAbilityUsedUtc(uint actionId, out DateTime timestampUtc)
+    {
+        lock (abilityUseLock)
+            return lastLocalAbilityUsedUtc.TryGetValue(actionId, out timestampUtc);
+    }
+
+    private void RecordLocalAbilityUsed(uint actionId)
+    {
+        lock (abilityUseLock)
+            lastLocalAbilityUsedUtc[actionId] = DateTime.UtcNow;
     }
 
     /// <summary>
@@ -477,7 +496,10 @@ public sealed unsafe class CombatEventService : ICombatEventService, IDisposable
 
         // Raise local ability resolved with target count for Smart AoE tracking
         if (isFromLocalPlayer)
+        {
+            RecordLocalAbilityUsed(header->ActionId);
             OnLocalAbilityResolved?.Invoke(header->ActionId, (int)header->NumTargets);
+        }
     }
 
     /// <summary>

@@ -69,15 +69,28 @@ public sealed class RhizomataHandler : IHealingHandler
             return;
         }
 
-        // Out of Addersgall path
-        if (context.AddersgallStacks == 0)
+        // Out of Addersgall path, or tank emergency with stacks locked behind reserve
+        var tank = context.PartyHelper.FindTankInParty(player);
+        var tankEmergency = false;
+        if (tank != null)
         {
-            scheduler.PushOgcd(AsclepiusAbilities.Rhizomata, player.GameObjectId, priority: Priority,
+            var tankHp = tank.MaxHp > 0 ? (float)tank.CurrentHp / tank.MaxHp : 1f;
+            var tankEmergencyThreshold = Math.Min(
+                config.TaurocholeThreshold,
+                context.Configuration.Healing.OgcdEmergencyThreshold);
+            tankEmergency = tankHp <= tankEmergencyThreshold;
+        }
+
+        if (context.AddersgallStacks == 0
+            || (tankEmergency && context.AddersgallStacks <= config.AddersgallReserve))
+        {
+            var rhizomataPriority = tankEmergency ? 6 : Priority;
+            scheduler.PushOgcd(AsclepiusAbilities.Rhizomata, player.GameObjectId, priority: rhizomataPriority,
                 onDispatched: _ =>
                 {
                     context.Debug.PlannedAction = action.Name;
                     context.Debug.PlanningState = "Rhizomata";
-                    context.Debug.RhizomataState = "Out of Addersgall";
+                    context.Debug.RhizomataState = tankEmergency ? "Tank emergency" : "Out of Addersgall";
 
                     if (context.TrainingService?.IsTrainingEnabled == true)
                     {

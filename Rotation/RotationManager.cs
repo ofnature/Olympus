@@ -104,6 +104,19 @@ public sealed class RotationManager : IDisposable
     }
 
     /// <summary>
+    /// Notifies all instantiated rotations of a territory change so they can reset
+    /// per-instance state (e.g. Sage Kardia placement) at duty start/exit.
+    /// </summary>
+    /// <param name="territoryType">The new territory type id.</param>
+    public void NotifyTerritoryChanged(ushort territoryType)
+    {
+        foreach (var rotation in _uniqueRotations)
+        {
+            rotation.OnTerritoryChanged(territoryType);
+        }
+    }
+
+    /// <summary>
     /// Returns true if the specified job has a registered factory (rotation available).
     /// </summary>
     public bool HasRotationForJob(uint jobId) => _factories.ContainsKey(jobId);

@@ -1,9 +1,12 @@
 using System;
+using System.Collections.Generic;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Game.ClientState.Party;
 using Dalamud.Plugin.Services;
 using Olympus.Data;
+using Olympus.Rotation.AsclepiusCore.Helpers;
+using Olympus.Rotation.Common.Helpers;
 
 namespace Olympus.Services.Sage;
 
@@ -15,13 +18,25 @@ namespace Olympus.Services.Sage;
 public sealed class KardiaManager : IKardiaManager
 {
     private readonly IPartyList _partyList;
+    private readonly IObjectTable _objectTable;
     private DateTime _lastSwapTime = DateTime.MinValue;
+    private DateTime _sessionResetTime = DateTime.MinValue;
     private ulong _lastKnownKardiaTarget;
+    private uint _lastKnownEntityId;
+    private bool _tankKardionConfirmed;
+    private uint _confirmedTankEntityId;
 
     /// <summary>
     /// Cooldown between Kardia target swaps.
     /// </summary>
     public const float SwapCooldown = 5f;
+
+    /// <summary>
+    /// Grace period after a territory change before placing Kardia. Gives the new zone's
+    /// party/tank time to spawn so the buff lands on the real tank instead of being wasted
+    /// on self (or a stale target) during the zone-in window.
+    /// </summary>
+    public const float PostZoneWarmupSeconds = 5f;
 
     /// <summary>
     /// Kardia heal potency per damage action.
@@ -33,9 +48,10 @@ public sealed class KardiaManager : IKardiaManager
     /// </summary>
     public const float SoteriaBoostPerStack = 0.70f;
 
-    public KardiaManager(IPartyList partyList)
+    public KardiaManager(IPartyList partyList, IObjectTable objectTable)
     {
         _partyList = partyList;
+        _objectTable = objectTable;
     }
 
     /// <summary>
@@ -45,9 +61,11 @@ public sealed class KardiaManager : IKardiaManager
     public ulong CurrentKardiaTarget => _lastKnownKardiaTarget;
 
     /// <summary>
-    /// Returns true if Kardia is currently placed on a target.
+    /// Returns true if Kardion (2604) is on a tracked ally.
     /// </summary>
-    public bool HasKardia => _lastKnownKardiaTarget != 0;
+    public bool HasKardia => _hasKardionPlaced;
+
+    private bool _hasKardionPlaced;
 
     /// <summary>
     /// Returns true if Kardia swap is off cooldown.
@@ -76,48 +94,279 @@ public sealed class KardiaManager : IKardiaManager
         if (player == null)
         {
             _lastKnownKardiaTarget = 0;
+            _lastKnownEntityId = 0;
+            _hasKardionPlaced = false;
             return;
         }
 
-        // Check if player has Kardia status (indicates Kardia is placed)
-        bool hasKardiaStatus = false;
-        foreach (var status in player.StatusList)
+        var tank = FindTankAlly(player);
+        var allies = EnumerateAllies(player);
+
+        if (_tankKardionConfirmed)
         {
-            if (status.StatusId == SGEActions.KardiaStatusId)
+            // Latched tank placement survives Trust status scan failures and Kardia recast windows.
+            _hasKardionPlaced = true;
+            if (_lastKnownKardiaTarget == 0 && tank != null)
+                RememberBearer(tank.GameObjectId, tank.EntityId);
+            return;
+        }
+
+        if (AsclepiusStatusHelper.TryFindKardionBearer(
+                player,
+                _objectTable,
+                _partyList,
+                allies,
+                tank,
+                out var detectedId))
+        {
+            RememberBearer(detectedId);
+            TryConfirmTankFromBearer(tank, detectedId);
+            return;
+        }
+
+        if (AsclepiusStatusHelper.HasKardia(player))
+        {
+            _hasKardionPlaced = true;
+            if (_lastKnownKardiaTarget == 0 && tank != null)
+                RememberBearer(tank.GameObjectId, tank.EntityId);
+            return;
+        }
+
+        if (HasRecentPlacementMemory())
+        {
+            _hasKardionPlaced = true;
+            return;
+        }
+
+        if (_lastKnownKardiaTarget != 0)
+        {
+            if (_objectTable.SearchById(_lastKnownKardiaTarget) is IBattleChara lastTarget
+                && AsclepiusStatusHelper.HasKardion(lastTarget, _objectTable, _partyList))
             {
-                hasKardiaStatus = true;
-                break;
+                _hasKardionPlaced = true;
+                return;
+            }
+
+            if (tank != null
+                && MatchesTrackedTarget(tank)
+                && AsclepiusStatusHelper.InferKardionOnTank(player, tank, _objectTable, _partyList))
+            {
+                _hasKardionPlaced = true;
+                return;
             }
         }
 
-        if (!hasKardiaStatus)
+        if (tank != null
+            && AsclepiusStatusHelper.InferKardionOnTank(player, tank, _objectTable, _partyList))
         {
-            _lastKnownKardiaTarget = 0;
+            RememberBearer(tank.GameObjectId, tank.EntityId);
+            ConfirmTankKardion(tank);
             return;
         }
 
-        // Search party members for Kardion status
-        foreach (var member in _partyList)
+        if (!_tankKardionConfirmed)
         {
-            if (member?.GameObject == null)
-                continue;
+            _hasKardionPlaced = false;
+            _lastKnownKardiaTarget = 0;
+            _lastKnownEntityId = 0;
+        }
+    }
 
-            if (member.GameObject is not IBattleChara battleChara)
-                continue;
+    /// <summary>Clears latched tank state (duty exit, disconnect, etc.).</summary>
+    public void ResetSession()
+    {
+        _tankKardionConfirmed = false;
+        _confirmedTankEntityId = 0;
+        _hasKardionPlaced = false;
+        _lastKnownKardiaTarget = 0;
+        _lastKnownEntityId = 0;
+        _sessionResetTime = DateTime.Now;
+    }
 
-            foreach (var status in battleChara.StatusList)
+    /// <summary>
+    /// True during the post-territory-change grace period, when Kardia placement should
+    /// wait for the new zone's party/tank to finish loading.
+    /// </summary>
+    public bool IsPostZoneWarmupActive =>
+        (DateTime.Now - _sessionResetTime).TotalSeconds < PostZoneWarmupSeconds;
+
+    private bool HasRecentPlacementMemory() =>
+        (_lastKnownKardiaTarget != 0 || _lastKnownEntityId != 0) && SwapCooldownRemaining > 0;
+
+    private void RememberBearer(ulong gameObjectId, uint entityId = 0)
+    {
+        _lastKnownKardiaTarget = gameObjectId;
+        _lastKnownEntityId = entityId != 0 ? entityId : ResolveEntityId(gameObjectId);
+        _hasKardionPlaced = true;
+    }
+
+    private uint ResolveEntityId(ulong gameObjectId)
+    {
+        if (gameObjectId == 0)
+            return 0;
+
+        if (_objectTable.SearchById(gameObjectId) is IBattleChara fromTable)
+            return fromTable.EntityId;
+
+        if (_partyList.Length > 0)
+        {
+            foreach (var member in _partyList)
             {
-                // Kardion status with source being our player
-                if (status.StatusId == SGEActions.KardionStatusId && status.SourceId == (uint)player.GameObjectId)
+                if (member?.GameObject is IBattleChara fromParty
+                    && fromParty.GameObjectId == gameObjectId)
                 {
-                    _lastKnownKardiaTarget = battleChara.GameObjectId;
-                    return;
+                    return fromParty.EntityId;
                 }
             }
         }
 
-        // If we have Kardia status but couldn't find the target, might be on a trust NPC
-        // Keep the last known target in this case
+        return 0;
+    }
+
+    private bool MatchesTrackedTarget(IBattleChara target) =>
+        (_lastKnownKardiaTarget != 0 && _lastKnownKardiaTarget == target.GameObjectId)
+        || (_lastKnownEntityId != 0 && _lastKnownEntityId == target.EntityId);
+
+    /// <summary>
+    /// Aligns manager memory with a live Kardion bearer detected outside RecordSwap
+    /// (status scan / inference). Does not affect swap cooldown.
+    /// </summary>
+    public void SyncDetectedBearer(ulong bearerGameObjectId)
+    {
+        if (bearerGameObjectId == 0)
+            return;
+
+        RememberBearer(bearerGameObjectId);
+    }
+
+    /// <summary>
+    /// Latches pre-pull / OOC suppression once Kardion on the tank is confirmed.
+    /// Survives brief status-scan flicker on trust allies between frames.
+    /// </summary>
+    public void ConfirmTankKardion(IBattleChara tank)
+    {
+        if (tank == null)
+            return;
+
+        _tankKardionConfirmed = true;
+        _confirmedTankEntityId = tank.EntityId;
+        RememberBearer(tank.GameObjectId, tank.EntityId);
+    }
+
+    /// <summary>
+    /// Returns true when tank Kardion was confirmed and should suppress recasts on that entity.
+    /// </summary>
+    public bool IsTankKardionLatched(uint targetEntityId) =>
+        _tankKardionConfirmed
+        && _confirmedTankEntityId != 0
+        && targetEntityId == _confirmedTankEntityId;
+
+    /// <summary>
+    /// Action-layer gate: resolves <paramref name="targetGameObjectId"/> and applies recast rules.
+    /// </summary>
+    public bool ShouldBlockKardiaUse(IPlayerCharacter player, ulong targetGameObjectId)
+    {
+        if (targetGameObjectId == 0)
+            return false;
+
+        if (_objectTable.SearchById(targetGameObjectId) is IBattleChara target)
+        {
+            var tank = FindTankAlly(player);
+            return ShouldBlockKardiaRecast(player, target, _objectTable, _partyList, tank);
+        }
+
+        if (_lastKnownKardiaTarget != 0 && _lastKnownKardiaTarget == targetGameObjectId)
+            return _tankKardionConfirmed || _hasKardionPlaced || SwapCooldownRemaining > 0;
+
+        return _tankKardionConfirmed;
+    }
+
+    /// <summary>
+    /// Single gate for redundant Kardia casts — live Kardion, recent swap memory,
+    /// Sage self-buff (trust-safe), or a latched tank confirmation from an earlier frame.
+    /// </summary>
+    public bool ShouldBlockKardiaRecast(
+        IPlayerCharacter player,
+        IBattleChara target,
+        IObjectTable objectTable,
+        IPartyList partyList,
+        IBattleChara? tank = null)
+    {
+        if (IsTankKardionLatched(target.EntityId))
+            return true;
+
+        if (_tankKardionConfirmed
+            && _confirmedTankEntityId != 0
+            && target.EntityId == _confirmedTankEntityId)
+        {
+            return true;
+        }
+
+        // Trust allies often omit Kardion (2604) from status lists. The Sage Kardia buff (2605)
+        // is always readable — when it is up and we are placing on the tank, do not recast.
+        if (tank != null
+            && target.EntityId == tank.EntityId
+            && AsclepiusStatusHelper.HasKardia(player)
+            && AsclepiusStatusHelper.InferKardionOnTank(player, tank, objectTable, partyList))
+        {
+            ConfirmTankKardion(tank);
+            return true;
+        }
+
+        if (IsKardionOnTarget(player, target, objectTable, partyList, tank))
+        {
+            if (tank != null && target.EntityId == tank.EntityId)
+                ConfirmTankKardion(tank);
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True when Kardion is already on <paramref name="target"/> — live status, recent cast,
+    /// or tracked bearer. Used to suppress redundant Kardia presses on the same ally.
+    /// </summary>
+    public bool IsKardionOnTarget(
+        IPlayerCharacter player,
+        IBattleChara target,
+        IObjectTable objectTable,
+        IPartyList partyList,
+        IBattleChara? tank = null)
+    {
+        if (target.EntityId == player.EntityId)
+        {
+            // Solo (no party, no trust): the only valid Kardia target is the Sage.
+            // The Kardia self-buff (2605) is the placement signal, so suppress respam once it is up.
+            return IsSolo(player) && AsclepiusStatusHelper.HasKardia(player);
+        }
+
+        if (_tankKardionConfirmed
+            && _confirmedTankEntityId != 0
+            && target.EntityId == _confirmedTankEntityId)
+        {
+            return true;
+        }
+
+        if (MatchesTrackedTarget(target) && (_hasKardionPlaced || SwapCooldownRemaining > 0))
+            return true;
+
+        if (AsclepiusStatusHelper.HasKardionFrom(target, player, objectTable, partyList))
+            return true;
+
+        if (AsclepiusStatusHelper.HasKardion(target, objectTable, partyList))
+            return true;
+
+        if (tank != null
+            && target.EntityId == tank.EntityId
+            && AsclepiusStatusHelper.TankHasKardion(
+                player, tank, objectTable, partyList, _lastKnownKardiaTarget))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -127,7 +376,32 @@ public sealed class KardiaManager : IKardiaManager
     public void RecordSwap(ulong newTargetId)
     {
         _lastSwapTime = DateTime.Now;
-        _lastKnownKardiaTarget = newTargetId;
+        RememberBearer(newTargetId);
+    }
+
+    /// <summary>
+    /// Records that a Kardia swap was performed.
+    /// </summary>
+    public void RecordSwap(ulong newTargetId, uint entityId)
+    {
+        _lastSwapTime = DateTime.Now;
+        RememberBearer(newTargetId, entityId);
+    }
+
+    private void TryConfirmTankFromBearer(IBattleChara? tank, ulong bearerGameObjectId)
+    {
+        if (tank == null || bearerGameObjectId == 0)
+            return;
+
+        if (bearerGameObjectId == tank.GameObjectId
+            || (_lastKnownEntityId != 0 && _lastKnownEntityId == tank.EntityId))
+        {
+            ConfirmTankKardion(tank);
+        }
+    }
+
+    private void TryClearTankConfirmation(IPlayerCharacter player, IBattleChara? tank)
+    {
     }
 
     /// <summary>
@@ -211,6 +485,63 @@ public sealed class KardiaManager : IKardiaManager
 
         return false;
     }
+
+    /// <summary>
+    /// True when the Sage has no party and no trust allies — Kardia should sit on the Sage.
+    /// </summary>
+    public bool IsSolo(IPlayerCharacter player)
+    {
+        if (_partyList.Length > 0)
+            return false;
+
+        foreach (var _ in EnumerateAllies(player))
+            return false;
+
+        return true;
+    }
+
+    private IBattleChara? FindTankAlly(IPlayerCharacter player)
+    {
+        IBattleChara? fallback = null;
+        foreach (var ally in EnumerateAllies(player))
+        {
+            fallback ??= ally;
+            if (JobRegistry.IsTank(TrustPartyRoleHelper.ResolveJobId(ally, _partyList)))
+                return ally;
+        }
+
+        return fallback;
+    }
+
+    private IEnumerable<IBattleChara> EnumerateAllies(IPlayerCharacter player)
+    {
+        if (_partyList.Length > 0)
+        {
+            foreach (var member in _partyList)
+            {
+                if (member.EntityId == player.EntityId)
+                    continue;
+
+                IBattleChara? fromParty = member.GameObject as IBattleChara;
+                if (fromParty != null)
+                    yield return fromParty;
+
+                if (_objectTable.SearchByEntityId(member.EntityId) is IBattleChara fromTable
+                    && (fromParty == null || fromTable.EntityId != fromParty.EntityId))
+                {
+                    yield return fromTable;
+                }
+            }
+
+            yield break;
+        }
+
+        foreach (var obj in _objectTable)
+        {
+            if (BasePartyHelper.IsValidTrustNpc(obj, out var npc))
+                yield return npc!;
+        }
+    }
 }
 
 /// <summary>
@@ -247,6 +578,60 @@ public interface IKardiaManager
     /// Records that a Kardia swap was performed.
     /// </summary>
     void RecordSwap(ulong newTargetId);
+
+    /// <summary>
+    /// Records that a Kardia swap was performed with a stable entity id.
+    /// </summary>
+    void RecordSwap(ulong newTargetId, uint entityId);
+
+    /// <summary>
+    /// Aligns manager memory with a live Kardion bearer from status scan.
+    /// </summary>
+    void SyncDetectedBearer(ulong bearerGameObjectId);
+
+    /// <summary>
+    /// Latches tank Kardion placement so OOC casts stay suppressed across status flicker.
+    /// </summary>
+    void ConfirmTankKardion(IBattleChara tank);
+
+    /// <summary>
+    /// True when a prior tank Kardion confirmation is latched for this entity.
+    /// </summary>
+    bool IsTankKardionLatched(uint targetEntityId);
+
+    /// <summary>Clears latched tank state (duty exit, disconnect, etc.).</summary>
+    void ResetSession();
+
+    /// <summary>
+    /// True during the post-territory-change grace period, when Kardia placement should
+    /// wait for the new zone's party/tank to finish loading.
+    /// </summary>
+    bool IsPostZoneWarmupActive { get; }
+
+    /// <summary>
+    /// Action-layer gate for a target game object id.
+    /// </summary>
+    bool ShouldBlockKardiaUse(IPlayerCharacter player, ulong targetGameObjectId);
+
+    /// <summary>
+    /// Returns true when a Kardia cast on <paramref name="target"/> should be suppressed.
+    /// </summary>
+    bool ShouldBlockKardiaRecast(
+        IPlayerCharacter player,
+        IBattleChara target,
+        IObjectTable objectTable,
+        IPartyList partyList,
+        IBattleChara? tank = null);
+
+    /// <summary>
+    /// True when Kardion is already on the target (status, inference, or recent cast memory).
+    /// </summary>
+    bool IsKardionOnTarget(
+        IPlayerCharacter player,
+        IBattleChara target,
+        IObjectTable objectTable,
+        IPartyList partyList,
+        IBattleChara? tank = null);
 
     /// <summary>
     /// Returns true if we should swap Kardia to a new target.

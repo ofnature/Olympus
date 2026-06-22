@@ -1,8 +1,10 @@
 using System;
+using Dalamud.Game.ClientState.Objects.Types;
 using Olympus.Config;
 using Olympus.Data;
 using Olympus.Rotation.AsclepiusCore.Abilities;
 using Olympus.Rotation.AsclepiusCore.Context;
+using Olympus.Rotation.AsclepiusCore.Helpers;
 using Olympus.Rotation.Common.Helpers;
 using Olympus.Rotation.Common.Scheduling;
 using Olympus.Services.Training;
@@ -16,7 +18,8 @@ public sealed class DiagnosisHandler : IHealingHandler
 
     public void CollectCandidates(IAsclepiusContext context, RotationScheduler scheduler, bool isMoving)
     {
-        if (isMoving) return;
+        // Swiftcast makes Diagnosis instant, so it can still fire as an emergency heal while moving.
+        if (isMoving && !context.HasSwiftcast) return;
 
         var config = context.Configuration.Sage;
         if (!config.EnableDiagnosis) return;
@@ -32,7 +35,30 @@ public sealed class DiagnosisHandler : IHealingHandler
         if (context.HealingCoordination.IsTargetReserved(target.EntityId, context.PartyCoordinationService)) return;
 
         var hpPercent = target.MaxHp > 0 ? (float)target.CurrentHp / target.MaxHp : 1f;
-        if (hpPercent > config.DiagnosisThreshold) return;
+        // HoT-aware threshold (RSR parity): relax when the target is already covered by a regen.
+        var diagnosisThreshold = AsclepiusStatusHelper.ApplyHotAwareness(config.DiagnosisThreshold, target);
+        if (hpPercent > diagnosisThreshold) return;
+
+        // GCD-heal gating: with a co-healer covering the party, leave non-critical single-target
+        // healing to oGCDs (and the co-healer) and keep DPS uptime. Critical targets still get a
+        // GCD heal (the check below this only fires above the GCD-emergency threshold).
+        if (config.RestrictGcdHealsWithCoHealer
+            && context.CoHealerDetectionService?.HasCoHealer == true
+            && hpPercent > context.Configuration.Healing.GcdEmergencyThreshold)
+        {
+            return;
+        }
+
+        // Diagnosis is a damage-GCD fallback. Whenever a free, MP-restoring Addersgall oGCD
+        // (Druochole / Taurochole) can actually cover this target, defer to it: those heals are
+        // strictly better and preserve DPS uptime. Only hardcast Diagnosis once the target is
+        // critical (at/below the GCD-emergency threshold, where a weave is no longer a safe bet) or
+        // Addersgall is unavailable for this target.
+        if (hpPercent > context.Configuration.Healing.GcdEmergencyThreshold
+            && OgcdWillCover(context, target, hpPercent))
+        {
+            return;
+        }
 
         if (CoHealerAwarenessHelper.CoHealerWillCover(
                 context.Configuration.Healing.EnableCoHealerAwareness,
@@ -90,5 +116,27 @@ public sealed class DiagnosisHandler : IHealingHandler
                     });
                 }
             });
+    }
+
+    /// <summary>
+    /// True when a free Addersgall oGCD heal (Druochole, or Taurochole for the tank) is enabled AND
+    /// has a spendable stack for this target. Mirrors SingleTargetOgcdHandler's spend rule: the
+    /// emergency reserve is bypassed only when the target is in the oGCD-emergency band, so we never
+    /// defer Diagnosis to an oGCD that will refuse to fire (which would leave the target unhealed).
+    /// </summary>
+    private static bool OgcdWillCover(IAsclepiusContext context, IBattleChara target, float hpPercent)
+    {
+        var config = context.Configuration.Sage;
+
+        var emergency = hpPercent <= context.Configuration.Healing.OgcdEmergencyThreshold;
+        var spendable = context.AddersgallStacks > config.AddersgallReserve
+                        || (context.AddersgallStacks >= 1 && emergency);
+        if (!spendable) return false;
+
+        var tank = context.PartyHelper.FindTankInParty(context.Player);
+        var isTank = tank != null && target.GameObjectId == tank.GameObjectId;
+        return isTank
+            ? config.EnableTaurochole || config.EnableDruochole
+            : config.EnableDruochole;
     }
 }

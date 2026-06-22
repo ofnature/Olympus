@@ -3,6 +3,7 @@ using Olympus.Config;
 using Olympus.Data;
 using Olympus.Rotation.AsclepiusCore.Abilities;
 using Olympus.Rotation.AsclepiusCore.Context;
+using Olympus.Rotation.AsclepiusCore.Helpers;
 using Olympus.Rotation.Common.Scheduling;
 using Olympus.Services.Training;
 
@@ -50,9 +51,19 @@ public sealed class HolosHandler : IHealingHandler
         if (player.Level < SGEActions.Holos.MinLevel) return;
         if (!context.ActionService.IsActionReady(SGEActions.Holos.ActionId)) { context.Debug.HolosState = "On CD"; return; }
 
-        var (avgHp, lowestHp, injuredCount) = context.PartyHelper.CalculatePartyHealthMetrics(player);
-        if (lowestHp > config.HolosThreshold) { context.Debug.HolosState = $"Lowest HP {lowestHp:P0}"; return; }
-        if (injuredCount < config.AoEHealMinTargets) { context.Debug.HolosState = $"{injuredCount} injured"; return; }
+        var (avgHp, lowestHp, injuredCount) = AsclepiusPartyMetrics.GetAoEHealMetrics(context.PartyHelper, player);
+
+        // Non-Addersgall emergency: when Addersgall is dry there is no Druochole/Taurochole to weave,
+        // so let the free Holos cooldown (heal + shield + 10% mit) cover a critically low ally even if
+        // the usual AoE injured-count isn't met (e.g. a single low tank in a dungeon).
+        var addersgallEmergency = context.AddersgallStacks < 1
+            && lowestHp <= context.Configuration.Healing.GcdEmergencyThreshold;
+
+        if (!addersgallEmergency)
+        {
+            if (lowestHp > config.HolosThreshold) { context.Debug.HolosState = $"Lowest HP {lowestHp:P0}"; return; }
+            if (injuredCount < config.AoEHealMinTargets) { context.Debug.HolosState = $"{injuredCount} injured"; return; }
+        }
 
         var capturedAvgHp = avgHp;
         var capturedLowestHp = lowestHp;

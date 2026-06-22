@@ -51,7 +51,8 @@ public sealed class DebugDisplaySection
             DrawToggle("SpellSelection", Loc.T(LocalizedStrings.Debug.SpellSelection, "Spell Selection"));
             DrawToggle("HpPrediction", Loc.T(LocalizedStrings.Debug.HpPrediction, "HP Prediction"));
             DrawToggle("AoEHealing", Loc.T(LocalizedStrings.Debug.AoEHealing, "AoE Healing"));
-            DrawToggle("RecentHeals", Loc.T(LocalizedStrings.Debug.RecentHeals, "Recent Heals"));
+            DrawToggle("RecentHeals", Loc.T(LocalizedStrings.Debug.RecentHeals, "Healing Abilities (Last Used)"));
+            DrawToggle("Kardia", Loc.T(LocalizedStrings.Debug.SgeKardia, "Kardia"));
             DrawToggle("ShadowHp", Loc.T(LocalizedStrings.Debug.ShadowHp, "Shadow HP"));
             ConfigUIHelpers.EndIndent();
         }

@@ -121,6 +121,9 @@ public sealed class SageSection
             ConfigUIHelpers.Toggle(Loc.T(LocalizedStrings.Sage.EnableEukrasianPrognosis, "Enable Eukrasian Prognosis"), () => config.Sage.EnableEukrasianPrognosis, v => config.Sage.EnableEukrasianPrognosis = v,
                 null, save, actionId: SGEActions.EukrasianPrognosis.ActionId);
 
+            ConfigUIHelpers.Toggle("GCD Heals Only When Solo Healer", () => config.Sage.RestrictGcdHealsWithCoHealer, v => config.Sage.RestrictGcdHealsWithCoHealer = v,
+                "With a co-healer in the party, skip cast-time GCD heals (Diagnosis/Prognosis) for non-critical targets and stick to oGCDs + DPS. Critical targets (below GCD Emergency) still get a GCD heal.", save);
+
             ConfigUIHelpers.Spacing();
             ConfigUIHelpers.SectionLabel(Loc.T(LocalizedStrings.Sage.AddersgallHeals, "Addersgall Heals:"));
 
@@ -155,13 +158,27 @@ public sealed class SageSection
             ConfigUIHelpers.SectionLabel(Loc.T(LocalizedStrings.Sage.SingleTargetThresholds, "Single-Target Thresholds:"));
 
             config.Sage.DiagnosisThreshold = ConfigUIHelpers.ThresholdSlider(Loc.T(LocalizedStrings.Sage.DiagnosisThreshold, "Diagnosis Threshold"),
-                config.Sage.DiagnosisThreshold, 20f, 60f, null, save, v => config.Sage.DiagnosisThreshold = v);
+                config.Sage.DiagnosisThreshold, 20f, 75f, null, save, v => config.Sage.DiagnosisThreshold = v);
             config.Sage.EukrasianDiagnosisThreshold = ConfigUIHelpers.ThresholdSlider(Loc.T(LocalizedStrings.Sage.EukrasianDiagnosisThreshold, "E.Diagnosis Threshold"),
                 config.Sage.EukrasianDiagnosisThreshold, 50f, 95f, null, save, v => config.Sage.EukrasianDiagnosisThreshold = v);
             config.Sage.DruocholeThreshold = ConfigUIHelpers.ThresholdSlider(Loc.T(LocalizedStrings.Sage.DruocholeThreshold, "Druochole Threshold"),
                 config.Sage.DruocholeThreshold, 30f, 75f, null, save, v => config.Sage.DruocholeThreshold = v);
             config.Sage.TaurocholeThreshold = ConfigUIHelpers.ThresholdSlider(Loc.T(LocalizedStrings.Sage.TaurocholeThreshold, "Taurochole Threshold"),
                 config.Sage.TaurocholeThreshold, 30f, 75f, null, save, v => config.Sage.TaurocholeThreshold = v);
+
+            ConfigUIHelpers.Spacing();
+            ConfigUIHelpers.SectionLabel("Emergency Thresholds (shared):");
+
+            config.Healing.OgcdEmergencyThreshold = ConfigUIHelpers.ThresholdSlider("oGCD Emergency",
+                config.Healing.OgcdEmergencyThreshold, 30f, 90f,
+                "Prioritize emergency oGCD heals (Druochole/Taurochole) when a party member is below this HP%. Shared across all healers.",
+                save, v => config.Healing.OgcdEmergencyThreshold = v);
+            config.Healing.GcdEmergencyThreshold = ConfigUIHelpers.ThresholdSlider("GCD Emergency (critical)",
+                config.Healing.GcdEmergencyThreshold, 10f, 80f,
+                "Interrupt damage and hard-cast a GCD heal when a party member drops below this HP%. Must be lower than oGCD Emergency. Shared across all healers.",
+                save, v => config.Healing.GcdEmergencyThreshold = v);
+            ConfigUIHelpers.Toggle("Swiftcast Emergency Heals", () => config.Healing.UseSwiftcastForEmergencyHeal, v => config.Healing.UseSwiftcastForEmergencyHeal = v,
+                "Pop Swiftcast so a critical GCD heal lands instantly (and works while moving).", save);
 
             ConfigUIHelpers.Spacing();
             ConfigUIHelpers.SectionLabel(Loc.T(LocalizedStrings.Sage.AoEThresholds, "AoE Thresholds:"));
@@ -194,6 +211,24 @@ public sealed class SageSection
         if (ConfigUIHelpers.SectionHeader(Loc.T(LocalizedStrings.Sage.ShieldsSection, "Shields"), "SGE"))
         {
             ConfigUIHelpers.BeginIndent();
+
+            ConfigUIHelpers.SectionLabel("Eukrasian Shields (E.Diagnosis / E.Prognosis):");
+
+            ConfigUIHelpers.Toggle("Use Shields as Mitigation", () => config.Sage.EukrasianShieldsForMitigation, v => config.Sage.EukrasianShieldsForMitigation = v,
+                "Fire Eukrasian shields proactively for an incoming tankbuster/raidwide (plus a low-HP backstop) instead of every time someone dips below the shield HP threshold. Prevents shield spam that wastes GCDs, caps Addersting, and starves Addersgall heals. Turn off for the old reactive (HP-only) behavior.", save);
+
+            if (config.Sage.EukrasianShieldsForMitigation)
+            {
+                config.Sage.EukrasianShieldHpBackstop = ConfigUIHelpers.ThresholdSliderSmall("Shield HP Backstop",
+                    config.Sage.EukrasianShieldHpBackstop, 20f, 80f, "When no tankbuster/raidwide is detected, still shield a target at or below this HP.", save, v => config.Sage.EukrasianShieldHpBackstop = v);
+            }
+            else
+            {
+                config.Sage.EukrasianDiagnosisThreshold = ConfigUIHelpers.ThresholdSliderSmall("E.Diagnosis Threshold (reactive)",
+                    config.Sage.EukrasianDiagnosisThreshold, 50f, 95f, "Reactive mode: shield the lowest party member below this HP.", save, v => config.Sage.EukrasianDiagnosisThreshold = v);
+            }
+
+            ConfigUIHelpers.Spacing();
 
             ConfigUIHelpers.Toggle(Loc.T(LocalizedStrings.Sage.EnableHaima, "Enable Haima"), () => config.Sage.EnableHaima, v => config.Sage.EnableHaima = v,
                 null, save, actionId: SGEActions.Haima.ActionId);

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Dalamud.Game.ClientState.JobGauge;
 using Dalamud.Game.ClientState.Objects.SubKinds;
@@ -5,11 +6,11 @@ using Dalamud.Game.ClientState.Party;
 using Dalamud.Plugin.Services;
 using Olympus.Data;
 using Olympus.Rotation.ApolloCore.Helpers;
+using Olympus.Rotation.AsclepiusCore.Helpers;
 using Olympus.Rotation.Common;
 using Olympus.Rotation.Common.Helpers;
 using Olympus.Rotation.Common.Scheduling;
 using Olympus.Rotation.AsclepiusCore.Context;
-using Olympus.Rotation.AsclepiusCore.Helpers;
 using Olympus.Rotation.AsclepiusCore.Modules;
 using Olympus.Rotation.Base;
 using Olympus.Services;
@@ -66,7 +67,7 @@ public sealed class Asclepius : BaseHealerRotation<IAsclepiusContext, IAsclepius
 
     // Helpers
     private readonly AsclepiusStatusHelper _statusHelper;
-    private readonly PartyHelper _partyHelper;
+    private readonly AsclepiusPartyHelper _partyHelper;
 
     // Timeline integration
     private readonly ITimelineService? _timelineService;
@@ -136,14 +137,14 @@ public sealed class Asclepius : BaseHealerRotation<IAsclepiusContext, IAsclepius
         _scheduler = new RotationScheduler(actionService, jobGauges, configuration, timelineService, errorMetrics);
 
         // Initialize Sage-specific services
-        _addersgallService = new AddersgallTrackingService();
-        _adderstingService = new AdderstingTrackingService();
-        _kardiaManager = new KardiaManager(partyList);
+        _addersgallService = new AddersgallTrackingService(jobGauges);
+        _adderstingService = new AdderstingTrackingService(jobGauges);
+        _kardiaManager = new KardiaManager(partyList, objectTable);
         _eukrasiaService = new EukrasiaStateService();
 
         // Initialize helpers
         _statusHelper = new AsclepiusStatusHelper();
-        _partyHelper = new PartyHelper(objectTable, partyList, hpPredictionService, configuration);
+        _partyHelper = new AsclepiusPartyHelper(objectTable, partyList, hpPredictionService, configuration, _statusHelper);
 
         // Initialize modules (ordered by priority - lower = executed first)
         _modules = new List<IAsclepiusModule>
@@ -164,6 +165,14 @@ public sealed class Asclepius : BaseHealerRotation<IAsclepiusContext, IAsclepius
     }
 
     /// <inheritdoc />
+    public override void OnTerritoryChanged(ushort territoryType)
+    {
+        // Clear latched Kardia state so duty start re-establishes Kardion on the new
+        // tank (or self when solo) instead of trusting stale prior-zone confirmation.
+        _kardiaManager.ResetSession();
+    }
+
+    /// <inheritdoc />
     protected override void BroadcastHealerGaugeState(IPlayerCharacter player)
     {
         var addersgall = _addersgallService.CurrentStacks;
@@ -172,6 +181,28 @@ public sealed class Asclepius : BaseHealerRotation<IAsclepiusContext, IAsclepius
     }
 
     #region Abstract Implementation
+
+    /// <inheritdoc />
+    protected override unsafe void ExecuteInternal(IPlayerCharacter player)
+    {
+        ActionService.KardiaRecastGuard = targetId =>
+        {
+            if (!_kardiaManager.ShouldBlockKardiaUse(player, targetId))
+                return false;
+
+            _debugState.KardiaBlockedThisFrame = true;
+            return true;
+        };
+
+        try
+        {
+            base.ExecuteInternal(player);
+        }
+        finally
+        {
+            ActionService.KardiaRecastGuard = null;
+        }
+    }
 
     /// <inheritdoc />
     protected override void UpdateMpForecast(IPlayerCharacter player)
@@ -191,13 +222,50 @@ public sealed class Asclepius : BaseHealerRotation<IAsclepiusContext, IAsclepius
         // Update Kardia target tracking
         _kardiaManager.UpdateKardiaTarget(player);
 
+        var tank = _partyHelper.FindTankInParty(player);
+        var kardiaTargetId = _kardiaManager.CurrentKardiaTarget;
+        if (kardiaTargetId == 0)
+        {
+            kardiaTargetId = AsclepiusStatusHelper.FindKardionTargetId(
+                player,
+                ObjectTable,
+                PartyList,
+                _partyHelper.GetAllPartyMembers(player),
+                tank);
+        }
+
+        if (kardiaTargetId == 0
+            && tank != null
+            && AsclepiusStatusHelper.InferKardionOnTank(player, tank, ObjectTable, PartyList))
+        {
+            kardiaTargetId = tank.GameObjectId;
+        }
+
+        if (kardiaTargetId != 0)
+            _kardiaManager.SyncDetectedBearer(kardiaTargetId);
+
         // Update Sage-specific debug state
+        _debugState.KardiaBlockedThisFrame = false;
+        _debugState.KardiaExecutedThisFrame = false;
         _debugState.AddersgallStacks = _addersgallService.CurrentStacks;
         _debugState.AddersgallTimer = _addersgallService.TimerRemaining;
         _debugState.AdderstingStacks = _adderstingService.CurrentStacks;
         _debugState.EukrasiaActive = _eukrasiaService.IsEukrasiaActive(player);
         _debugState.ZoeActive = _eukrasiaService.IsZoeActive(player);
-        _debugState.KardiaTarget = _kardiaManager.HasKardia ? $"ID: {_kardiaManager.CurrentKardiaTarget}" : "None";
+        _debugState.KardiaTargetGameObjectId = kardiaTargetId;
+        _debugState.KardiaTargetName = ResolveDebugTargetName(player, kardiaTargetId);
+        _debugState.TankGameObjectId = tank?.GameObjectId ?? 0;
+        _debugState.TankTargetName = tank?.Name?.TextValue ?? "None";
+        _debugState.TankHasKardion = tank != null
+            && AsclepiusStatusHelper.TankHasKardion(player, tank, ObjectTable, PartyList, kardiaTargetId);
+        if (_debugState.TankHasKardion && tank != null)
+            _kardiaManager.ConfirmTankKardion(tank);
+        _debugState.KardiaTarget = kardiaTargetId != 0
+            ? $"{_debugState.KardiaTargetName} ({kardiaTargetId})"
+            : "None";
+        _debugState.KardiaState = _debugState.TankHasKardion
+            ? "Kardion on tank"
+            : kardiaTargetId != 0 ? "Kardion active" : "No Kardion";
         _debugState.SoteriaStacks = _kardiaManager.GetSoteriaStacks(player);
         _debugState.PlayerHpPercent = player.MaxHp > 0 ? (float)player.CurrentHp / player.MaxHp : 1f;
 
@@ -277,5 +345,20 @@ public sealed class Asclepius : BaseHealerRotation<IAsclepiusContext, IAsclepius
     }
 
     #endregion
+
+    private string ResolveDebugTargetName(IPlayerCharacter player, ulong gameObjectId)
+    {
+        if (gameObjectId == 0)
+            return "None";
+
+        foreach (var member in _partyHelper.GetAllPartyMembers(player))
+        {
+            if (member.GameObjectId == gameObjectId)
+                return member.Name?.TextValue ?? $"ID:{gameObjectId}";
+        }
+
+        var obj = ObjectTable.SearchById(gameObjectId);
+        return obj?.Name.TextValue ?? $"ID:{gameObjectId}";
+    }
 
 }

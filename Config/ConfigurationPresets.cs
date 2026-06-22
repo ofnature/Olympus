@@ -255,9 +255,13 @@ public static class ConfigurationPresets
         config.Astrologian.AoEHealMinTargets = 2;
         config.Astrologian.EarthlyStarMinTargets = 2;
 
-        // Sage - no Addersgall reserve, maximize throughput
+        // Sage - dungeon tuning: lower AoE thresholds, tank-centered heal counts, no Addersgall reserve
         config.Sage.AddersgallReserve = 0;
         config.Sage.PreventAddersgallCap = true;
+        config.Sage.AoEHealMinTargets = 2;
+        config.Sage.AoEDamageMinTargets = 2;
+        config.Sage.AoEHealCountMode = SageAoEHealCountMode.TankCentered;
+        config.Sage.AoEDamageCountMode = SageAoEDamageCountMode.TargetCentered;
 
         // DPS - lower AoE threshold and no burst pooling delay in dungeons
         ApplyDungeonDpsBurstSettings(config);

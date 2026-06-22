@@ -435,10 +435,10 @@ public sealed class HealingConfig
     /// <summary>
     /// HP percentage threshold for using emergency oGCD heals (Tetragrammaton).
     /// When any party member is below this threshold, prioritize oGCD heals.
-    /// Default 0.50 means use emergency oGCDs when below 50% HP.
+    /// Default 0.65 means use emergency oGCDs when below 65% HP.
     /// Valid range: 0.1 to 0.9.
     /// </summary>
-    private float _ogcdEmergencyThreshold = 0.50f;
+    private float _ogcdEmergencyThreshold = 0.65f;
     public float OgcdEmergencyThreshold
     {
         get => _ogcdEmergencyThreshold;
@@ -477,6 +477,13 @@ public sealed class HealingConfig
         get => _gcdEmergencyThreshold;
         set => _gcdEmergencyThreshold = Math.Clamp(value, 0.1f, 0.9f);
     }
+
+    /// <summary>
+    /// Pop Swiftcast to make the next emergency GCD heal instant when a party member drops to the
+    /// GCD-emergency (critical) threshold. Lets a critical heal land immediately instead of after a
+    /// cast, and allows it to fire while moving. Default true.
+    /// </summary>
+    public bool UseSwiftcastForEmergencyHeal { get; set; } = true;
 
     // Preemptive Healing Settings
 

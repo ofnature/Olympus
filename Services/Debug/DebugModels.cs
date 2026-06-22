@@ -128,9 +128,26 @@ public sealed class DebugHealingState
     public int LastHealAmount { get; init; }
     public string LastHealStats { get; init; } = "";
 
-    // Recent heals
+    // Recent heals (legacy; healing tab uses per-ability last-used instead)
     public List<DebugRecentHeal> RecentHeals { get; init; } = new();
     public int TotalRecentHealAmount { get; init; }
+
+    /// <summary>One row per healing ability with time since last use.</summary>
+    public List<DebugHealingAbilityLastUsed> HealingAbilityLastUsed { get; init; } = new();
+
+    // Sage Kardia (populated when Asclepius is the active rotation)
+    public bool HasKardiaInfo { get; init; }
+    public string KardiaState { get; init; } = "N/A";
+    public ulong KardiaTargetGameObjectId { get; init; }
+    public string KardiaTargetName { get; init; } = "None";
+    public ulong TankGameObjectId { get; init; }
+    public string TankTargetName { get; init; } = "None";
+    public bool TankHasKardion { get; init; }
+    public bool KardiaBlockedThisFrame { get; init; }
+    public bool KardiaExecutedThisFrame { get; init; }
+    public DateTime? KardiaLastCastUtc { get; init; }
+    public DateTime? KardiaLastErrorUtc { get; init; }
+    public string KardiaLastError { get; init; } = "None";
 
     // Shadow HP tracking
     public List<DebugShadowHpEntry> ShadowHpEntries { get; init; } = new();
@@ -144,6 +161,19 @@ public sealed class DebugPendingHeal
     public uint TargetId { get; init; }
     public string TargetName { get; init; } = "";
     public int Amount { get; init; }
+}
+
+/// <summary>
+/// Last-used timestamp for a healing ability in the debug panel.
+/// </summary>
+public sealed class DebugHealingAbilityLastUsed
+{
+    public uint ActionId { get; init; }
+    public string ActionName { get; init; } = "";
+    public SpellCategory Category { get; init; }
+    public DateTime? LastUsedUtc { get; init; }
+    public float? SecondsSinceLastUse =>
+        LastUsedUtc is { } ts ? (float)Math.Max(0, (DateTime.UtcNow - ts).TotalSeconds) : null;
 }
 
 /// <summary>

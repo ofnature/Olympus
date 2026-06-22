@@ -27,6 +27,14 @@ public interface IRotation
     void Execute(IPlayerCharacter player);
 
     /// <summary>
+    /// Called when the player changes territory (duty start/exit, zone change).
+    /// Rotations use this to reset per-instance state so they re-establish buffs
+    /// (e.g. Kardia) cleanly at duty start. Default implementation is a no-op.
+    /// </summary>
+    /// <param name="territoryType">The new territory type id.</param>
+    void OnTerritoryChanged(ushort territoryType) { }
+
+    /// <summary>
     /// Debug state for this rotation, used by the debug window.
     /// </summary>
     DebugState DebugState { get; }

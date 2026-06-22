@@ -12,7 +12,7 @@ namespace Olympus.Rotation.AsclepiusCore.Modules.Healing;
 
 public sealed class LucidDreamingHandler : IHealingHandler
 {
-    public int Priority => 70;
+    public int Priority => 1;
     public string Name => "LucidDreaming";
 
     public void CollectCandidates(IAsclepiusContext context, RotationScheduler scheduler, bool isMoving)
@@ -26,7 +26,7 @@ public sealed class LucidDreamingHandler : IHealingHandler
         RoleActionPushers.TryPushLucidDreaming(
             context, scheduler, AsclepiusAbilities.LucidDreaming,
             mpThresholdPct: config.HealerShared.LucidDreamingThreshold,
-            priority: 70,
+            priority: 1,
             onDispatched: _ =>
             {
                 context.Debug.PlannedAction = RoleActions.LucidDreaming.Name;

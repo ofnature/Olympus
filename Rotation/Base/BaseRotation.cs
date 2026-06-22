@@ -187,6 +187,9 @@ public abstract class BaseRotation<TContext, TModule> : IRotation, IDisposable
         }
     }
 
+    /// <inheritdoc />
+    public virtual void OnTerritoryChanged(ushort territoryType) { }
+
     #endregion
 
     #region Core Execution

@@ -31,6 +31,20 @@ public sealed class KeracholeHandler : IHealingHandler
         if (context.AddersgallStacks < 1) { context.Debug.KeracholeState = "No Addersgall"; return; }
         if (!context.ActionService.IsActionReady(SGEActions.Kerachole.ActionId)) { context.Debug.KeracholeState = "On CD"; return; }
 
+        var tank = context.PartyHelper.FindTankInParty(player);
+        if (tank != null)
+        {
+            var tankHp = tank.MaxHp > 0 ? (float)tank.CurrentHp / tank.MaxHp : 1f;
+            var tankEmergencyThreshold = Math.Min(
+                config.TaurocholeThreshold,
+                context.Configuration.Healing.OgcdEmergencyThreshold);
+            if (tankHp <= tankEmergencyThreshold)
+            {
+                context.Debug.KeracholeState = $"Tank low ({tankHp:P0})";
+                return;
+            }
+        }
+
         var (avgHp, _, injuredCount) = context.PartyHelper.CalculatePartyHealthMetrics(player);
 
         var raidwideImminent = TimelineHelper.IsRaidwideImminent(

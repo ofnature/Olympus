@@ -33,6 +33,7 @@ public sealed class DebugConfig
         ["HpPrediction"] = true,
         ["AoEHealing"] = true,
         ["RecentHeals"] = true,
+        ["Kardia"] = true,
         ["ShadowHp"] = true,
 
         // Damage tab

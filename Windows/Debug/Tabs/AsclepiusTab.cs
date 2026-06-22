@@ -148,6 +148,21 @@ public static class AsclepiusTab
                 ImGui.TextDisabled($"→ {state.KardiaTarget}");
             }
 
+            if (state.KardiaTargetGameObjectId != 0 || state.TankGameObjectId != 0)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.Text("Target ID / Name");
+                ImGui.TableNextColumn();
+                ImGui.TextDisabled($"{state.KardiaTargetName} ({state.KardiaTargetGameObjectId})");
+
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.Text("Tank ID / Name");
+                ImGui.TableNextColumn();
+                ImGui.TextDisabled($"{state.TankTargetName} ({state.TankGameObjectId})");
+            }
+
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
             ImGui.Text(Loc.T(LocalizedStrings.Debug.SgeSoteria, "Soteria:"));
@@ -271,6 +286,7 @@ public static class AsclepiusTab
             DrawStateRow(Loc.T(LocalizedStrings.Debug.SgeKrasis, "Krasis:"), state.KrasisState);
             DrawStateRow(Loc.T(LocalizedStrings.Debug.SgePepsis, "Pepsis:"), state.PepsisState);
             DrawStateRow(Loc.T(LocalizedStrings.Debug.SgeRhizomata, "Rhizomata:"), state.RhizomataState);
+            DrawStateRow("Emergency Swift:", state.EmergencySwiftcastState);
         });
     }
 

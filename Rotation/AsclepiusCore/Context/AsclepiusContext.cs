@@ -1,3 +1,4 @@
+using System;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Party;
 using Dalamud.Plugin.Services;
@@ -183,6 +184,31 @@ public sealed class AsclepiusDebugState : DebugState
 
     public string KardiaState { get; set; } = "Idle";
     public string KardiaTarget { get; set; } = "None";
+    public ulong KardiaTargetGameObjectId { get; set; }
+    public string KardiaTargetName { get; set; } = "None";
+    public ulong TankGameObjectId { get; set; }
+    public string TankTargetName { get; set; } = "None";
+    public bool TankHasKardion { get; set; }
+    public bool KardiaBlockedThisFrame { get; set; }
+    public bool KardiaExecutedThisFrame { get; set; }
+    public DateTime? KardiaLastCastUtc { get; set; }
+    public DateTime? KardiaLastErrorUtc { get; set; }
+    public string KardiaLastError { get; set; } = "None";
+
+    /// <summary>
+    /// Pins a Kardia error for debug display. Only overwrites when the message changes.
+    /// </summary>
+    public void PinKardiaError(string error)
+    {
+        if (string.IsNullOrWhiteSpace(error)
+            || string.Equals(KardiaLastError, error, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        KardiaLastError = error;
+        KardiaLastErrorUtc = DateTime.UtcNow;
+    }
     public string SoteriaState { get; set; } = "Idle";
     public int SoteriaStacks { get; set; }
     public string PhilosophiaState { get; set; } = "Idle";
@@ -236,6 +262,7 @@ public sealed class AsclepiusDebugState : DebugState
     public string ZoeState { get; set; } = "Idle";
     public string RhizomataState { get; set; } = "Idle";
     public string PepsisState { get; set; } = "Idle";
+    public string EmergencySwiftcastState { get; set; } = "Idle";
 
     #endregion
 }
