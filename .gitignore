@@ -1,6 +1,8 @@
 bin/
 obj/
 .worktrees/
+TestResults/
+burn-reference/
 *.user
 *.suo
 .vs/
