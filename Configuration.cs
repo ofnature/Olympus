@@ -45,6 +45,13 @@ public sealed class Configuration : IPluginConfiguration
     public bool EnableAutoDutyConfig { get; set; } = true;
 
     /// <summary>
+    /// Master kill-switch for all vNav-driven auto movement (positional reposition to flank/rear,
+    /// burst melee approach, etc.). When false, no job will path the character around. Movement is
+    /// also automatically suppressed when solo (no party), regardless of this flag. Default true.
+    /// </summary>
+    public bool EnableAutoMovement { get; set; } = true;
+
+    /// <summary>
     /// The currently active configuration preset.
     /// Set to Custom when user modifies individual settings after applying a preset.
     /// </summary>

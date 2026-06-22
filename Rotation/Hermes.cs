@@ -225,7 +225,7 @@ public sealed class Hermes : BaseMeleeDpsRotation<IHermesContext, IHermesModule>
                 Target: movementTarget,
                 ActionService: ActionService,
                 InCombat: inCombat,
-                EnableMovement: IsPositionalMovementEnabled(),
+                EnableMovement: IsPositionalMovementEnabled() && IsAutoMovementAllowed(),
                 AllowMovementDuringActionLock: true);
 
             PositionalMovementService.Update(in request);
@@ -282,7 +282,7 @@ public sealed class Hermes : BaseMeleeDpsRotation<IHermesContext, IHermesModule>
             : null;
 
         var request = new NinjaBurstApproachRequest(
-            Enabled: Configuration.Ninja.EnableBurstMeleeApproach,
+            Enabled: Configuration.Ninja.EnableBurstMeleeApproach && IsAutoMovementAllowed(),
             InCombat: inCombat,
             BurstPrepActive: burst.InBurstPrep,
             AlreadyInMeleeRange: burst.AlreadyInMelee,

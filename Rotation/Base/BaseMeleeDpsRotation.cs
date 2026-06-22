@@ -252,6 +252,14 @@ public abstract class BaseMeleeDpsRotation<TContext, TModule> : BaseRotation<TCo
     protected virtual bool IsPositionalMovementEnabled() => false;
 
     /// <summary>
+    /// Whether vNav-driven auto movement (positional reposition, burst approach) is permitted right
+    /// now: requires the global master toggle AND a real party. Solo play never auto-moves —
+    /// positional uptime barely matters against overworld / solo-duty trash and pathing around every
+    /// target looks botty. PartyList.Length &gt; 0 includes trust/duty NPCs, so dungeons still move.
+    /// </summary>
+    protected bool IsAutoMovementAllowed() => Configuration.EnableAutoMovement && PartyList.Length > 0;
+
+    /// <summary>
     /// Builds anticipation inputs shared by all melee jobs. Override to add job-specific fields.
     /// </summary>
     protected virtual PositionalAnticipationContext CreatePositionalAnticipationContext(IPlayerCharacter player)
@@ -296,7 +304,7 @@ public abstract class BaseMeleeDpsRotation<TContext, TModule> : BaseRotation<TCo
             Target: movementTarget,
             ActionService: ActionService,
             InCombat: inCombat,
-            EnableMovement: IsPositionalMovementEnabled());
+            EnableMovement: IsPositionalMovementEnabled() && IsAutoMovementAllowed());
 
         PositionalMovementService.Update(in request);
     }
