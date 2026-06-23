@@ -26,6 +26,7 @@ public class PositionalMovementServiceTests
         _action.Setup(x => x.AnimationLockRemaining).Returns(0f);
 
         _vNav.Setup(x => x.IsPathRunning).Returns(false);
+        _vNav.Setup(x => x.IsPathfindInProgress).Returns(false);
         _vNav.Setup(x => x.SnapToFloor(It.IsAny<Vector3>())).Returns<Vector3>(v => v);
         _vNav.Setup(x => x.PathfindAndMoveCloseTo(It.IsAny<Vector3>(), It.IsAny<float>(), It.IsAny<bool>()))
             .Returns(VNavMoveResult.Queued);
@@ -147,6 +148,231 @@ public class PositionalMovementServiceTests
         Assert.Equal("already at positional", service.State.SkipReason);
     }
 
+    [Fact]
+    public void Update_WhenMaintainAndHuggingTarget_QueuesBackoff()
+    {
+        var service = CreateService();
+        _anticipation.Next = null; // no positional arc — maintenance only
+
+        // Player at z=1 (target hitbox 2) is well inside the max-melee ring → back off.
+        var request = CreateRequest() with { MaintainMaxMelee = true, PlayerPosition = new Vector3(0f, 0f, 1f) };
+        service.Update(request);
+
+        Assert.Equal(PositionalMovementPhase.Moving, service.State.Phase);
+        _vNav.Verify(x => x.PathfindAndMoveCloseTo(It.IsAny<Vector3>(), It.IsAny<float>(), false), Times.Once);
+    }
+
+    [Fact]
+    public void Update_WhenMaintainButAlreadyAtMaxMelee_SkipsWithoutMoving()
+    {
+        var service = CreateService();
+        _anticipation.Next = null;
+
+        // Default player position (z=5) is at the max-melee ring for a 2y-hitbox target → no back-off.
+        var request = CreateRequest() with { MaintainMaxMelee = true };
+        service.Update(request);
+
+        Assert.Equal(PositionalMovementPhase.Skipped, service.State.Phase);
+        _vNav.Verify(x => x.PathfindAndMoveCloseTo(It.IsAny<Vector3>(), It.IsAny<float>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public void Update_WhenMaintainAndTooFar_QueuesApproach()
+    {
+        var service = CreateService();
+        _anticipation.Next = null; // no positional arc — maintenance only
+
+        // Player at z=8 (target hitbox 2, edge 5.5, approach trigger 6.0) has lost uptime → walk back in.
+        var request = CreateRequest() with { MaintainMaxMelee = true, PlayerPosition = new Vector3(0f, 0f, 8f) };
+        service.Update(request);
+
+        Assert.Equal(PositionalMovementPhase.Moving, service.State.Phase);
+        _vNav.Verify(x => x.PathfindAndMoveCloseTo(It.IsAny<Vector3>(), It.IsAny<float>(), false), Times.Once);
+    }
+
+    [Fact]
+    public void Update_WhenMaintainAndJustOutsideRing_LeavesInPlace()
+    {
+        var service = CreateService();
+        _anticipation.Next = null;
+
+        // Player at z=5.3 is past the stand ring (5.0) but still inside the vNav Flex grace band
+        // (5.0 ± 0.5 = [4.5, 5.5]) → suppress the vNav call, no move.
+        var request = CreateRequest() with { MaintainMaxMelee = true, PlayerPosition = new Vector3(0f, 0f, 5.3f) };
+        service.Update(request);
+
+        Assert.Equal(PositionalMovementPhase.Skipped, service.State.Phase);
+        _vNav.Verify(x => x.PathfindAndMoveCloseTo(It.IsAny<Vector3>(), It.IsAny<float>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public void Update_WhenMaintainDisabledAndHugging_DoesNotMove()
+    {
+        var service = CreateService();
+        _anticipation.Next = null;
+
+        var request = CreateRequest() with { MaintainMaxMelee = false, PlayerPosition = new Vector3(0f, 0f, 1f) };
+        service.Update(request);
+
+        Assert.Equal(PositionalMovementPhase.Skipped, service.State.Phase);
+        _vNav.Verify(x => x.PathfindAndMoveCloseTo(It.IsAny<Vector3>(), It.IsAny<float>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public void Update_WhenPositionalDisabledButMaintainOn_StillBacksOff()
+    {
+        var service = CreateService();
+        _anticipation.Next = new PositionalAnticipation(PositionalType.Rear, 7481, PositionalAnticipationReason.ComboSetup);
+
+        // EnableMovement off (e.g. job without positionals / solo) must not block range-keeping.
+        var request = CreateRequest() with
+        {
+            EnableMovement = false,
+            MaintainMaxMelee = true,
+            PlayerPosition = new Vector3(0f, 0f, 1f),
+        };
+        service.Update(request);
+
+        Assert.Equal(PositionalMovementPhase.Moving, service.State.Phase);
+        _vNav.Verify(x => x.PathfindAndMoveCloseTo(It.IsAny<Vector3>(), It.IsAny<float>(), false), Times.Once);
+    }
+
+    [Fact]
+    public void Update_WhenTargetChasesPlayer_SuppressesBackoff()
+    {
+        var service = CreateService();
+        _anticipation.Next = null;
+
+        // Hugging a mob that targets us (solo / self-tanked) must NOT back off — it would only kite-bounce.
+        var request = CreateRequest() with
+        {
+            MaintainMaxMelee = true,
+            PlayerPosition = new Vector3(0f, 0f, 1f),
+            MaxMeleeTarget = new PositionalMovementTarget(Vector3.Zero, 2f, 0f, false),
+            MaxMeleeTargetFollowsPlayer = true,
+        };
+        service.Update(request);
+
+        Assert.Equal(PositionalMovementPhase.Skipped, service.State.Phase);
+        _vNav.Verify(x => x.PathfindAndMoveCloseTo(It.IsAny<Vector3>(), It.IsAny<float>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public void Update_WhenTargetChasesPlayerButTooFar_StillApproaches()
+    {
+        var service = CreateService();
+        _anticipation.Next = null;
+
+        // Suppression only covers the back-off; if knocked out of range we still walk back in.
+        var request = CreateRequest() with
+        {
+            MaintainMaxMelee = true,
+            PlayerPosition = new Vector3(0f, 0f, 8f),
+            MaxMeleeTarget = new PositionalMovementTarget(Vector3.Zero, 2f, 0f, false),
+            MaxMeleeTargetFollowsPlayer = true,
+        };
+        service.Update(request);
+
+        Assert.Equal(PositionalMovementPhase.Moving, service.State.Phase);
+        _vNav.Verify(x => x.PathfindAndMoveCloseTo(It.IsAny<Vector3>(), It.IsAny<float>(), false), Times.Once);
+    }
+
+    [Fact]
+    public void Update_MaintainAnchorsToCurrentTargetNotPositionalTarget()
+    {
+        var service = CreateService();
+        _anticipation.Next = null;
+
+        // Positional target sits right next to the player (would trigger a back-off if maintenance used it),
+        // but the current (max-melee) target is at the ring → maintenance must stay put, proving it follows
+        // the current target, not the strategy/positional one.
+        var request = CreateRequest() with
+        {
+            MaintainMaxMelee = true,
+            Target = new PositionalMovementTarget(new Vector3(0f, 0f, 4.5f), 2f, 0f, false),
+            MaxMeleeTarget = new PositionalMovementTarget(Vector3.Zero, 2f, 0f, false),
+        };
+        service.Update(request);
+
+        Assert.Equal(PositionalMovementPhase.Skipped, service.State.Phase);
+        _vNav.Verify(x => x.PathfindAndMoveCloseTo(It.IsAny<Vector3>(), It.IsAny<float>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public void Update_MaintainFollowsCurrentTargetWhenHugging()
+    {
+        var service = CreateService();
+        _anticipation.Next = null;
+
+        // Positional target is at the ring (no trigger) but we're hugging the current target → back off.
+        var request = CreateRequest() with
+        {
+            MaintainMaxMelee = true,
+            Target = new PositionalMovementTarget(Vector3.Zero, 2f, 0f, false),
+            MaxMeleeTarget = new PositionalMovementTarget(new Vector3(0f, 0f, 4.5f), 2f, 0f, false),
+        };
+        service.Update(request);
+
+        Assert.Equal(PositionalMovementPhase.Moving, service.State.Phase);
+        _vNav.Verify(x => x.PathfindAndMoveCloseTo(It.IsAny<Vector3>(), It.IsAny<float>(), false), Times.Once);
+    }
+
+    [Fact]
+    public void Update_WhileAsyncPathfinding_HoldsWithoutReissuingMove()
+    {
+        var service = CreateService();
+        _anticipation.Next = null;
+
+        // Start a maintenance move from a hug → one PathfindAndMoveCloseTo call.
+        service.Update(CreateRequest() with { MaintainMaxMelee = true, PlayerPosition = new Vector3(0f, 0f, 1f) });
+        Assert.Equal(PositionalMovementPhase.Moving, service.State.Phase);
+
+        // vNav is still computing the path (async): IsPathRunning false but IsPathfindInProgress true.
+        // We must NOT re-issue the move every frame (that is the vNav spam) — hold instead.
+        _vNav.Setup(x => x.IsPathRunning).Returns(false);
+        _vNav.Setup(x => x.IsPathfindInProgress).Returns(true);
+        service.Update(CreateRequest() with { MaintainMaxMelee = true, PlayerPosition = new Vector3(0f, 0f, 1f) });
+
+        Assert.Equal(PositionalMovementPhase.Moving, service.State.Phase);
+        _vNav.Verify(x => x.PathfindAndMoveCloseTo(It.IsAny<Vector3>(), It.IsAny<float>(), It.IsAny<bool>()), Times.Once);
+    }
+
+    [Fact]
+    public void Update_WithLargerFlex_WidensGraceBandAndSuppresses()
+    {
+        var service = CreateService();
+        _anticipation.Next = null;
+
+        // At z=6.5 with flex 0.5 the player is past the band (>5.5) → would move. With flex 2.0 the band is
+        // [3.0, 7.0], so z=6.5 is inside → suppressed. Confirms vNav Flex tunes the grace band.
+        var moved = CreateRequest() with { MaintainMaxMelee = true, PlayerPosition = new Vector3(0f, 0f, 6.5f), VNavFlex = 0.5f };
+        service.Update(moved);
+        Assert.Equal(PositionalMovementPhase.Moving, service.State.Phase);
+
+        var suppressed = CreateRequest() with { MaintainMaxMelee = true, PlayerPosition = new Vector3(0f, 0f, 6.5f), VNavFlex = 2.0f };
+        service.Update(suppressed);
+        Assert.Equal(PositionalMovementPhase.Skipped, service.State.Phase);
+    }
+
+    [Fact]
+    public void Update_WhileBackingOffAndPastTrigger_HoldsPathInsteadOfStopping()
+    {
+        var service = CreateService();
+        _anticipation.Next = null;
+
+        // Start a back-off from a hug.
+        service.Update(CreateRequest() with { MaintainMaxMelee = true, PlayerPosition = new Vector3(0f, 0f, 1f) });
+        Assert.Equal(PositionalMovementPhase.Moving, service.State.Phase);
+
+        // Path now running; player has crossed the trigger (z=3.5) but not yet reached the ring (z=5).
+        // It must keep the path alive (no Stop) so it settles at max melee instead of twitching.
+        _vNav.Setup(x => x.IsPathRunning).Returns(true);
+        service.Update(CreateRequest() with { MaintainMaxMelee = true, PlayerPosition = new Vector3(0f, 0f, 3.5f) });
+
+        Assert.Equal(PositionalMovementPhase.Moving, service.State.Phase);
+        _vNav.Verify(x => x.Stop(), Times.Never);
+    }
+
     private sealed class TestAnticipationProvider : IPositionalAnticipationProvider
     {
         public PositionalAnticipation? Next { get; set; }
@@ -173,7 +399,8 @@ public class PositionalMovementServiceTests
                 HasPositionalImmunity: false),
             ActionService: _action.Object,
             InCombat: true,
-            AllowMovementDuringActionLock: allowMovementDuringActionLock);
+            AllowMovementDuringActionLock: allowMovementDuringActionLock,
+            VNavFlex: 0.5f);
     }
 
     private static PositionalAnticipationContext BaseAnticipationContext => new(

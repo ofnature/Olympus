@@ -1,3 +1,4 @@
+using System.Numerics;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Objects.Types;
 using Moq;
@@ -88,6 +89,42 @@ public sealed class HermesComboFallbackTests
                 It.Is<ActionDefinition>(a => a.ActionId == NINActions.AeolianEdge.ActionId),
                 It.IsAny<ulong>()),
             Times.Never);
+    }
+
+    [Fact]
+    public void CollectCandidates_TargetOutOfMeleeRange_QueuesThrowingDaggerNotCombo()
+    {
+        var enemy = CreateMockEnemy();
+        enemy.Setup(x => x.Position).Returns(new Vector3(0, 0, 30)); // 30y away — out of melee
+
+        var targeting = MockBuilders.CreateMockTargetingService();
+        targeting.Setup(x => x.FindEnemyForAction(
+                It.IsAny<EnemyTargetingStrategy>(), It.IsAny<uint>(), It.IsAny<IPlayerCharacter>()))
+            .Returns(enemy.Object);
+        targeting.Setup(x => x.CountEnemiesInRange(It.IsAny<float>(), It.IsAny<IPlayerCharacter>()))
+            .Returns(1);
+
+        var actionService = MockBuilders.CreateMockActionService();
+        var scheduler = SchedulerFactory.CreateForTest(actionService: actionService);
+        var context = HermesTestContext.Create(
+            actionService: actionService,
+            targetingService: targeting,
+            level: 100,
+            ninki: 0,
+            kazematoi: 2,
+            comboStep: 2,
+            lastComboAction: NINActions.GustSlash.ActionId,
+            comboTimeRemaining: 30f,
+            hasRaijuReady: false,
+            hasPhantomKamaitachiReady: false);
+
+        _module.CollectCandidates(context, scheduler, isMoving: false);
+
+        var gcd = scheduler.InspectGcdQueue();
+        Assert.Contains(gcd, c => c.Behavior == HermesAbilities.ThrowingDagger && c.Priority == 5);
+        Assert.DoesNotContain(gcd, c => c.Behavior == HermesAbilities.AeolianEdge);
+        Assert.DoesNotContain(gcd, c => c.Behavior == HermesAbilities.ArmorCrush);
+        Assert.DoesNotContain(gcd, c => c.Behavior == HermesAbilities.SpinningEdge);
     }
 
     private static (RotationScheduler Scheduler, IHermesContext Context) CreateComboStep2Context(int kazematoi)

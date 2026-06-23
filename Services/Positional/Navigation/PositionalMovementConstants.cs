@@ -23,6 +23,25 @@ public static class PositionalMovementConstants
     /// <summary>Default stand-ring offset from target center (BossMod / DrawCanvas pattern).</summary>
     public const float DefaultStandRadiusOffset = 3.5f;
 
+    /// <summary>FFXIV melee weaponskill reach (edge-to-edge) in yalms. A melee GCD lands while the gap
+    /// between the player and target hitboxes is within this distance.</summary>
+    public const float MeleeActionRangeYalms = 3f;
+
+    /// <summary>
+    /// Margin pulled inside the absolute max-melee edge when computing a melee stand point, so navmesh
+    /// arrival tolerance / target jitter never drifts the character out of range (which would divert the
+    /// rotation to a ranged filler such as Throwing Dagger). We stand at max-melee minus this buffer.
+    /// </summary>
+    public const float MaxMeleeSafetyBufferYalms = 0.5f;
+
+    /// <summary>
+    /// Default grace dead-band (yalms) around the max-melee stand distance, used when a request does not
+    /// supply <c>VNavFlex</c>. The character only repaths once it leaves <c>standDistance ± flex</c>;
+    /// inside the band the vNav call is suppressed, which is what stops the move-in/move-out twitching.
+    /// Mirrors <see cref="Olympus.Config.NavConfig.VNavFlex"/>'s default. User-tunable 0.0–2.0.
+    /// </summary>
+    public const float DefaultVNavFlexYalms = 0.5f;
+
     /// <summary>
     /// Safety margin subtracted from <c>GcdRemaining</c> when deciding if a path can finish before the
     /// next GCD queue window. Tuned 0.075 → 0.10s: start reposition slightly earlier so Gekko/Kasha

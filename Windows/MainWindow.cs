@@ -26,6 +26,7 @@ public sealed class MainWindow : Window
     private readonly Action openChangelog;
     private readonly Action openOverlay;
     private readonly Action openControl;
+    private readonly Action openNavControl;
     private readonly RotationManager rotationManager;
     private readonly ITextureProvider textureProvider;
 
@@ -39,6 +40,7 @@ public sealed class MainWindow : Window
         Action openChangelog,
         Action openOverlay,
         Action openControl,
+        Action openNavControl,
         string version,
         RotationManager rotationManager,
         ITextureProvider textureProvider)
@@ -53,6 +55,7 @@ public sealed class MainWindow : Window
         this.openChangelog = openChangelog;
         this.openOverlay = openOverlay;
         this.openControl = openControl;
+        this.openNavControl = openNavControl;
         this.rotationManager = rotationManager;
         this.textureProvider = textureProvider;
 
@@ -183,6 +186,11 @@ public sealed class MainWindow : Window
         if (ImGui.Button(Loc.T(LocalizedStrings.Main.Control, "Control"), new Vector2(-1, 0)))
         {
             openControl();
+        }
+
+        if (ImGui.Button(Loc.T(LocalizedStrings.Main.NavControl, "Nav Control"), new Vector2(-1, 0)))
+        {
+            openNavControl();
         }
 
         // Footer links

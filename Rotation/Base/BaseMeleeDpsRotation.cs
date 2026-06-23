@@ -304,9 +304,55 @@ public abstract class BaseMeleeDpsRotation<TContext, TModule> : BaseRotation<TCo
             Target: movementTarget,
             ActionService: ActionService,
             InCombat: inCombat,
-            EnableMovement: IsPositionalMovementEnabled() && IsAutoMovementAllowed());
+            EnableMovement: IsPositionalMovementEnabled() && IsAutoMovementAllowed(),
+            MaintainMaxMelee: IsMaxMeleeMaintenanceAllowed(),
+            MaxMeleeTarget: ResolveMaxMeleeTarget(player, out var maxMeleeFollowsPlayer),
+            MaxMeleeTargetFollowsPlayer: maxMeleeFollowsPlayer,
+            VNavFlex: Configuration.Nav.VNavFlex);
 
         PositionalMovementService.Update(in request);
+    }
+
+    /// <summary>
+    /// Whether to keep the character at the outer melee edge (back off when hugging the target). Unlike
+    /// positional/burst movement this is pure range-keeping, so it runs solo too — gated only by the global
+    /// master toggle and the dedicated <see cref="Configuration.MaintainMaxMelee"/> switch.
+    /// </summary>
+    protected bool IsMaxMeleeMaintenanceAllowed()
+    {
+        if (!Configuration.EnableAutoMovement || !Configuration.MaintainMaxMelee)
+            return false;
+
+        // Solo Position Lock disables max-melee positioning when solo (no party members).
+        if (Configuration.Nav.SoloPositionLock && PartyList.Length == 0)
+            return false;
+
+        return true;
+    }
+
+    /// <summary>
+    /// Snapshot of the player's <em>current</em> (hard) target for max-melee range-keeping, so maintenance
+    /// only follows the mob we're actually attacking — never a strategy-selected or merely-aggroed enemy.
+    /// Returns null when maintenance is disabled or there is no current enemy target. <paramref name="followsPlayer"/>
+    /// is set when that mob is targeting the player (solo / self-tanked), which suppresses the back-off.
+    /// </summary>
+    protected PositionalMovementTarget? ResolveMaxMeleeTarget(IPlayerCharacter player, out bool followsPlayer)
+    {
+        followsPlayer = false;
+
+        if (!IsMaxMeleeMaintenanceAllowed())
+            return null;
+
+        if (TargetingService.GetUserEnemyTarget() is not IBattleChara current)
+            return null;
+
+        followsPlayer = current.TargetObjectId == player.GameObjectId;
+
+        return new PositionalMovementTarget(
+            current.Position,
+            current.HitboxRadius,
+            current.Rotation,
+            PositionalService.HasPositionalImmunity(current));
     }
 
     #endregion

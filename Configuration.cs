@@ -52,6 +52,20 @@ public sealed class Configuration : IPluginConfiguration
     public bool EnableAutoMovement { get; set; } = true;
 
     /// <summary>
+    /// For all melee jobs: when hugging the target, step straight back out to the outer melee edge
+    /// ("max melee"). Pure range-keeping — not the run-around-the-mob positional dance — so unlike
+    /// positional/burst movement it also runs solo (gated only by <see cref="EnableAutoMovement"/>).
+    /// Default true.
+    /// </summary>
+    public bool MaintainMaxMelee { get; set; } = true;
+
+    /// <summary>
+    /// Global navigation / vNav tuning (vNav Flex grace band, solo lock, debug rings, tank stubs),
+    /// surfaced in the Nav Control window. Not per-job.
+    /// </summary>
+    public NavConfig Nav { get; set; } = new();
+
+    /// <summary>
     /// The currently active configuration preset.
     /// Set to Custom when user modifies individual settings after applying a preset.
     /// </summary>
@@ -180,6 +194,7 @@ public sealed class Configuration : IPluginConfiguration
         Buffs = new BuffConfig();
         Resurrection = new ResurrectionConfig();
         Targeting = new TargetingConfig();
+        Nav = new NavConfig();
         RoleActions = new RoleActionConfig();
         Debug = new DebugConfig();
         Calibration = new CalibrationConfig();

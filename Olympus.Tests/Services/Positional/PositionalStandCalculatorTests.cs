@@ -205,6 +205,39 @@ public class PositionalStandCalculatorTests
         var full = PositionalStandCalculator.CalculateBurstMeleeApproach(in request);
 
         Assert.True(clamped.Z > full.Z + 5f, "GCD-clamped step should stop short of full melee stand");
-        Assert.Equal(5.5f, full.Z, Epsilon);
+        // Safe max melee: hitbox 2 + player hitbox 0.5 + reach 3 - safety buffer 0.5 = 5.0.
+        Assert.Equal(5.0f, full.Z, Epsilon);
+    }
+
+    [Fact]
+    public void CalculateMaxMeleeBackoff_WhenHugging_BacksOutToSafeMaxMelee()
+    {
+        // Player standing almost on top of the target (z = 1) should be pushed out to the stand ring.
+        var request = new MeleeApproachStandRequest(
+            PlayerPosition: new Vector3(0f, 0f, 1f),
+            PlayerHitboxRadius: 0.5f,
+            TargetPosition: Vector3.Zero,
+            TargetHitboxRadius: 2f);
+
+        var result = PositionalStandCalculator.CalculateMaxMeleeBackoff(in request);
+
+        Assert.Equal(0f, result.X, Epsilon);
+        Assert.Equal(5.0f, result.Z, Epsilon); // backs straight out along +Z bearing to safe max melee
+    }
+
+    [Fact]
+    public void CalculateMaxMeleeBackoff_KeepsCurrentBearing()
+    {
+        // Hugging from the +X side stays on the +X side, just farther out.
+        var request = new MeleeApproachStandRequest(
+            PlayerPosition: new Vector3(0.5f, 0f, 0f),
+            PlayerHitboxRadius: 0.5f,
+            TargetPosition: Vector3.Zero,
+            TargetHitboxRadius: 2f);
+
+        var result = PositionalStandCalculator.CalculateMaxMeleeBackoff(in request);
+
+        Assert.Equal(5.0f, result.X, Epsilon);
+        Assert.Equal(0f, result.Z, Epsilon);
     }
 }

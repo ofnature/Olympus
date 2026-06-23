@@ -67,6 +67,12 @@ public sealed class DrawCanvas : Window
     private const uint ColorShapeFill = 0x8000FF00u;
     private const uint ColorShapeOutline = 0xC000FF00u;
 
+    // Max-melee debug ring colors (ABGR). Distinct hues so the rings are easy to tell apart.
+    private const uint ColorRingHitbox = 0xC00000FFu;   // red — enemy hitbox
+    private const uint ColorRingCombined = 0xC000FFFFu; // yellow — combined hitbox (inner melee bound)
+    private const uint ColorRingMaxMelee = 0xC000FF00u; // green — max-melee stand ring (park here)
+    private const uint ColorRingGrace = 0x6000FF00u;    // faint green — grace dead-band edges
+
     public DrawCanvas(
         DrawingService drawing,
         Configuration configuration,
@@ -113,7 +119,7 @@ public sealed class DrawCanvas : Window
     public override bool DrawConditions()
     {
         if (!_clientState.IsLoggedIn) return false;
-        if (!Config.DrawingEnabled && !TestModeEnabled) return false;
+        if (!Config.DrawingEnabled && !TestModeEnabled && !_configuration.Nav.MaxMeleeDebugRings) return false;
         return _objectTable.LocalPlayer != null;
     }
 
@@ -149,6 +155,14 @@ public sealed class DrawCanvas : Window
                     if (Config.ShowPositionals && MeleeJobs.Contains(jobId) && target is IBattleChara targetBc)
                         DrawPositionals(player, targetBc);
                 }
+            }
+
+            // Max-melee debug rings (independent of the general Draw Helper toggle; driven by Nav config).
+            if (_configuration.Nav.MaxMeleeDebugRings)
+            {
+                var ringTarget = _targetManager.Target;
+                if (ringTarget != null)
+                    DrawMaxMeleeRings(player, ringTarget);
             }
 
             // AoE test mode
@@ -442,6 +456,27 @@ public sealed class DrawCanvas : Window
 
             _drawing.DrawCircle(npc.Position, npc.HitboxRadius, Config.EnemyHitboxColor);
         }
+    }
+
+    /// <summary>
+    /// Max-melee positioning debug rings around the current target: enemy hitbox, combined hitbox
+    /// (inner melee bound), the max-melee stand ring (where the toon parks), plus the vNav Flex grace
+    /// dead-band edges. Purely additive — does not touch the existing range/positional ring draws.
+    /// </summary>
+    private void DrawMaxMeleeRings(Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player, IGameObject target)
+    {
+        var center = SnapToFloor(target.Position);
+        var combined = target.HitboxRadius + player.HitboxRadius;
+        var standDistance = PositionalStandCalculator.MaxMeleeStandDistance(target.HitboxRadius, player.HitboxRadius);
+        var flex = MathF.Max(0f, _configuration.Nav.VNavFlex);
+
+        // Grace band edges first (faint, drawn under the solid rings).
+        _drawing.DrawCircle(center, MathF.Max(0.05f, standDistance - flex), ColorRingGrace, 1f);
+        _drawing.DrawCircle(center, standDistance + flex, ColorRingGrace, 1f);
+
+        _drawing.DrawCircle(center, target.HitboxRadius, ColorRingHitbox, 2f);
+        _drawing.DrawCircle(center, combined, ColorRingCombined, 2f);
+        _drawing.DrawCircle(center, standDistance, ColorRingMaxMelee, 2.5f);
     }
 
     private void DrawMeleeRange(Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player, IGameObject target)

@@ -314,11 +314,46 @@ public sealed class DamageModule : IHermesModule
     {
         var player = context.Player;
         var level = player.Level;
+
+        // Out of melee range: throw daggers to keep uptime instead of idling until we walk back in.
+        // Gap-closers (Forked Raiju) and ranged ninjutsu are pushed elsewhere at higher priority, so
+        // they still take precedence when available; this is the plain-GCD filler. Position-based
+        // (rather than the native range check) so the gate fails open in range — it must never divert
+        // a valid melee combo to a weak dagger toss when we are actually in melee.
+        var meleeReach = NINActions.SpinningEdge.Range + target.HitboxRadius + player.HitboxRadius;
+        if (level >= NINActions.ThrowingDagger.MinLevel
+            && !DistanceHelper.IsInRange(player.Position, target.Position, meleeReach))
+        {
+            TryPushThrowingDagger(context, scheduler, target);
+            return;
+        }
+
         var aoeThreshold = context.Configuration.Ninja.AoEMinTargets;
         var suppressAoE = HermesBurstPrepHelper.ShouldSuppressAoE(context, enemyCount, aoeThreshold);
         var useAoe = !suppressAoE && enemyCount >= aoeThreshold && level >= NINActions.DeathBlossom.MinLevel;
         if (useAoe) TryPushAoeCombo(context, scheduler, target, enemyCount);
         else TryPushSingleTargetCombo(context, scheduler, target);
+    }
+
+    private void TryPushThrowingDagger(IHermesContext context, RotationScheduler scheduler, IBattleChara target)
+    {
+        if (!context.ActionService.IsActionReady(NINActions.ThrowingDagger.ActionId)) return;
+
+        scheduler.PushGcd(HermesAbilities.ThrowingDagger, target.GameObjectId, priority: 5,
+            onDispatched: _ =>
+            {
+                context.Debug.PlannedAction = NINActions.ThrowingDagger.Name;
+                context.Debug.DamageState = "Throwing Dagger (out of melee range)";
+                TrainingHelper.Decision(context.TrainingService)
+                    .Action(NINActions.ThrowingDagger.ActionId, NINActions.ThrowingDagger.Name)
+                    .AsRangedDamage().Target(target.Name?.TextValue ?? "Target")
+                    .Reason("Throwing Dagger — target out of melee range",
+                        "Keep GCD uptime with the ranged attack until back in melee instead of idling.")
+                    .Factors("Target beyond melee range")
+                    .Alternatives("Close the gap (Forked Raiju / movement)")
+                    .Tip("Throwing Dagger is weak — return to melee as soon as possible.")
+                    .Record();
+            });
     }
 
     private void TryPushSingleTargetCombo(IHermesContext context, RotationScheduler scheduler, IBattleChara target)

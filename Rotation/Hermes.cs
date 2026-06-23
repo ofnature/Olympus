@@ -226,7 +226,11 @@ public sealed class Hermes : BaseMeleeDpsRotation<IHermesContext, IHermesModule>
                 ActionService: ActionService,
                 InCombat: inCombat,
                 EnableMovement: IsPositionalMovementEnabled() && IsAutoMovementAllowed(),
-                AllowMovementDuringActionLock: true);
+                AllowMovementDuringActionLock: true,
+                MaintainMaxMelee: IsMaxMeleeMaintenanceAllowed(),
+                MaxMeleeTarget: ResolveMaxMeleeTarget(player, out var maxMeleeFollowsPlayer),
+                MaxMeleeTargetFollowsPlayer: maxMeleeFollowsPlayer,
+                VNavFlex: Configuration.Nav.VNavFlex);
 
             PositionalMovementService.Update(in request);
         }

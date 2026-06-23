@@ -71,6 +71,25 @@ public static class PositionalStandCalculator
     }
 
     /// <summary>
+    /// Max-melee maintenance stand point: the point on the current target→player bearing at the safe
+    /// max-melee distance. Unlike <see cref="ComputeMeleeApproachPoint"/> this always projects to the stand
+    /// ring in either direction — backing the character out when hugging and pulling it in when drifted out
+    /// of range — rather than holding position. Drives both the back-off and approach maintenance paths.
+    /// </summary>
+    public static Vector3 CalculateMaxMeleeBackoff(in MeleeApproachStandRequest request)
+    {
+        var toPlayer = request.PlayerPosition - request.TargetPosition;
+        toPlayer.Y = 0f;
+
+        var standDistance = MaxMeleeStandDistance(request.TargetHitboxRadius, request.PlayerHitboxRadius);
+        var dist = toPlayer.Length();
+        var dir = dist < 1e-6f ? Vector3.UnitZ : toPlayer / dist;
+
+        var ideal = request.TargetPosition + dir * standDistance;
+        return SnapToFloorPlane(ideal, request.TargetPosition.Y);
+    }
+
+    /// <summary>
     /// Horizontal distance from the player to the ideal stand point (before GCD budget clamp).
     /// </summary>
     public static float ComputeIdealHorizontalDistance(in PositionalStandRequest request)
@@ -113,13 +132,23 @@ public static class PositionalStandCalculator
         return horizontalDistanceYalms / PositionalMovementConstants.MoveSpeedYalmsPerSecond;
     }
 
+    /// <summary>
+    /// Center-to-center distance for a melee stand point at safe max melee: target hitbox + player hitbox
+    /// + melee reach − safety buffer. Standing here keeps every melee GCD in range while sitting at the
+    /// outer edge (minimal in/out movement for mechanics) instead of hugging the target.
+    /// </summary>
+    public static float MaxMeleeStandDistance(float targetHitboxRadius, float playerHitboxRadius)
+        => targetHitboxRadius + playerHitboxRadius
+           + PositionalMovementConstants.MeleeActionRangeYalms
+           - PositionalMovementConstants.MaxMeleeSafetyBufferYalms;
+
     private static Vector3 ComputeMeleeApproachPoint(in MeleeApproachStandRequest request)
     {
         var toPlayer = request.PlayerPosition - request.TargetPosition;
         toPlayer.Y = 0f;
 
         var dist = toPlayer.Length();
-        var standDistance = request.TargetHitboxRadius + request.StandRadiusOffset;
+        var standDistance = MaxMeleeStandDistance(request.TargetHitboxRadius, request.PlayerHitboxRadius);
         if (dist <= standDistance + 0.25f)
             return request.PlayerPosition;
 

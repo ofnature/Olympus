@@ -131,6 +131,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ConfigWindow configWindow;
     private readonly MainWindow mainWindow;
     private readonly ControlWindow controlWindow;
+    private readonly NavControlWindow navControlWindow;
     private readonly DebugWindow debugWindow;
     private readonly WelcomeWindow welcomeWindow;
     private readonly AnalyticsWindow analyticsWindow;
@@ -406,7 +407,8 @@ public sealed class Plugin : IDalamudPlugin
         this.updateCheckerService = new UpdateCheckerService(PluginVersion, notificationManager, log);
         this.configWindow = new ConfigWindow(configuration, SaveConfiguration, updateCheckerService, textureProvider, dutyContentService);
         this.controlWindow = new ControlWindow(configuration, SaveConfiguration, rotationManager, textureProvider);
-        this.mainWindow = new MainWindow(configuration, SaveConfiguration, OpenConfigUI, OpenDebugUI, OpenAnalyticsUI, OpenTrainingUI, OpenChangelogUI, OpenOverlayUI, OpenControlUI, PluginVersion, rotationManager, textureProvider);
+        this.navControlWindow = new NavControlWindow(configuration, SaveConfiguration);
+        this.mainWindow = new MainWindow(configuration, SaveConfiguration, OpenConfigUI, OpenDebugUI, OpenAnalyticsUI, OpenTrainingUI, OpenChangelogUI, OpenOverlayUI, OpenControlUI, OpenNavControlUI, PluginVersion, rotationManager, textureProvider);
         var smartAoETab = new SmartAoETab(aoeTracker, drawCanvas, objectTable);
         this.debugWindow = new DebugWindow(debugService, configuration, timelineService, smartAoETab);
         this.welcomeWindow = new WelcomeWindow(configuration, SaveConfiguration, OpenConfigUI);
@@ -440,6 +442,7 @@ public sealed class Plugin : IDalamudPlugin
         windowSystem.AddWindow(configWindow);
         windowSystem.AddWindow(mainWindow);
         windowSystem.AddWindow(controlWindow);
+        windowSystem.AddWindow(navControlWindow);
         windowSystem.AddWindow(debugWindow);
         windowSystem.AddWindow(welcomeWindow);
         windowSystem.AddWindow(analyticsWindow);
@@ -618,6 +621,8 @@ public sealed class Plugin : IDalamudPlugin
     private void OpenOverlayUI() => overlayWindow.Toggle();
 
     private void OpenControlUI() => controlWindow.Toggle();
+
+    private void OpenNavControlUI() => navControlWindow.Toggle();
 
     private void OnCommand(string command, string args)
     {

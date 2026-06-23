@@ -48,6 +48,25 @@ public static class NINActions
     };
 
     /// <summary>
+    /// Throwing Dagger - ranged single-target GCD (Lv.15).
+    /// Uptime filler when out of melee range so the rotation keeps doing damage instead of idling.
+    /// </summary>
+    public static readonly ActionDefinition ThrowingDagger = new()
+    {
+        ActionId = 2247,
+        Name = "Throwing Dagger",
+        MinLevel = 15,
+        Category = ActionCategory.GCD,
+        TargetType = ActionTargetType.SingleEnemy,
+        EffectTypes = ActionEffectType.Damage,
+        CastTime = 0f,
+        RecastTime = 2.5f,
+        Range = 20f,
+        MpCost = 0,
+        DamagePotency = 120
+    };
+
+    /// <summary>
     /// Aeolian Edge - Combo finisher, rear positional (Lv.26)
     /// Consumes Kazematoi for bonus potency.
     /// </summary>

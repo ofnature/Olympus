@@ -8,6 +8,7 @@ using Olympus.Config;
 using Olympus.Data;
 using Olympus.Localization;
 using Olympus.Rotation;
+using Olympus.Rotation.Common;
 using Olympus.Windows.Config;
 
 namespace Olympus.Windows;
@@ -52,13 +53,33 @@ public sealed class ControlWindow : Window
                 "Enable Auto Movement",
                 ref autoMovement,
                 "Master switch for all vNav movement (flank/rear repositioning, burst approach). "
-                + "Movement is always off when solo (no party).",
+                + "Flank/rear and burst movement are off when solo (no party); max-melee maintenance still runs.",
                 saveConfiguration))
         {
             configuration.EnableAutoMovement = autoMovement;
         }
 
-        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "Solo (no party): auto movement is always disabled.");
+        // Max-melee maintenance applies to every melee job and (unlike positional/burst movement) also runs
+        // solo, so surface it as a shared toggle whenever a melee rotation is active.
+        if (rotationManager.ActiveRotation is IHasPositionals)
+        {
+            ImGui.BeginDisabled(!configuration.EnableAutoMovement);
+
+            var maintainMaxMelee = configuration.MaintainMaxMelee;
+            if (ConfigUIHelpers.ToggleCheckbox(
+                    "Maintain Max Melee",
+                    ref maintainMaxMelee,
+                    "All melee jobs: step back to the outer melee edge when hugging the target. "
+                    + "Pure range-keeping, so this also runs solo (only needs Enable Auto Movement).",
+                    saveConfiguration))
+            {
+                configuration.MaintainMaxMelee = maintainMaxMelee;
+            }
+
+            ImGui.EndDisabled();
+        }
+
+        ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "Solo (no party): flank/rear & burst movement disabled.");
 
         ImGui.Separator();
 

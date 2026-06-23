@@ -16,6 +16,7 @@ using Olympus.Services.Action;
 using Olympus.Services.Debuff;
 using Olympus.Services.Party;
 using Olympus.Services.Positional;
+using Olympus.Services.Positional.Navigation;
 using Olympus.Services.Prediction;
 using Olympus.Services.Stats;
 using Olympus.Services.Targeting;
@@ -96,6 +97,7 @@ public sealed class Kratos : BaseMeleeDpsRotation<IKratosContext, IKratosModule>
         IDebuffDetectionService debuffDetectionService,
         IPositionalService positionalService,
         IJobGauges jobGauges,
+        IPositionalMovementService? positionalMovementService = null,
         ITimelineService? timelineService = null,
         IPartyCoordinationService? partyCoordinationService = null,
         ITrainingService? trainingService = null,
@@ -120,6 +122,7 @@ public sealed class Kratos : BaseMeleeDpsRotation<IKratosContext, IKratosModule>
             positionalService,
             burstWindowService,
             errorMetrics,
+            positionalMovementService: positionalMovementService,
             tinctureDispatcher: tinctureDispatcher,
             pullIntentService: pullIntentService)
     {

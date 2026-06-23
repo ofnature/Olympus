@@ -18,6 +18,9 @@ public static class HermesAbilities
     public static readonly AbilityBehavior AeolianEdge = new() { Action = NINActions.AeolianEdge };
     public static readonly AbilityBehavior ArmorCrush = new() { Action = NINActions.ArmorCrush };
 
+    // --- Ranged uptime filler (out of melee range) ---
+    public static readonly AbilityBehavior ThrowingDagger = new() { Action = NINActions.ThrowingDagger };
+
     // --- AoE combo ---
     public static readonly AbilityBehavior DeathBlossom = new() { Action = NINActions.DeathBlossom, Toggle = cfg => cfg.Ninja.EnableAoERotation };
     public static readonly AbilityBehavior HakkeMujinsatsu = new() { Action = NINActions.HakkeMujinsatsu, Toggle = cfg => cfg.Ninja.EnableAoERotation };
