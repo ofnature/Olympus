@@ -48,13 +48,18 @@ public sealed class DamageModule : IThemisModule
 
         var player = context.Player;
 
-        var target = context.TargetingService.FindEnemyForAction(
+        var enemyStrategy = TankTargetingHelper.ResolveEnemyStrategy(
+            context.Configuration.Tank,
             context.Configuration.Targeting.EnemyStrategy,
+            context.PartyHelper?.FindCoTank(player) != null);
+
+        var target = context.TargetingService.FindEnemyForAction(
+            enemyStrategy,
             PLDActions.FastBlade.ActionId,
             player);
 
         var engageTarget = target ?? context.TargetingService.FindEnemy(
-            context.Configuration.Targeting.EnemyStrategy,
+            enemyStrategy,
             20f,
             player);
 
@@ -67,11 +72,15 @@ public sealed class DamageModule : IThemisModule
         // Out-of-melee branch: push Intervene (oGCD gap close) + Shield Lob (ranged filler)
         if (target == null)
         {
-            var gapCloseBlocked = context.TargetingService.GapCloserSafety.ShouldBlockGapCloser(engageTarget, player);
-            if (gapCloseBlocked)
-                context.Debug.DamageState = $"Intervene blocked: {context.TargetingService.GapCloserSafety.LastBlockReason}";
-            else
-                TryPushIntervene(context, scheduler, engageTarget.GameObjectId);
+            // Ranged-pull: when enabled, stay put and pull with Shield Lob instead of dashing in.
+            if (!context.Configuration.Tank.PullRangedMobsWithRangedAttack)
+            {
+                var gapCloseBlocked = context.TargetingService.GapCloserSafety.ShouldBlockGapCloser(engageTarget, player);
+                if (gapCloseBlocked)
+                    context.Debug.DamageState = $"Intervene blocked: {context.TargetingService.GapCloserSafety.LastBlockReason}";
+                else
+                    TryPushIntervene(context, scheduler, engageTarget.GameObjectId);
+            }
             TryPushShieldLob(context, scheduler, engageTarget.GameObjectId);
             return;
         }

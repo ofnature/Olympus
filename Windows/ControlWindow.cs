@@ -83,7 +83,48 @@ public sealed class ControlWindow : Window
 
         ImGui.Separator();
 
+        DrawTankToggles();
+
         DrawJobMovementToggles();
+    }
+
+    private void DrawTankToggles()
+    {
+        var activeRotation = rotationManager.ActiveRotation;
+        if (activeRotation == null)
+            return;
+
+        var jobId = activeRotation.SupportedJobIds[0];
+        if (!JobRegistry.IsTank(jobId))
+            return;
+
+        ImGui.TextDisabled("Tank");
+
+        var pullRanged = configuration.Tank.PullRangedMobsWithRangedAttack;
+        if (ConfigUIHelpers.ToggleCheckbox(
+                "Ranged Pull",
+                ref pullRanged,
+                "Pull out-of-melee mobs with the job's ranged GCD (Lightning Shot / Shield Lob / "
+                + "Tomahawk / Unmend) and stay put instead of dashing in. Gap-closers still weave as "
+                + "damage once in melee range.",
+                saveConfiguration))
+        {
+            configuration.Tank.PullRangedMobsWithRangedAttack = pullRanged;
+        }
+
+        var ignoreAdds = configuration.Tank.IgnoreAddsWithCoTank;
+        if (ConfigUIHelpers.ToggleCheckbox(
+                "Ignore Adds With Co-Tank",
+                ref ignoreAdds,
+                "When another tank is in the party, stick to your current target instead of auto-"
+                + "acquiring loose adds. No effect solo / single-tank. Does not change Provoke or "
+                + "tank-swap behavior.",
+                saveConfiguration))
+        {
+            configuration.Tank.IgnoreAddsWithCoTank = ignoreAdds;
+        }
+
+        ImGui.Separator();
     }
 
     private void DrawActiveRotationHeader()

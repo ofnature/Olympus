@@ -42,13 +42,18 @@ public sealed class DamageModule : IAresModule
 
         var player = context.Player;
 
-        var target = context.TargetingService.FindEnemyForAction(
+        var enemyStrategy = TankTargetingHelper.ResolveEnemyStrategy(
+            context.Configuration.Tank,
             context.Configuration.Targeting.EnemyStrategy,
+            context.PartyHelper?.FindCoTank(player) != null);
+
+        var target = context.TargetingService.FindEnemyForAction(
+            enemyStrategy,
             WARActions.HeavySwing.ActionId,
             player);
 
         var engageTarget = target ?? context.TargetingService.FindEnemy(
-            context.Configuration.Targeting.EnemyStrategy,
+            enemyStrategy,
             20f,
             player);
 
@@ -61,7 +66,9 @@ public sealed class DamageModule : IAresModule
         // Out-of-melee: Onslaught (gap close) + Tomahawk (ranged filler)
         if (target == null)
         {
-            TryPushOnslaughtGapClose(context, scheduler, engageTarget.GameObjectId, engageTarget);
+            // Ranged-pull: when enabled, stay put and pull with Tomahawk instead of dashing in.
+            if (!context.Configuration.Tank.PullRangedMobsWithRangedAttack)
+                TryPushOnslaughtGapClose(context, scheduler, engageTarget.GameObjectId, engageTarget);
             TryPushTomahawk(context, scheduler, engageTarget.GameObjectId, engageTarget);
             return;
         }

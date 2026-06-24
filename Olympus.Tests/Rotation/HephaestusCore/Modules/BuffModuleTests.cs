@@ -110,6 +110,53 @@ public class BuffModuleCollectCandidatesTests
     }
 
     [Fact]
+    public void CollectCandidates_Bloodfest_PushedAtFullCartridges_WhenNoMercyActive_7_4()
+    {
+        // 7.4 regression: Bloodfest can no longer overcap (temporary 6-cart cap) so it must fire
+        // inside No Mercy even at 3/3 cartridges. The old maxBenefit < 2 gate wrongly blocked this.
+        var actionService = MockBuilders.CreateMockActionService(canExecuteOgcd: false);
+        actionService.Setup(x => x.IsActionReady(GNBActions.NoMercy.ActionId)).Returns(false);
+        actionService.Setup(x => x.IsActionReady(GNBActions.Bloodfest.ActionId)).Returns(true);
+        actionService.Setup(x => x.GetCooldownRemaining(GNBActions.NoMercy.ActionId)).Returns(0f);
+
+        var scheduler = SchedulerFactory.CreateForTest(actionService: actionService);
+        var context = CreateContext(
+            inCombat: true,
+            hasNoMercy: true,
+            cartridges: 3,
+            actionService: actionService);
+
+        new BuffModule().CollectCandidates(context, scheduler, isMoving: false);
+
+        var queue = scheduler.InspectOgcdQueue();
+        Assert.Single(queue);
+        Assert.Equal(GnbAbilities.Bloodfest, queue[0].Behavior);
+        Assert.Equal(2, queue[0].Priority);
+    }
+
+    [Fact]
+    public void CollectCandidates_Bloodfest_HeldWhenNoMercyFarOnCooldown_7_4()
+    {
+        // Bloodfest should wait for No Mercy (held) rather than dumping Ready to Reign outside the
+        // burst window when No Mercy is still far away on cooldown.
+        var actionService = MockBuilders.CreateMockActionService(canExecuteOgcd: false);
+        actionService.Setup(x => x.IsActionReady(GNBActions.NoMercy.ActionId)).Returns(false);
+        actionService.Setup(x => x.IsActionReady(GNBActions.Bloodfest.ActionId)).Returns(true);
+        actionService.Setup(x => x.GetCooldownRemaining(GNBActions.NoMercy.ActionId)).Returns(25f);
+
+        var scheduler = SchedulerFactory.CreateForTest(actionService: actionService);
+        var context = CreateContext(
+            inCombat: true,
+            hasNoMercy: false,
+            cartridges: 0,
+            actionService: actionService);
+
+        new BuffModule().CollectCandidates(context, scheduler, isMoving: false);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
     public void CollectCandidates_EnableNoMercyFalse_PushesNothing()
     {
         var config = HephaestusTestContext.CreateDefaultGunbreakerConfiguration();

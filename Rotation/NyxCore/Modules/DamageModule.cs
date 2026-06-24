@@ -26,17 +26,24 @@ public sealed class DamageModule : INyxModule
         if (context.TargetingService.IsDamageTargetingPaused()) { context.Debug.DamageState = "Paused (no target)"; return; }
 
         var player = context.Player;
+        var enemyStrategy = TankTargetingHelper.ResolveEnemyStrategy(
+            context.Configuration.Tank,
+            context.Configuration.Targeting.EnemyStrategy,
+            context.PartyHelper?.FindCoTank(player) != null);
+
         var target = context.TargetingService.FindEnemyForAction(
-            context.Configuration.Targeting.EnemyStrategy, DRKActions.HardSlash.ActionId, player);
+            enemyStrategy, DRKActions.HardSlash.ActionId, player);
         var engageTarget = target ?? context.TargetingService.FindEnemy(
-            context.Configuration.Targeting.EnemyStrategy, 20f, player);
+            enemyStrategy, 20f, player);
 
         if (engageTarget == null) { context.Debug.DamageState = "No target"; return; }
 
         // Out-of-melee
         if (target == null)
         {
-            TryPushShadowstrideGapClose(context, scheduler, engageTarget.GameObjectId, engageTarget);
+            // Ranged-pull: when enabled, stay put and pull with Unmend instead of dashing in.
+            if (!context.Configuration.Tank.PullRangedMobsWithRangedAttack)
+                TryPushShadowstrideGapClose(context, scheduler, engageTarget.GameObjectId, engageTarget);
             TryPushUnmend(context, scheduler, engageTarget.GameObjectId);
             return;
         }

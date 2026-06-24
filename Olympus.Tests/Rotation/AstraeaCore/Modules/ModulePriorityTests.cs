@@ -195,7 +195,20 @@ public class ModulePriorityTests
     [InlineData(typeof(DamageModule), 50)]
     public void Module_HasExpectedPriority(Type moduleType, int expectedPriority)
     {
-        var module = (IAstraeaModule)Activator.CreateInstance(moduleType)!;
+        var module = CreateModuleInstance(moduleType);
         Assert.Equal(expectedPriority, module.Priority);
+    }
+
+    /// <summary>
+    /// Card/Buff/Damage take an optional <see cref="Olympus.Services.IBurstWindowService"/> ctor arg.
+    /// <see cref="Activator.CreateInstance(Type)"/> requires a true parameterless ctor, so pass null
+    /// for those modules; the rest use an empty ctor.
+    /// </summary>
+    private static IAstraeaModule CreateModuleInstance(Type moduleType)
+    {
+        if (moduleType.GetConstructor(Type.EmptyTypes) != null)
+            return (IAstraeaModule)Activator.CreateInstance(moduleType)!;
+
+        return (IAstraeaModule)Activator.CreateInstance(moduleType, [null])!;
     }
 }

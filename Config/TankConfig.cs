@@ -529,6 +529,27 @@ public sealed class TankConfig
 
     #endregion
 
+    #region Shared tank behavior
+
+    /// <summary>
+    /// When the target is out of melee range, pull it with the job's ranged GCD (Lightning Shot,
+    /// Shield Lob, Tomahawk, Unmend) while staying put instead of gap-closing/dashing into it.
+    /// Useful for pulling stationary/ranged mobs to camp without running out of position.
+    /// The gap-closer is still used as a weave damage oGCD once in melee range.
+    /// Default false (preserve dash-to-engage behavior).
+    /// </summary>
+    public bool PullRangedMobsWithRangedAttack { get; set; } = false;
+
+    /// <summary>
+    /// When a co-tank is present (party has another tank), do not auto-acquire loose adds — stick to
+    /// the player's current hard target instead of letting the enemy strategy expand to additional
+    /// enemies. Does not affect Provoke/tank-swap logic. No-op when solo / single-tank.
+    /// Default false (keep grabbing adds).
+    /// </summary>
+    public bool IgnoreAddsWithCoTank { get; set; } = false;
+
+    #endregion
+
     /// <summary>
     /// Enable coordination of personal defensive cooldowns between Olympus tanks.
     /// When enabled, tanks will stagger major mitigations (Rampart, Sentinel, etc.)

@@ -46,13 +46,18 @@ public sealed class DamageModule : IHephaestusModule
         }
 
         var player = context.Player;
-        var target = context.TargetingService.FindEnemyForAction(
+        var enemyStrategy = TankTargetingHelper.ResolveEnemyStrategy(
+            context.Configuration.Tank,
             context.Configuration.Targeting.EnemyStrategy,
+            context.PartyHelper?.FindCoTank(player) != null);
+
+        var target = context.TargetingService.FindEnemyForAction(
+            enemyStrategy,
             GNBActions.KeenEdge.ActionId,
             player);
 
         var engageTarget = target ?? context.TargetingService.FindEnemy(
-            context.Configuration.Targeting.EnemyStrategy,
+            enemyStrategy,
             20f,
             player);
 
@@ -65,11 +70,15 @@ public sealed class DamageModule : IHephaestusModule
         // Out-of-melee branch: push gap-closer + ranged filler then return
         if (target == null)
         {
-            var gapCloseBlocked = context.TargetingService.GapCloserSafety.ShouldBlockGapCloser(engageTarget, player);
-            if (gapCloseBlocked)
-                context.Debug.DamageState = $"Trajectory blocked: {context.TargetingService.GapCloserSafety.LastBlockReason}";
-            else
-                TryPushTrajectory(context, scheduler, engageTarget.GameObjectId, priority: 4);
+            // Ranged-pull: when enabled, stay put and pull with Lightning Shot instead of dashing in.
+            if (!context.Configuration.Tank.PullRangedMobsWithRangedAttack)
+            {
+                var gapCloseBlocked = context.TargetingService.GapCloserSafety.ShouldBlockGapCloser(engageTarget, player);
+                if (gapCloseBlocked)
+                    context.Debug.DamageState = $"Trajectory blocked: {context.TargetingService.GapCloserSafety.LastBlockReason}";
+                else
+                    TryPushTrajectory(context, scheduler, engageTarget.GameObjectId, priority: 4);
+            }
             TryPushLightningShot(context, scheduler, engageTarget.GameObjectId);
             return;
         }

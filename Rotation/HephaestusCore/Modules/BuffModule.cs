@@ -138,19 +138,23 @@ public sealed class BuffModule : BaseTankBuffModule<IHephaestusContext>, IHephae
         if (level < GNBActions.Bloodfest.MinLevel)
             return;
 
-        var maxBenefit = GNBActions.MaxCartridges - context.Cartridges;
-        if (maxBenefit < 2)
-        {
-            context.Debug.BuffState = $"Bloodfest: {context.Cartridges}/3 cartridges (wait)";
-            return;
-        }
-
-        var nmCooldown = context.ActionService.GetCooldownRemaining(GNBActions.NoMercy.ActionId);
-        if (!context.HasNoMercy && context.Cartridges > 0 && nmCooldown < 15f)
-            return;
-
         if (!context.ActionService.IsActionReady(GNBActions.Bloodfest.ActionId))
             return;
+
+        // Patch 7.4: Bloodfest is a 60s cooldown (down from 120s) that grants a temporary 6-cartridge
+        // cap for 30s, so it can no longer overcap the gauge, and at Lv100 it grants Ready to Reign.
+        // It therefore belongs in *every* No Mercy window regardless of current cartridge count. The
+        // old "spend down to <=1 cartridge first" gate (maxBenefit < 2) is obsolete and was causing
+        // Bloodfest (and the Reign of Beasts combo it enables) to be skipped when entering No Mercy
+        // with 2-3 cartridges. Use it while No Mercy is active or imminent so Ready to Reign and the
+        // bonus cartridges are spent inside the buff window.
+        var nmCooldown = context.ActionService.GetCooldownRemaining(GNBActions.NoMercy.ActionId);
+        var noMercyReadyOrImminent = context.HasNoMercy || nmCooldown < 7f;
+        if (!noMercyReadyOrImminent)
+        {
+            context.Debug.BuffState = $"Bloodfest: holding for No Mercy ({nmCooldown:F0}s)";
+            return;
+        }
 
         if (!context.HasNoMercy && ShouldHoldForBurst(8f))
         {
