@@ -118,9 +118,8 @@ public sealed class TargetingService : ITargetingService
     {
         PrepareDamageTargeting(player);
 
-        // Hard pause: player has no target and PauseWhenNoTarget is on. Covers gaze mechanics.
         if (IsDamageTargetingPaused())
-            return null;
+            return FindNearbyEnemy(maxRange, player);
 
         // Try primary strategy
         var target = FindEnemyByStrategy(strategy, maxRange, player);
@@ -305,31 +304,12 @@ public sealed class TargetingService : ITargetingService
     /// <returns>Number of valid enemies within radius.</returns>
     public int CountEnemiesInRange(float radius, IPlayerCharacter player)
     {
-        SyncUserStickyFromTargetManager();
-
-        // Hard pause: no target → report 0 enemies so AoE thresholds can't trigger.
-        if (IsDamageTargetingPaused())
-            return 0;
-
-        var playerEffectivelyInCombat = IsPlayerEffectivelyInCombat(player);
+        // RSR parity: count ALL valid enemies in range. GetValidEnemies already filters for
+        // targetable combatant BattleNpcs that aren't invulnerable. No engagement check —
+        // the game considers them valid targets if they pass the base filters.
         var count = 0;
-        var engagedTargetId = GetEngagedTargetIdForEnemyCount();
-        foreach (var enemy in GetValidEnemies(radius, player))
-        {
-            if (playerEffectivelyInCombat)
-            {
-                if (!ShouldIncludeEnemyForTargeting(enemy, engagedTargetId, player))
-                    continue;
-            }
-            else if ((enemy.StatusFlags & StatusFlags.InCombat) == 0
-                     && enemy.GameObjectId != engagedTargetId)
-            {
-                continue;
-            }
-
+        foreach (var _ in GetValidEnemies(radius, player))
             count++;
-        }
-
         return count;
     }
 
@@ -459,9 +439,8 @@ public sealed class TargetingService : ITargetingService
     {
         PrepareDamageTargeting(player);
 
-        // Hard pause: no target → no damage targeting at all.
         if (IsDamageTargetingPaused())
-            return null;
+            return FindNearbyEnemy(25f, player);
 
         var target = FindEnemyByActionStrategy(strategy, actionId, player);
 

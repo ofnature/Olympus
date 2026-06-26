@@ -39,13 +39,17 @@ internal static class PartyCombatHelper
             return false;
         }
 
-        // Trust / duty companion allies — PartyList is empty in Trust content.
+        // Trust / squadron / duty companion allies — PartyList is empty in Trust/squadron content.
+        // Check any non-hostile BattleNpc for InCombat (trusts, squadrons, duty support NPCs).
         foreach (var obj in objectTable)
         {
-            if (!BasePartyHelper.IsValidTrustNpc(obj, out var npc, includeDead: false))
+            if (obj is not IBattleNpc npc)
                 continue;
-
-            if ((npc!.StatusFlags & StatusFlags.InCombat) != 0)
+            if (npc.CurrentHp == 0 || npc.MaxHp == 0)
+                continue;
+            if ((byte)npc.BattleNpcKind == Daedalus.Compat.BattleNpcKinds.Combatant)
+                continue;
+            if ((npc.StatusFlags & StatusFlags.InCombat) != 0)
                 return true;
         }
 

@@ -56,11 +56,6 @@ public sealed class DamageModule : IHermesModule
             context.Debug.DamageState = "Not in combat";
             return;
         }
-        if (context.TargetingService.IsDamageTargetingPaused())
-        {
-            context.Debug.DamageState = "Paused (no target)";
-            return;
-        }
         if (context.Configuration.Targeting.SuppressDamageOnForcedMovement
             && PlayerSafetyHelper.IsForcedMovementActive(context.Player))
         {

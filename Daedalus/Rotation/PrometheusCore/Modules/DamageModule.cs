@@ -51,16 +51,10 @@ public sealed class DamageModule : IPrometheusModule
         }
 
         var player = context.Player;
-        IBattleChara? target = context.TargetingService.FindEnemy(
+        var target = context.TargetingService.FindEnemy(
             context.Configuration.Targeting.EnemyStrategy,
             FFXIVConstants.RangedTargetingRange,
             player);
-
-        // AoE fallback: FindEnemy returns null when PauseWhenNoTarget is on and the player
-        // has no hard target (common in dungeon trash pulls). Fall back to the nearest
-        // in-combat enemy so AoE rotation can fire.
-        target ??= context.TargetingService.FindNearbyEnemy(
-            FFXIVConstants.RangedTargetingRange, player);
 
         if (target == null)
         {
@@ -71,9 +65,6 @@ public sealed class DamageModule : IPrometheusModule
         var aoeEnabled = context.Configuration.Machinist.EnableAoERotation;
         var aoeThreshold = context.Configuration.Machinist.AoEMinTargets;
         var rawEnemyCount = context.TargetingService.CountEnemiesInRange(12f, player);
-        if (rawEnemyCount == 0)
-            rawEnemyCount = context.TargetingService.CountNearbyEnemiesInRange(
-                FFXIVConstants.RangedTargetingRange, player);
         context.Debug.NearbyEnemies = rawEnemyCount;
         // Latch AoE mode for 3s to prevent rapid ST/AoE toggling when enemy count fluctuates
         // around the threshold (mobs dying, targeting cache, trust aggro).
@@ -437,7 +428,7 @@ public sealed class DamageModule : IPrometheusModule
                 return;
             }
 
-            scheduler.PushGcd(PrometheusAbilities.SpreadShot, player.GameObjectId, priority: 8,
+            scheduler.PushGcd(PrometheusAbilities.SpreadShot, target.GameObjectId, priority: 8,
                 onDispatched: _ =>
                 {
                     context.Debug.PlannedAction = aoeAction.Name;

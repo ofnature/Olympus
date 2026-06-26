@@ -219,11 +219,14 @@ public abstract class BaseRotation<TContext, TModule> : IRotation, IDisposable
         // Movement detection
         var (isMoving, _) = UpdateMovement(player);
 
-        // Combat tracking — optional early start before personal InCombat flag
-        var inCombat = (player.StatusFlags & StatusFlags.InCombat) != 0;
+        // Combat tracking — RSR parity: use game condition flag as primary (most reliable),
+        // then player StatusFlags, then party member check for trust/squadron scenarios.
+        var inCombat = IsGameConditionInCombat();
+        if (!inCombat)
+            inCombat = (player.StatusFlags & StatusFlags.InCombat) != 0;
         if (!inCombat && Configuration.EnableOnAutoAttack)
             inCombat = IsAutoAttacking();
-        if (!inCombat && Configuration.EnableOnPartyInCombat)
+        if (!inCombat)
             inCombat = PartyCombatHelper.IsAnyGroupMemberInCombat(player, PartyList, ObjectTable);
         UpdateCombatState(inCombat);
 
@@ -454,6 +457,18 @@ public abstract class BaseRotation<TContext, TModule> : IRotation, IDisposable
     /// <summary>
     /// Checks if the player has auto-attack active via UIState.WeaponState.AutoAttackState.
     /// </summary>
+    private static bool IsGameConditionInCombat()
+    {
+        try
+        {
+            return RotationServices.Condition?[Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat] ?? false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static unsafe bool IsAutoAttacking()
     {
         try

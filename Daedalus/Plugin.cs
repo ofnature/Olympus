@@ -194,6 +194,7 @@ public sealed class Plugin : IDalamudPlugin
         this.chatGui = chatGui;
         this.dataManager = dataManager;
         this.condition = condition;
+        Rotation.Base.RotationServices.Condition = condition;
         this.jobGauges = jobGauges;
         this.targetManager = targetManager;
 

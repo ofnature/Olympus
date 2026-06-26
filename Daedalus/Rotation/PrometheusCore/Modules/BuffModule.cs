@@ -54,12 +54,10 @@ public sealed class BuffModule : IPrometheusModule
         }
 
         var player = context.Player;
-        IBattleChara? target = context.TargetingService.FindEnemy(
+        var target = context.TargetingService.FindEnemy(
             context.Configuration.Targeting.EnemyStrategy,
             FFXIVConstants.RangedTargetingRange,
             player);
-        target ??= context.TargetingService.FindNearbyEnemy(
-            FFXIVConstants.RangedTargetingRange, player);
         if (target == null)
         {
             context.Debug.BuffState = "No target";
@@ -67,9 +65,6 @@ public sealed class BuffModule : IPrometheusModule
         }
 
         var enemyCount = context.TargetingService.CountEnemiesInRange(12f, player);
-        if (enemyCount == 0)
-            enemyCount = context.TargetingService.CountNearbyEnemiesInRange(
-                FFXIVConstants.RangedTargetingRange, player);
 
         TryPushWildfire(context, scheduler, target);
         TryPushBarrelStabilizer(context, scheduler);

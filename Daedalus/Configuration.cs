@@ -95,7 +95,7 @@ public sealed class Configuration : IPluginConfiguration
     /// is fighting, even before the local player has the InCombat flag.
     /// Pair with Tank Assist targeting for automatic assist on the pull.
     /// </summary>
-    public bool EnableOnPartyInCombat { get; set; } = false;
+    public bool EnableOnPartyInCombat { get; set; } = true;
 
     // Master category toggles
     public bool EnableHealing { get; set; } = true;
@@ -177,7 +177,7 @@ public sealed class Configuration : IPluginConfiguration
 
         // Reset general behavior
         EnableOnAutoAttack = false;
-        EnableOnPartyInCombat = false;
+        EnableOnPartyInCombat = true;
         MovementTolerance = 0.1f;
 
         // Reset master toggles

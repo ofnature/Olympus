@@ -63,11 +63,6 @@ public sealed class DamageModule : IKratosModule
             return;
         }
 
-        if (context.TargetingService.IsDamageTargetingPaused())
-        {
-            context.Debug.DamageState = "Paused (no target)";
-            return;
-        }
         if (context.Configuration.Targeting.SuppressDamageOnForcedMovement
             && PlayerSafetyHelper.IsForcedMovementActive(context.Player))
         {
@@ -81,7 +76,11 @@ public sealed class DamageModule : IKratosModule
             player);
         if (target == null)
         {
-            context.Debug.DamageState = "No target";
+            // Out of melee range — try Thunderclap to close gap
+            var farTarget = context.TargetingService.FindNearbyEnemy(25f, player);
+            if (farTarget != null)
+                TryPushThunderclap(context, scheduler, farTarget);
+            context.Debug.DamageState = target == null && farTarget != null ? "Out of melee range" : "No target";
             return;
         }
 
@@ -437,19 +436,27 @@ public sealed class DamageModule : IKratosModule
     {
         var form = context.CurrentForm;
 
-        // Formless Fist allows any form - default to Opo-opo
-        if (context.HasFormlessFist || form == MonkForm.Formless || form == MonkForm.None)
-        {
-            TryPushOpoOpo(context, scheduler, target, useAoE);
-            return;
-        }
-
+        // Push all three forms as candidates. The scheduler tries each via UseAction —
+        // the game rejects wrong-form GCDs, so only the correct one dispatches.
+        // Order by detected form first (hint), then the others as fallback.
+        // This avoids stale form status causing the wrong GCD to fire.
         switch (form)
         {
-            case MonkForm.OpoOpo: TryPushOpoOpo(context, scheduler, target, useAoE); break;
-            case MonkForm.Raptor: TryPushRaptor(context, scheduler, target, useAoE); break;
-            case MonkForm.Coeurl: TryPushCoeurl(context, scheduler, target, useAoE); break;
-            default: TryPushOpoOpo(context, scheduler, target, useAoE); break;
+            case MonkForm.Raptor:
+                TryPushRaptor(context, scheduler, target, useAoE);
+                TryPushCoeurl(context, scheduler, target, useAoE);
+                TryPushOpoOpo(context, scheduler, target, useAoE);
+                break;
+            case MonkForm.Coeurl:
+                TryPushCoeurl(context, scheduler, target, useAoE);
+                TryPushOpoOpo(context, scheduler, target, useAoE);
+                TryPushRaptor(context, scheduler, target, useAoE);
+                break;
+            default:
+                TryPushOpoOpo(context, scheduler, target, useAoE);
+                TryPushRaptor(context, scheduler, target, useAoE);
+                TryPushCoeurl(context, scheduler, target, useAoE);
+                break;
         }
     }
 
