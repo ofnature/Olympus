@@ -1,0 +1,840 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Plugin.Services;
+using Daedalus.Data;
+using Daedalus.Models;
+using Daedalus.Rotation;
+using Daedalus.Rotation.ApolloCore.Context;
+using Daedalus.Rotation.Common;
+using CommonDebugState = Daedalus.Rotation.Common.DebugState;
+using Daedalus.Rotation.AresCore.Context;
+using Daedalus.Rotation.AsclepiusCore.Context;
+using Daedalus.Rotation.AstraeaCore.Context;
+using Daedalus.Rotation.AthenaCore.Context;
+using Daedalus.Rotation.HephaestusCore.Context;
+using Daedalus.Rotation.NyxCore.Context;
+using Daedalus.Rotation.ThemisCore.Context;
+using Daedalus.Rotation.CalliopeCore.Context;
+using Daedalus.Rotation.CirceCore.Context;
+using Daedalus.Rotation.EchidnaCore.Context;
+using Daedalus.Rotation.HecateCore.Context;
+using Daedalus.Rotation.HermesCore.Context;
+using Daedalus.Rotation.IrisCore.Context;
+using Daedalus.Rotation.KratosCore.Context;
+using Daedalus.Rotation.NikeCore.Context;
+using Daedalus.Rotation.PersephoneCore.Context;
+using Daedalus.Rotation.PrometheusCore.Context;
+using Daedalus.Rotation.TerpsichoreCore.Context;
+using Daedalus.Rotation.ThanatosCore.Context;
+using Daedalus.Rotation.ZeusCore.Context;
+using Daedalus.Services.Action;
+using Daedalus.Services.Healing;
+using Daedalus.Services.Prediction;
+using Daedalus.Services.Stats;
+
+using LuminaAction = Lumina.Excel.Sheets.Action;
+
+namespace Daedalus.Services.Debug;
+
+/// <summary>
+/// Central debug data aggregation service.
+/// Collects data from active rotation, ActionTracker, ActionService, CombatEventService, and HpPredictionService
+/// into a single snapshot for the debug window.
+/// </summary>
+public sealed class DebugService
+{
+    private readonly IActionTracker _actionTracker;
+    private readonly ActionService _actionService;
+    private readonly CombatEventService _combatEventService;
+    private readonly HpPredictionService _hpPredictionService;
+    private readonly PlayerStatsService _playerStatsService;
+    private readonly HealingSpellSelector _healingSpellSelector;
+    private readonly SpellStatusService _spellStatusService;
+    private readonly RotationManager _rotationManager;
+    private readonly IObjectTable _objectTable;
+    private readonly IDataManager _dataManager;
+
+    // Cached snapshot - updated on demand
+    private DebugSnapshot? _cachedSnapshot;
+    private int _lastSnapshotFrame;
+    private int _currentFrame;
+
+    public DebugService(
+        IActionTracker actionTracker,
+        ActionService actionService,
+        CombatEventService combatEventService,
+        HpPredictionService hpPredictionService,
+        PlayerStatsService playerStatsService,
+        HealingSpellSelector healingSpellSelector,
+        SpellStatusService spellStatusService,
+        RotationManager rotationManager,
+        IObjectTable objectTable,
+        IDataManager dataManager)
+    {
+        _actionTracker = actionTracker;
+        _actionService = actionService;
+        _combatEventService = combatEventService;
+        _hpPredictionService = hpPredictionService;
+        _playerStatsService = playerStatsService;
+        _healingSpellSelector = healingSpellSelector;
+        _spellStatusService = spellStatusService;
+        _rotationManager = rotationManager;
+        _objectTable = objectTable;
+        _dataManager = dataManager;
+    }
+
+    /// <summary>
+    /// Call once per frame to increment frame counter.
+    /// </summary>
+    public void Update()
+    {
+        _currentFrame++;
+    }
+
+    /// <summary>
+    /// Gets the current debug snapshot.
+    /// Cached per frame to avoid redundant data collection.
+    /// </summary>
+    public DebugSnapshot GetSnapshot()
+    {
+        // Return cached if same frame
+        if (_cachedSnapshot != null && _lastSnapshotFrame == _currentFrame)
+            return _cachedSnapshot;
+
+        _cachedSnapshot = BuildSnapshot();
+        _lastSnapshotFrame = _currentFrame;
+        return _cachedSnapshot;
+    }
+
+    private DebugSnapshot BuildSnapshot()
+    {
+        var jobId = SpellChecklistRegistry.NormalizeJobId(GetJobId());
+        return new DebugSnapshot
+        {
+            ActiveJobId = jobId,
+            Statistics = BuildStatistics(),
+            GcdState = BuildGcdState(),
+            Rotation = BuildRotationState(),
+            Tank = BuildTankState(jobId),
+            Healing = BuildHealingState(),
+            Actions = BuildActionState(),
+            OverhealStats = BuildOverhealStats()
+        };
+    }
+
+    private DebugStatistics BuildStatistics()
+    {
+        var (total, success, successRate, gcdUptime, avgCastGap) = _actionTracker.GetStatistics();
+        var topFailure = _actionTracker.GetMostCommonFailure();
+
+        return new DebugStatistics
+        {
+            TotalAttempts = total,
+            SuccessCount = success,
+            SuccessRate = successRate,
+            GcdUptime = gcdUptime,
+            AverageCastGap = avgCastGap,
+            TopFailureReason = topFailure?.reason.ToString(),
+            TopFailureCount = topFailure?.count ?? 0,
+            DowntimeEventCount = _actionTracker.DowntimeEventCount,
+            LastDowntimeTime = _actionTracker.LastDowntimeTime,
+            LastDowntimeReason = _actionTracker.LastDowntimeReason
+        };
+    }
+
+    private DebugGcdState BuildGcdState()
+    {
+        return new DebugGcdState
+        {
+            State = _actionService.CurrentGcdState,
+            GcdRemaining = _actionService.GcdRemaining,
+            AnimationLockRemaining = _actionService.AnimationLockRemaining,
+            IsCasting = _actionService.IsCasting,
+            CanExecuteGcd = _actionService.CanExecuteGcd,
+            CanExecuteOgcd = _actionService.CanExecuteOgcd,
+            WeaveSlots = _actionService.GetAvailableWeaveSlots(),
+            LastActionName = _actionService.LastExecutedAction?.Name ?? "None",
+            DebugGcdReady = _actionTracker.DebugGcdReady,
+            DebugIsActive = _actionTracker.DebugIsActive
+        };
+    }
+
+    private DebugRotationState BuildRotationState()
+    {
+        // Use active rotation's debug state (supports all jobs)
+        var activeRotation = _rotationManager.ActiveRotation;
+        var debug = activeRotation?.DebugState;
+
+        // Return empty state if no rotation is active
+        if (debug == null)
+        {
+            return new DebugRotationState
+            {
+                PlanningState = "No rotation active",
+                PlannedAction = "N/A"
+            };
+        }
+
+        return new DebugRotationState
+        {
+            // Core state
+            PlanningState = debug.PlanningState,
+            PlannedAction = debug.PlannedAction,
+            DpsState = debug.DpsState,
+            TargetInfo = debug.TargetInfo,
+
+            // Resurrection
+            RaiseState = debug.RaiseState,
+            RaiseTarget = debug.RaiseTarget,
+
+            // Esuna
+            EsunaState = debug.EsunaState,
+            EsunaTarget = debug.EsunaTarget,
+
+            // oGCD States
+            ThinAirState = debug.ThinAirState,
+            AsylumState = debug.AsylumState,
+            AsylumTarget = debug.AsylumTarget,
+            DefensiveState = debug.DefensiveState,
+            TemperanceState = debug.TemperanceState,
+            SurecastState = debug.SurecastState,
+
+            // DPS Details
+            AoEDpsState = debug.AoEDpsState,
+            AoEDpsEnemyCount = debug.AoEDpsEnemyCount,
+            MiseryState = debug.MiseryState,
+
+            // Resources
+            LilyCount = debug.LilyCount,
+            BloodLilyCount = debug.BloodLilyCount,
+            LilyStrategy = debug.LilyStrategy,
+            SacredSightStacks = debug.SacredSightStacks
+        };
+    }
+
+    private DebugTankState? BuildTankState(uint jobId)
+    {
+        if (!JobRegistry.IsTank(jobId))
+            return null;
+
+        if (GetThemisDebugState() is { } themis)
+            return MapThemisTankState(themis);
+        if (GetAresDebugState() is { } ares)
+            return MapAresTankState(ares);
+        if (GetNyxDebugState() is { } nyx)
+            return MapNyxTankState(nyx);
+        if (GetHephaestusDebugState() is { } gnb)
+            return MapHephaestusTankState(gnb);
+
+        return null;
+    }
+
+    private static DebugTankState MapThemisTankState(ThemisDebugState s)
+    {
+        var resources = new List<(string, string)>();
+        if (s.HasFightOrFlight)
+            resources.Add(("Fight or Flight", $"{s.FightOrFlightRemaining:F1}s"));
+        if (s.HasRequiescat)
+            resources.Add(("Requiescat", $"{s.RequiescatStacks} stacks"));
+        if (s.SwordOathStacks > 0)
+            resources.Add(("Sword Oath", $"{s.SwordOathStacks}"));
+        if (s.AtonementStep > 0)
+            resources.Add(("Atonement", $"step {s.AtonementStep}/3"));
+        if (s.ConfiteorStep > 0)
+            resources.Add(("Confiteor", $"step {s.ConfiteorStep}/4"));
+        if (s.GoringBladeRemaining > 0f)
+            resources.Add(("Goring Blade DoT", $"{s.GoringBladeRemaining:F1}s"));
+        if (s.HasActiveMitigation && !string.IsNullOrEmpty(s.ActiveMitigations))
+            resources.Add(("Mitigations", s.ActiveMitigations));
+
+        return new DebugTankState
+        {
+            EnmityState = NullIfEmpty(s.EnmityState),
+            MitigationState = NullIfEmpty(s.MitigationState),
+            BuffState = NullIfEmpty(s.BuffState),
+            DamageState = NullIfEmpty(s.DamageState),
+            PlannedAction = NullIfEmpty(s.PlannedAction, "None"),
+            CurrentTarget = NullIfEmpty(s.CurrentTarget, "None"),
+            IsMainTank = s.IsMainTank,
+            GaugeLabel = "Oath Gauge",
+            GaugeValue = s.OathGauge,
+            ComboStep = s.ComboStep,
+            ComboTimeRemaining = s.ComboTimeRemaining,
+            ResourceLines = resources
+        };
+    }
+
+    private static DebugTankState MapAresTankState(AresDebugState s)
+    {
+        var resources = new List<(string, string)>();
+        if (s.HasSurgingTempest)
+            resources.Add(("Surging Tempest", $"{s.SurgingTempestRemaining:F1}s"));
+        if (s.HasInnerRelease)
+            resources.Add(("Inner Release", $"{s.InnerReleaseStacks} stacks"));
+        if (s.HasNascentChaos)
+            resources.Add(("Nascent Chaos", "Ready"));
+        if (s.HasPrimalRendReady)
+            resources.Add(("Primal Rend", "Ready"));
+        if (s.HasWrathful)
+            resources.Add(("Wrathful", "Active"));
+        if (s.HasActiveMitigation && !string.IsNullOrEmpty(s.ActiveMitigations))
+            resources.Add(("Mitigations", s.ActiveMitigations));
+
+        return new DebugTankState
+        {
+            EnmityState = NullIfEmpty(s.EnmityState),
+            MitigationState = NullIfEmpty(s.MitigationState),
+            BuffState = NullIfEmpty(s.BuffState),
+            DamageState = NullIfEmpty(s.DamageState),
+            PlannedAction = NullIfEmpty(s.PlannedAction, "None"),
+            CurrentTarget = NullIfEmpty(s.CurrentTarget, "None"),
+            IsMainTank = s.IsMainTank,
+            GaugeLabel = "Beast Gauge",
+            GaugeValue = s.BeastGauge,
+            ComboStep = s.ComboStep,
+            ComboTimeRemaining = s.ComboTimeRemaining,
+            ResourceLines = resources
+        };
+    }
+
+    private static DebugTankState MapNyxTankState(NyxDebugState s)
+    {
+        var resources = new List<(string, string)>();
+        if (s.HasDarkside)
+            resources.Add(("Darkside", $"{s.DarksideRemaining:F1}s"));
+        else
+            resources.Add(("Darkside", "Inactive"));
+        if (s.HasBloodWeapon)
+            resources.Add(("Blood Weapon", $"{s.BloodWeaponRemaining:F1}s"));
+        if (s.HasDelirium)
+            resources.Add(("Delirium", $"{s.DeliriumStacks} stacks"));
+        if (s.HasDarkArts)
+            resources.Add(("Dark Arts", "Ready (TBN proc)"));
+        if (s.HasActiveMitigation && !string.IsNullOrEmpty(s.ActiveMitigations))
+            resources.Add(("Mitigations", s.ActiveMitigations));
+
+        return new DebugTankState
+        {
+            EnmityState = NullIfEmpty(s.EnmityState),
+            MitigationState = NullIfEmpty(s.MitigationState),
+            BuffState = NullIfEmpty(s.BuffState),
+            DamageState = NullIfEmpty(s.DamageState),
+            PlannedAction = NullIfEmpty(s.PlannedAction, "None"),
+            CurrentTarget = NullIfEmpty(s.CurrentTarget, "None"),
+            IsMainTank = s.IsMainTank,
+            GaugeLabel = "Blood Gauge",
+            GaugeValue = s.BloodGauge,
+            ComboStep = s.ComboStep,
+            ComboTimeRemaining = s.ComboTimeRemaining,
+            ResourceLines = resources
+        };
+    }
+
+    private static DebugTankState MapHephaestusTankState(HephaestusDebugState s)
+    {
+        var resources = new List<(string, string)>();
+        resources.Add(("Cartridges", $"{s.Cartridges}/3"));
+        if (s.HasNoMercy)
+            resources.Add(("No Mercy", $"{s.NoMercyRemaining:F1}s"));
+        if (s.IsInGnashingFangCombo)
+            resources.Add(("Gnashing Fang", $"step {s.GnashingFangStep}"));
+        if (s.IsInReignCombo)
+            resources.Add(("Reign of Beasts", $"step {s.ReignComboStep}"));
+        if (s.HasActiveMitigation && !string.IsNullOrEmpty(s.ActiveMitigations))
+            resources.Add(("Mitigations", s.ActiveMitigations));
+
+        return new DebugTankState
+        {
+            EnmityState = NullIfEmpty(s.EnmityState),
+            MitigationState = NullIfEmpty(s.MitigationState),
+            BuffState = NullIfEmpty(s.BuffState),
+            DamageState = NullIfEmpty(s.DamageState),
+            PlannedAction = NullIfEmpty(s.PlannedAction, "None"),
+            CurrentTarget = NullIfEmpty(s.CurrentTarget, "None"),
+            IsMainTank = s.IsMainTank,
+            GaugeLabel = "Ammo",
+            GaugeValue = s.Cartridges,
+            GaugeMax = 3,
+            ComboStep = s.ComboStep,
+            ComboTimeRemaining = s.ComboTimeRemaining,
+            ResourceLines = resources
+        };
+    }
+
+    private static string NullIfEmpty(string value, string fallback = "Idle")
+        => string.IsNullOrEmpty(value) ? fallback : value;
+
+    private DebugHealingState BuildHealingState()
+    {
+        var pendingHeals = BuildPendingHeals();
+        var recentHeals = BuildRecentHeals();
+        var shadowHpEntries = BuildShadowHpEntries();
+        var healingAbilityLastUsed = BuildHealingAbilityLastUsed();
+
+        // Get debug state from active rotation (if it's a healer)
+        var activeRotation = _rotationManager.ActiveRotation;
+        var debug = activeRotation?.DebugState;
+        var sageDebug = GetAsclepiusDebugState();
+
+        return new DebugHealingState
+        {
+            AoEStatus = debug?.AoEStatus ?? "N/A",
+            AoEInjuredCount = debug?.AoEInjuredCount ?? 0,
+            AoESelectedSpell = debug?.AoESelectedSpell ?? 0,
+            PlayerHpPercent = debug?.PlayerHpPercent ?? 0,
+            PartyListCount = debug?.PartyListCount ?? 0,
+            PartyValidCount = debug?.PartyValidCount ?? 0,
+            BattleNpcCount = debug?.BattleNpcCount ?? 0,
+            NpcInfo = debug?.NpcInfo ?? "N/A",
+            PendingHeals = pendingHeals,
+            TotalPendingHealAmount = pendingHeals.Sum(h => h.Amount),
+            LastHealAmount = debug?.LastHealAmount ?? 0,
+            LastHealStats = debug?.LastHealStats ?? "N/A",
+            RecentHeals = recentHeals,
+            TotalRecentHealAmount = recentHeals.Sum(h => h.Amount),
+            HealingAbilityLastUsed = healingAbilityLastUsed,
+            HasKardiaInfo = sageDebug != null,
+            KardiaState = sageDebug?.KardiaState ?? "N/A",
+            KardiaTargetGameObjectId = sageDebug?.KardiaTargetGameObjectId ?? 0,
+            KardiaTargetName = sageDebug?.KardiaTargetName ?? "None",
+            TankGameObjectId = sageDebug?.TankGameObjectId ?? 0,
+            TankTargetName = sageDebug?.TankTargetName ?? "None",
+            TankHasKardion = sageDebug?.TankHasKardion ?? false,
+            KardiaBlockedThisFrame = sageDebug?.KardiaBlockedThisFrame ?? false,
+            KardiaExecutedThisFrame = sageDebug?.KardiaExecutedThisFrame ?? false,
+            KardiaLastCastUtc = sageDebug?.KardiaLastCastUtc,
+            KardiaLastErrorUtc = sageDebug?.KardiaLastErrorUtc,
+            KardiaLastError = sageDebug?.KardiaLastError ?? "None",
+            ShadowHpEntries = shadowHpEntries
+        };
+    }
+
+    private List<DebugHealingAbilityLastUsed> BuildHealingAbilityLastUsed()
+    {
+        var playerLevel = GetPlayerLevel();
+        var jobId = SpellChecklistRegistry.NormalizeJobId(GetJobId());
+        if (playerLevel == 0 || jobId == 0)
+            return [];
+
+        var seen = new HashSet<uint>();
+        var result = new List<DebugHealingAbilityLastUsed>();
+
+        foreach (var (category, action) in SpellStatusRegistry.GetActions(jobId, playerLevel, RoleDebugTab.Healing))
+        {
+            if (!seen.Add(action.ActionId))
+                continue;
+
+            DateTime? lastUsed = null;
+            if (_combatEventService.TryGetLastLocalAbilityUsedUtc(action.ActionId, out var ts))
+                lastUsed = ts;
+
+            result.Add(new DebugHealingAbilityLastUsed
+            {
+                ActionId = action.ActionId,
+                ActionName = action.Name,
+                Category = category,
+                LastUsedUtc = lastUsed,
+            });
+        }
+
+        return result
+            .OrderBy(a => (int)a.Category)
+            .ThenBy(a => a.ActionName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private List<DebugPendingHeal> BuildPendingHeals()
+    {
+        var result = new List<DebugPendingHeal>();
+        var pendingHeals = _hpPredictionService.GetAllPendingHeals();
+
+        foreach (var (targetId, amount) in pendingHeals)
+        {
+            var targetObj = _objectTable.SearchById(targetId);
+            var targetName = targetObj?.Name.TextValue ?? $"ID:{targetId}";
+
+            result.Add(new DebugPendingHeal
+            {
+                TargetId = targetId,
+                TargetName = targetName,
+                Amount = amount
+            });
+        }
+
+        return result;
+    }
+
+    private List<DebugRecentHeal> BuildRecentHeals()
+    {
+        var result = new List<DebugRecentHeal>();
+        var recentHeals = _combatEventService.GetRecentHeals();
+        var actionSheet = _dataManager.GetExcelSheet<LuminaAction>();
+
+        foreach (var heal in recentHeals.Take(10))
+        {
+            var actionName = actionSheet?.GetRowOrDefault(heal.ActionId)?.Name.ToString()
+                ?? $"Action {heal.ActionId}";
+
+            result.Add(new DebugRecentHeal
+            {
+                Timestamp = heal.Timestamp,
+                ActionId = heal.ActionId,
+                ActionName = actionName,
+                TargetName = heal.TargetName,
+                Amount = heal.Amount
+            });
+        }
+
+        return result;
+    }
+
+    private List<DebugShadowHpEntry> BuildShadowHpEntries()
+    {
+        var result = new List<DebugShadowHpEntry>();
+        var shadowHpData = _combatEventService.GetAllShadowHp().ToList();
+
+        foreach (var (entityId, shadowHp) in shadowHpData)
+        {
+            var gameObj = _objectTable.SearchById(entityId);
+            if (gameObj is not IBattleChara chara)
+                continue;
+
+            result.Add(new DebugShadowHpEntry
+            {
+                EntityId = entityId,
+                EntityName = chara.Name.TextValue,
+                GameHp = chara.CurrentHp,
+                ShadowHp = shadowHp,
+                MaxHp = chara.MaxHp
+            });
+        }
+
+        return result;
+    }
+
+    private DebugActionState BuildActionState()
+    {
+        var spellUsage = _actionTracker.GetSpellUsageCounts()
+            .Select(s => new DebugSpellUsage
+            {
+                Name = s.name,
+                ActionId = s.actionId,
+                Count = s.count
+            })
+            .ToList();
+
+        return new DebugActionState
+        {
+            History = _actionTracker.GetHistory(),
+            SpellUsage = spellUsage
+        };
+    }
+
+    private DebugOverhealStats BuildOverhealStats()
+    {
+        var stats = _combatEventService.GetOverhealStatistics();
+        var actionSheet = _dataManager.GetExcelSheet<LuminaAction>();
+
+        // Convert per-spell stats with resolved names
+        var bySpell = stats.BySpell.Select(s => new DebugSpellOverheal
+        {
+            ActionId = s.ActionId,
+            SpellName = actionSheet?.GetRowOrDefault(s.ActionId)?.Name.ToString() ?? s.SpellName,
+            TotalHealing = s.TotalHealing,
+            TotalOverheal = s.TotalOverheal,
+            CastCount = s.CastCount
+        }).OrderByDescending(s => s.TotalHealing).ToList();
+
+        // Convert per-target stats
+        var byTarget = stats.ByTarget.Select(t => new DebugTargetOverheal
+        {
+            TargetId = t.TargetId,
+            TargetName = t.TargetName,
+            TotalHealing = t.TotalHealing,
+            TotalOverheal = t.TotalOverheal,
+            HealCount = t.HealCount
+        }).OrderByDescending(t => t.TotalHealing).ToList();
+
+        // Convert recent overheal events with resolved spell names
+        var recentOverheals = stats.RecentOverhealEvents.Select(e => new DebugOverhealEvent
+        {
+            Timestamp = e.Timestamp,
+            SpellName = ResolveOverhealSpellName(e.SpellName, actionSheet),
+            TargetName = e.TargetName,
+            HealAmount = e.HealAmount,
+            OverhealAmount = e.OverhealAmount
+        }).ToList();
+
+        return new DebugOverhealStats
+        {
+            SessionStartTime = stats.SessionStartTime,
+            SessionDuration = stats.SessionDuration,
+            TotalHealing = stats.TotalHealing,
+            TotalOverheal = stats.TotalOverheal,
+            OverhealPercent = stats.OverhealPercent,
+            BySpell = bySpell,
+            ByTarget = byTarget,
+            RecentOverheals = recentOverheals
+        };
+    }
+
+    private static string ResolveOverhealSpellName(string spellName, Lumina.Excel.ExcelSheet<LuminaAction>? actionSheet)
+    {
+        // SpellName format is "Action{actionId}" - extract the ID and resolve
+        if (spellName.StartsWith("Action") && uint.TryParse(spellName.AsSpan(6), out var actionId))
+        {
+            return actionSheet?.GetRowOrDefault(actionId)?.Name.ToString() ?? spellName;
+        }
+        return spellName;
+    }
+
+    /// <summary>
+    /// Clears action tracker data.
+    /// </summary>
+    public void ClearHistory()
+    {
+        _actionTracker.Clear();
+    }
+
+    /// <summary>
+    /// Resets all overheal statistics for a new tracking session.
+    /// </summary>
+    public void ResetOverhealStatistics()
+    {
+        _combatEventService.ResetOverhealStatistics();
+    }
+
+    /// <summary>
+    /// Gets the action name from Lumina data.
+    /// </summary>
+    public string GetActionName(uint actionId)
+    {
+        var actionSheet = _dataManager.GetExcelSheet<LuminaAction>();
+        var row = actionSheet?.GetRowOrDefault(actionId);
+        return row?.Name.ToString() ?? $"Action {actionId}";
+    }
+
+    /// <summary>
+    /// Gets player stats debug info.
+    /// </summary>
+    public string GetPlayerStatsDebugInfo()
+    {
+        var player = _objectTable.LocalPlayer;
+        if (player == null)
+            return "No player";
+
+        return _playerStatsService.GetDebugInfo(player.Level);
+    }
+
+    /// <summary>
+    /// Gets the current player level, or 0 if not logged in.
+    /// </summary>
+    public byte GetPlayerLevel()
+    {
+        return _objectTable.LocalPlayer?.Level ?? 0;
+    }
+
+    /// <summary>Returns the local player's current job ID, or 0 if unavailable.</summary>
+    public uint GetJobId()
+        => _objectTable.LocalPlayer?.ClassJob.RowId ?? 0;
+
+    /// <summary>Resets spell usage counts without affecting history or GCD uptime data.</summary>
+    public void ClearSpellUsageCounts()
+        => _actionTracker.ClearSpellUsageCounts();
+
+    /// <summary>
+    /// Gets the last spell selection decision for debugging.
+    /// </summary>
+    public SpellSelectionDebug? GetLastSpellSelection()
+    {
+        return _healingSpellSelector.LastSelection;
+    }
+
+    /// <summary>
+    /// Gets real-time spell status for a role debug tab (Healing/Damage/Mitigation).
+    /// </summary>
+    public SpellStatusSnapshot GetSpellStatus(byte playerLevel, RoleDebugTab tab)
+    {
+        var jobId = SpellChecklistRegistry.NormalizeJobId(GetJobId());
+        return _spellStatusService.GetSnapshot(jobId, playerLevel, tab);
+    }
+
+    // ========== Tank Debug States ==========
+
+    /// <summary>
+    /// Gets the Ares (Warrior) debug state, if the active rotation is Warrior.
+    /// </summary>
+    public AresDebugState? GetAresDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Ares)?.AresDebug;
+    }
+
+    /// <summary>
+    /// Gets the Nyx (Dark Knight) debug state, if the active rotation is Dark Knight.
+    /// </summary>
+    public NyxDebugState? GetNyxDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Nyx)?.NyxDebug;
+    }
+
+    /// <summary>
+    /// Gets the Themis (Paladin) debug state, if the active rotation is Paladin.
+    /// </summary>
+    public ThemisDebugState? GetThemisDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Themis)?.ThemisDebug;
+    }
+
+    /// <summary>
+    /// Gets the Hephaestus (Gunbreaker) debug state, if the active rotation is Gunbreaker.
+    /// </summary>
+    public HephaestusDebugState? GetHephaestusDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Hephaestus)?.HephaestusDebug;
+    }
+
+    /// <summary>
+    /// Gets the Apollo (White Mage) debug state, if the active rotation is White Mage.
+    /// </summary>
+    public CommonDebugState? GetApolloDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Apollo)?.DebugState;
+    }
+
+    /// <summary>
+    /// Gets the Asclepius (Sage) debug state, if the active rotation is Sage.
+    /// </summary>
+    public AsclepiusDebugState? GetAsclepiusDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Asclepius)?.AsclepiusDebug;
+    }
+
+    /// <summary>
+    /// Gets the Athena (Scholar) debug state, if the active rotation is Scholar.
+    /// </summary>
+    public AthenaDebugState? GetAthenaDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Athena)?.AthenaDebug;
+    }
+
+    /// <summary>
+    /// Gets the Astraea (Astrologian) debug state, if the active rotation is Astrologian.
+    /// </summary>
+    public AstraeaDebugState? GetAstraeaDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Astraea)?.AstraeaDebug;
+    }
+
+    // ========== Melee DPS Debug States ==========
+
+    /// <summary>
+    /// Gets the Zeus (Dragoon) debug state, if the active rotation is Dragoon.
+    /// </summary>
+    public ZeusDebugState? GetZeusDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Zeus)?.ZeusDebug;
+    }
+
+    /// <summary>
+    /// Gets the Hermes (Ninja) debug state, if the active rotation is Ninja.
+    /// </summary>
+    public HermesDebugState? GetHermesDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Hermes)?.HermesDebug;
+    }
+
+    /// <summary>
+    /// Gets the Nike (Samurai) debug state, if the active rotation is Samurai.
+    /// </summary>
+    public NikeDebugState? GetNikeDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Nike)?.NikeDebug;
+    }
+
+    /// <summary>
+    /// Gets the Kratos (Monk) debug state, if the active rotation is Monk.
+    /// </summary>
+    public KratosDebugState? GetKratosDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Kratos)?.KratosDebug;
+    }
+
+    /// <summary>
+    /// Gets the Thanatos (Reaper) debug state, if the active rotation is Reaper.
+    /// </summary>
+    public ThanatosDebugState? GetThanatosDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Thanatos)?.ThanatosDebug;
+    }
+
+    /// <summary>
+    /// Gets the Echidna (Viper) debug state, if the active rotation is Viper.
+    /// </summary>
+    public EchidnaDebugState? GetEchidnaDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Echidna)?.EchidnaDebug;
+    }
+
+    // ========== Ranged Physical DPS Debug States ==========
+
+    /// <summary>
+    /// Gets the Prometheus (Machinist) debug state, if the active rotation is Machinist.
+    /// </summary>
+    public PrometheusDebugState? GetPrometheusDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Prometheus)?.PrometheusDebug;
+    }
+
+    /// <summary>
+    /// Gets the Calliope (Bard) debug state, if the active rotation is Bard.
+    /// </summary>
+    public CalliopeDebugState? GetCalliopeDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Calliope)?.CalliopeDebug;
+    }
+
+    /// <summary>
+    /// Gets the Terpsichore (Dancer) debug state, if the active rotation is Dancer.
+    /// </summary>
+    public TerpsichoreDebugState? GetTerpsichoreDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Terpsichore)?.TerpsichoreDebug;
+    }
+
+    // ========== Caster DPS Debug States ==========
+
+    /// <summary>
+    /// Gets the Hecate (Black Mage) debug state, if the active rotation is Black Mage.
+    /// </summary>
+    public HecateDebugState? GetHecateDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Hecate)?.HecateDebug;
+    }
+
+    /// <summary>
+    /// Gets the Persephone (Summoner) debug state, if the active rotation is Summoner.
+    /// </summary>
+    public PersephoneDebugState? GetPersephoneDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Persephone)?.PersephoneDebug;
+    }
+
+    /// <summary>
+    /// Gets the Circe (Red Mage) debug state, if the active rotation is Red Mage.
+    /// </summary>
+    public CirceDebugState? GetCirceDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Circe)?.CirceDebug;
+    }
+
+    /// <summary>
+    /// Gets the Iris (Pictomancer) debug state, if the active rotation is Pictomancer.
+    /// </summary>
+    public IrisDebugState? GetIrisDebugState()
+    {
+        return (_rotationManager.ActiveRotation as Iris)?.IrisDebug;
+    }
+}

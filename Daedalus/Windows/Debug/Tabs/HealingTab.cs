@@ -1,0 +1,515 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Numerics;
+using Dalamud.Bindings.ImGui;
+using Daedalus.Localization;
+using Daedalus.Services.Debug;
+using Daedalus.Services.Healing;
+using Daedalus.Windows.Debug;
+
+namespace Daedalus.Windows.Debug.Tabs;
+
+/// <summary>
+/// Healing tab: HP prediction, AoE healing, recent heals, shadow HP.
+/// </summary>
+public static class HealingTab
+{
+    public static void Draw(DebugSnapshot snapshot, Configuration config, DebugService debugService)
+    {
+        // Spell Status Section (comprehensive spell list with ready/cooldown status)
+        if (IsSectionVisible(config, "SpellStatus"))
+        {
+            RoleDebugTabHelpers.DrawSpellStatus(debugService, RoleDebugTab.Healing);
+            ImGui.Spacing();
+        }
+
+        // Spell Selection Section (shows last healing decision)
+        if (IsSectionVisible(config, "SpellSelection"))
+        {
+            DrawSpellSelection(debugService);
+            ImGui.Spacing();
+        }
+
+        // HP Prediction Section
+        if (IsSectionVisible(config, "HpPrediction"))
+        {
+            DrawHpPrediction(snapshot, debugService);
+            ImGui.Spacing();
+        }
+
+        // AoE Healing Section
+        if (IsSectionVisible(config, "AoEHealing"))
+        {
+            DrawAoEHealing(snapshot, debugService);
+            ImGui.Spacing();
+        }
+
+        // Recent Heals Section
+        if (IsSectionVisible(config, "RecentHeals"))
+        {
+            DrawRecentHeals(snapshot);
+            ImGui.Spacing();
+        }
+
+        // Sage Kardia target vs tank (pre-pull monitoring)
+        if (IsSectionVisible(config, "Kardia") && snapshot.Healing.HasKardiaInfo)
+        {
+            DrawKardia(snapshot);
+            ImGui.Spacing();
+        }
+
+        // Shadow HP Section (collapsible)
+        if (IsSectionVisible(config, "ShadowHp"))
+        {
+            DrawShadowHpTracking(snapshot);
+        }
+    }
+
+    private static void DrawSpellSelection(DebugService debugService)
+    {
+        var selection = debugService.GetLastSpellSelection();
+
+        ImGui.Text(Loc.T(LocalizedStrings.Debug.SpellSelection, "Spell Selection"));
+        ImGui.Separator();
+
+        if (selection == null)
+        {
+            ImGui.TextColored(DebugColors.Dim, Loc.T(LocalizedStrings.Debug.NoSelectionYet, "No selection yet"));
+            return;
+        }
+
+        // Show age of selection
+        var ageColor = selection.SecondsAgo < 1f ? DebugColors.Success : DebugColors.Dim;
+        ImGui.TextColored(ageColor, $"[{selection.SecondsAgo:F1}s ago] {selection.SelectionType} Target");
+
+        // Context info
+        if (ImGui.BeginTable("SelectionContext", 4, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableNextRow();
+
+            ImGui.TableNextColumn();
+            ImGui.Text(Loc.TFormat(LocalizedStrings.Debug.TargetLabel, "Target: {0}", selection.TargetName));
+
+            ImGui.TableNextColumn();
+            ImGui.Text(Loc.TFormat(LocalizedStrings.Debug.Missing, "Missing: {0:N0} HP", selection.MissingHp));
+
+            ImGui.TableNextColumn();
+            var weaveColor = selection.IsWeaveWindow ? DebugColors.Success : DebugColors.Dim;
+            var weaveText = selection.IsWeaveWindow ? Loc.T(LocalizedStrings.Debug.Yes, "Yes") : Loc.T(LocalizedStrings.Debug.No, "No");
+            ImGui.TextColored(weaveColor, Loc.TFormat(LocalizedStrings.Debug.WeaveLabel, "Weave: {0}", weaveText));
+
+            ImGui.TableNextColumn();
+            ImGui.Text(Loc.TFormat(LocalizedStrings.Debug.Lilies, "Lilies: {0}/3", selection.LilyCount));
+
+            ImGui.EndTable();
+        }
+
+        // Selected spell
+        if (selection.SelectedSpell != null)
+        {
+            ImGui.TextColored(DebugColors.Success, Loc.TFormat(LocalizedStrings.Debug.Selected, "✓ Selected: {0}", selection.SelectedSpell));
+            ImGui.TextColored(DebugColors.Dim, Loc.TFormat(LocalizedStrings.Debug.Reason, "  Reason: {0}", selection.SelectionReason ?? "-"));
+        }
+        else
+        {
+            ImGui.TextColored(DebugColors.Warning, Loc.T(LocalizedStrings.Debug.NoSpellSelected, "✗ No spell selected"));
+            ImGui.TextColored(DebugColors.Dim, Loc.TFormat(LocalizedStrings.Debug.Reason, "  Reason: {0}", selection.SelectionReason ?? "-"));
+        }
+
+        // Candidates table (collapsible)
+        if (selection.Candidates.Count > 0 && ImGui.CollapsingHeader(Loc.TFormat(LocalizedStrings.Debug.Candidates, "Candidates ({0})", selection.Candidates.Count) + "##SpellCandidates"))
+        {
+            if (ImGui.BeginTable("CandidatesTable", 5, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+            {
+                ImGui.TableSetupColumn(Loc.T(LocalizedStrings.Debug.Spell, "Spell"), ImGuiTableColumnFlags.WidthFixed, 120);
+                ImGui.TableSetupColumn(Loc.T(LocalizedStrings.Debug.Heal, "Heal"), ImGuiTableColumnFlags.WidthFixed, 60);
+                ImGui.TableSetupColumn(Loc.T(LocalizedStrings.Debug.Eff, "Eff"), ImGuiTableColumnFlags.WidthFixed, 45);
+                ImGui.TableSetupColumn(Loc.T(LocalizedStrings.Debug.Score, "Score"), ImGuiTableColumnFlags.WidthFixed, 50);
+                ImGui.TableSetupColumn(Loc.T(LocalizedStrings.Debug.Status, "Status"), ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableHeadersRow();
+
+                foreach (var candidate in selection.Candidates)
+                {
+                    ImGui.TableNextRow();
+
+                    // Spell name
+                    ImGui.TableNextColumn();
+                    var nameColor = candidate.WasSelected ? DebugColors.Success :
+                                    candidate.RejectionReason != null ? DebugColors.Failure : DebugColors.Dim;
+                    ImGui.TextColored(nameColor, candidate.SpellName);
+
+                    // Heal amount
+                    ImGui.TableNextColumn();
+                    if (candidate.HealAmount > 0)
+                        ImGui.Text($"{candidate.HealAmount:N0}");
+                    else
+                        ImGui.TextColored(DebugColors.Dim, "-");
+
+                    // Efficiency
+                    ImGui.TableNextColumn();
+                    if (candidate.Efficiency > 0)
+                    {
+                        var effColor = candidate.Efficiency >= 0.7f ? DebugColors.Success :
+                                       candidate.Efficiency >= 0.3f ? DebugColors.Warning : DebugColors.Failure;
+                        ImGui.TextColored(effColor, $"{candidate.Efficiency:P0}");
+                    }
+                    else
+                        ImGui.TextColored(DebugColors.Dim, "-");
+
+                    // Score
+                    ImGui.TableNextColumn();
+                    if (candidate.Score > 0)
+                        ImGui.Text($"{candidate.Score:F2}");
+                    else
+                        ImGui.TextColored(DebugColors.Dim, "-");
+
+                    // Status (bonuses or rejection reason)
+                    ImGui.TableNextColumn();
+                    if (candidate.WasSelected)
+                    {
+                        ImGui.TextColored(DebugColors.Success, $"✓ {candidate.Bonuses}");
+                    }
+                    else if (candidate.RejectionReason != null)
+                    {
+                        ImGui.TextColored(DebugColors.Failure, candidate.RejectionReason);
+                    }
+                    else
+                    {
+                        ImGui.TextColored(DebugColors.Dim, candidate.Bonuses);
+                    }
+                }
+
+                ImGui.EndTable();
+            }
+        }
+    }
+
+    private static void DrawHpPrediction(DebugSnapshot snapshot, DebugService debugService)
+    {
+        ImGui.Text(Loc.T(LocalizedStrings.Debug.HpPrediction, "HP Prediction"));
+        ImGui.Separator();
+
+        // Player stats for heal calculation
+        var statsInfo = debugService.GetPlayerStatsDebugInfo();
+        ImGui.TextColored(DebugColors.Dim, Loc.TFormat(LocalizedStrings.Debug.Stats, "Stats: {0}", statsInfo));
+
+        var gcd = snapshot.GcdState;
+        var healing = snapshot.Healing;
+
+        if (ImGui.BeginTable("HpPredictionTable", 4, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("Col1", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Col2", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Col3", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Col4", ImGuiTableColumnFlags.WidthStretch);
+
+            // Row 1: GCD state, remaining, anim lock, casting
+            ImGui.TableNextRow();
+
+            ImGui.TableNextColumn();
+            var gcdColor = DebugColors.GetGcdStateColor(gcd.State);
+            ImGui.TextColored(gcdColor, Loc.TFormat(LocalizedStrings.Debug.GcdFormat, "GCD: {0}", gcd.State));
+
+            ImGui.TableNextColumn();
+            ImGui.Text(Loc.TFormat(LocalizedStrings.Debug.Rem, "Rem: {0:F2}s", gcd.GcdRemaining));
+
+            ImGui.TableNextColumn();
+            ImGui.Text(Loc.TFormat(LocalizedStrings.Debug.Anim, "Anim: {0:F2}s", gcd.AnimationLockRemaining));
+
+            ImGui.TableNextColumn();
+            var castingText = gcd.IsCasting ? Loc.T(LocalizedStrings.Debug.Yes, "Yes") : Loc.T(LocalizedStrings.Debug.No, "No");
+            ImGui.Text(Loc.TFormat(LocalizedStrings.Debug.Casting, "Casting: {0}", castingText));
+
+            // Row 2: Weave, slots, last action
+            ImGui.TableNextRow();
+
+            ImGui.TableNextColumn();
+            var weaveColor = gcd.CanExecuteOgcd ? DebugColors.Heal : DebugColors.Dim;
+            var weaveText = gcd.CanExecuteOgcd ? Loc.T(LocalizedStrings.Debug.Yes, "Yes") : Loc.T(LocalizedStrings.Debug.No, "No");
+            ImGui.TextColored(weaveColor, Loc.TFormat(LocalizedStrings.Debug.WeaveLabel, "Weave: {0}", weaveText));
+
+            ImGui.TableNextColumn();
+            ImGui.Text(Loc.TFormat(LocalizedStrings.Debug.SlotsFormat, "Slots: {0}", gcd.WeaveSlots));
+
+            ImGui.TableNextColumn();
+            ImGui.TextColored(DebugColors.Dim, Loc.TFormat(LocalizedStrings.Debug.LastFormat, "Last: {0}", gcd.LastActionName));
+
+            ImGui.TableNextColumn();
+            // Empty
+
+            ImGui.EndTable();
+        }
+
+        // Last heal calculation (debug)
+        if (!string.IsNullOrEmpty(healing.LastHealStats))
+        {
+            ImGui.TextColored(DebugColors.Warning, Loc.TFormat(LocalizedStrings.Debug.LastCalc, "Last Calc: {0:N0} HP", healing.LastHealAmount));
+            ImGui.TextColored(DebugColors.Dim, $"  ({healing.LastHealStats})");
+        }
+
+        // Pending heals
+        var pendingColor = healing.PendingHeals.Count > 0 ? DebugColors.Warning : DebugColors.Dim;
+        ImGui.TextColored(pendingColor, Loc.TFormat(LocalizedStrings.Debug.PendingHeals, "Pending Heals: {0} ({1:N0} HP total)", healing.PendingHeals.Count, healing.TotalPendingHealAmount));
+
+        if (healing.PendingHeals.Count > 0)
+        {
+            ImGui.Indent();
+            foreach (var heal in healing.PendingHeals)
+            {
+                ImGui.TextColored(DebugColors.Warning, $"-> {heal.TargetName}: +{heal.Amount} HP");
+            }
+            ImGui.Unindent();
+        }
+    }
+
+    private static void DrawAoEHealing(DebugSnapshot snapshot, DebugService debugService)
+    {
+        var healing = snapshot.Healing;
+
+        ImGui.Text(Loc.T(LocalizedStrings.Debug.AoEHealing, "AoE Healing"));
+        ImGui.SameLine();
+        ImGui.TextColored(DebugColors.GetAoEStatusColor(healing.AoEStatus), $"[{healing.AoEStatus}]");
+        ImGui.Separator();
+
+        if (ImGui.BeginTable("AoEHealingTable", 3, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn("Col1", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Col2", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableSetupColumn("Col3", ImGuiTableColumnFlags.WidthStretch);
+
+            // Row 1: Injured count, selected spell
+            ImGui.TableNextRow();
+
+            ImGui.TableNextColumn();
+            ImGui.Text(Loc.TFormat(LocalizedStrings.Debug.Injured, "Injured: {0}", healing.AoEInjuredCount));
+
+            ImGui.TableNextColumn();
+            var spellName = healing.AoESelectedSpell > 0
+                ? debugService.GetActionName(healing.AoESelectedSpell)
+                : Loc.T(LocalizedStrings.Debug.NoneLabel, "None");
+            ImGui.Text(Loc.TFormat(LocalizedStrings.Debug.SpellLabel, "Spell: {0}", spellName));
+
+            ImGui.TableNextColumn();
+            ImGui.Text(Loc.TFormat(LocalizedStrings.Debug.PlayerHp, "Player HP: {0:F1}%", healing.PlayerHpPercent));
+
+            // Row 2: Party info
+            ImGui.TableNextRow();
+
+            ImGui.TableNextColumn();
+            ImGui.Text(Loc.TFormat(LocalizedStrings.Debug.Party, "Party: {0}", healing.PartyListCount));
+
+            ImGui.TableNextColumn();
+            ImGui.Text(Loc.TFormat(LocalizedStrings.Debug.Valid, "Valid: {0}", healing.PartyValidCount));
+
+            ImGui.TableNextColumn();
+            ImGui.Text(Loc.TFormat(LocalizedStrings.Debug.Npcs, "NPCs: {0}", healing.BattleNpcCount));
+
+            ImGui.EndTable();
+        }
+
+        // NPC fallback info
+        if (healing.PartyListCount == 0 && !string.IsNullOrEmpty(healing.NpcInfo))
+        {
+            ImGui.TextColored(DebugColors.Dim, healing.NpcInfo);
+        }
+    }
+
+    private static void DrawRecentHeals(DebugSnapshot snapshot)
+    {
+        var healing = snapshot.Healing;
+
+        ImGui.Text(Loc.T(LocalizedStrings.Debug.RecentHeals, "Healing Abilities"));
+        ImGui.Separator();
+
+        if (healing.HealingAbilityLastUsed.Count == 0)
+        {
+            ImGui.TextColored(DebugColors.Dim, Loc.T(LocalizedStrings.Debug.NoHealsYet, "No heals yet"));
+            return;
+        }
+
+        if (!ImGui.BeginTable("HealingAbilityLastUsed", 2,
+                ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+            return;
+
+        ImGui.TableSetupColumn("Ability", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableSetupColumn("Last Used", ImGuiTableColumnFlags.WidthFixed, 90);
+        ImGui.TableHeadersRow();
+
+        foreach (var ability in healing.HealingAbilityLastUsed)
+        {
+            ImGui.TableNextRow();
+
+            ImGui.TableNextColumn();
+            ImGui.Text(ability.ActionName);
+
+            ImGui.TableNextColumn();
+            if (ability.SecondsSinceLastUse is float seconds)
+            {
+                ImGui.TextColored(DebugColors.Dim, $"{seconds:F1}s ago");
+            }
+            else
+            {
+                ImGui.TextColored(DebugColors.Dim, "—");
+            }
+        }
+
+        ImGui.EndTable();
+    }
+
+    private static void DrawKardia(DebugSnapshot snapshot)
+    {
+        var healing = snapshot.Healing;
+        var onTank = healing.TankHasKardion
+                     || (healing.KardiaTargetGameObjectId != 0
+                         && healing.KardiaTargetGameObjectId == healing.TankGameObjectId);
+
+        ImGui.Text(Loc.T(LocalizedStrings.Debug.SgeKardia, "Kardia"));
+        ImGui.SameLine();
+        var stateColor = onTank ? DebugColors.Success : DebugColors.Warning;
+        ImGui.TextColored(stateColor, $"[{healing.KardiaState}]");
+        ImGui.Separator();
+
+        if (!ImGui.BeginTable("HealingKardiaTable", 2,
+                ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+            return;
+
+        ImGui.TableSetupColumn("Label", ImGuiTableColumnFlags.WidthFixed, 110);
+        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text("Kardion Target");
+        ImGui.TableNextColumn();
+        if (healing.KardiaTargetGameObjectId != 0)
+            ImGui.Text($"{healing.KardiaTargetName} ({healing.KardiaTargetGameObjectId})");
+        else if (healing.TankHasKardion)
+            ImGui.Text($"{healing.TankTargetName} ({healing.TankGameObjectId})");
+        else
+            ImGui.TextColored(DebugColors.Dim, "None");
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text("Tank");
+        ImGui.TableNextColumn();
+        if (healing.TankGameObjectId != 0)
+            ImGui.Text($"{healing.TankTargetName} ({healing.TankGameObjectId})");
+        else
+            ImGui.TextColored(DebugColors.Dim, "None");
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text("Tank Kardion");
+        ImGui.TableNextColumn();
+        if (healing.TankGameObjectId == 0)
+            ImGui.TextColored(DebugColors.Dim, "No tank");
+        else if (healing.TankHasKardion)
+            ImGui.TextColored(DebugColors.Success, "Yes");
+        else
+            ImGui.TextColored(DebugColors.Warning, "No");
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text("Match");
+        ImGui.TableNextColumn();
+        if (healing.TankGameObjectId == 0)
+            ImGui.TextColored(DebugColors.Dim, "No tank");
+        else if (onTank)
+            ImGui.TextColored(DebugColors.Success, "Kardion on tank");
+        else
+            ImGui.TextColored(DebugColors.Warning, "Not on tank");
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text("Daedalus cast");
+        ImGui.TableNextColumn();
+        if (healing.KardiaExecutedThisFrame)
+            ImGui.TextColored(DebugColors.Warning, "Yes (this frame)");
+        else if (healing.KardiaLastCastUtc is { } lastCast)
+            ImGui.TextColored(DebugColors.Warning, $"{FormatAge(lastCast)} ago");
+        else
+            ImGui.TextColored(DebugColors.Dim, "Never");
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text("Daedalus blocked");
+        ImGui.TableNextColumn();
+        if (healing.KardiaBlockedThisFrame)
+            ImGui.TextColored(DebugColors.Success, "Yes (this frame)");
+        else
+            ImGui.TextColored(DebugColors.Dim, "No");
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text("Last error");
+        ImGui.TableNextColumn();
+        if (healing.KardiaLastErrorUtc is { } lastError)
+            ImGui.TextColored(DebugColors.Warning, $"{healing.KardiaLastError} ({FormatAge(lastError)} ago)");
+        else
+            ImGui.TextColored(DebugColors.Dim, "None");
+
+        ImGui.EndTable();
+    }
+
+    private static string FormatAge(DateTime utcTimestamp)
+    {
+        var seconds = (DateTime.UtcNow - utcTimestamp).TotalSeconds;
+        return seconds < 60 ? $"{seconds:F1}s" : $"{seconds / 60:F1}m";
+    }
+
+    private static void DrawShadowHpTracking(DebugSnapshot snapshot)
+    {
+        if (!ImGui.CollapsingHeader(Loc.T(LocalizedStrings.Debug.ShadowHpTracking, "Shadow HP Tracking")))
+            return;
+
+        var healing = snapshot.Healing;
+
+        if (healing.ShadowHpEntries.Count == 0)
+        {
+            ImGui.TextColored(DebugColors.Dim, Loc.T(LocalizedStrings.Debug.NoEntitiesTrackedYet, "No entities tracked yet"));
+            return;
+        }
+
+        if (ImGui.BeginTable("ShadowHpTable", 4, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.RowBg | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn(Loc.T(LocalizedStrings.Debug.Entity, "Entity"), ImGuiTableColumnFlags.WidthFixed, 150);
+            ImGui.TableSetupColumn(Loc.T(LocalizedStrings.Debug.GameHp, "Game HP"), ImGuiTableColumnFlags.WidthFixed, 80);
+            ImGui.TableSetupColumn(Loc.T(LocalizedStrings.Debug.ShadowHpLabel, "Shadow HP"), ImGuiTableColumnFlags.WidthFixed, 80);
+            ImGui.TableSetupColumn(Loc.T(LocalizedStrings.Debug.Delta, "Delta"), ImGuiTableColumnFlags.WidthFixed, 80);
+            ImGui.TableHeadersRow();
+
+            foreach (var entry in healing.ShadowHpEntries)
+            {
+                ImGui.TableNextRow();
+
+                ImGui.TableNextColumn();
+                ImGui.Text(entry.EntityName);
+
+                ImGui.TableNextColumn();
+                ImGui.Text($"{entry.GameHp}");
+
+                ImGui.TableNextColumn();
+                ImGui.Text($"{entry.ShadowHp}");
+
+                ImGui.TableNextColumn();
+                if (entry.Delta != 0)
+                {
+                    ImGui.TextColored(DebugColors.Warning, $"{entry.Delta:+#;-#;0}");
+                }
+                else
+                {
+                    ImGui.TextColored(DebugColors.Dim, "-");
+                }
+            }
+
+            ImGui.EndTable();
+        }
+    }
+
+    private static bool IsSectionVisible(Configuration config, string section)
+    {
+        if (config.Debug.DebugSectionVisibility.TryGetValue(section, out var visible))
+            return visible;
+        return true;
+    }
+}

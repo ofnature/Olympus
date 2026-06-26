@@ -1,0 +1,279 @@
+using System.Collections.Generic;
+using Dalamud.Game.ClientState.JobGauge;
+using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game.ClientState.Party;
+using Dalamud.Plugin.Services;
+using Daedalus.Data;
+using Daedalus.Rotation.Base;
+using Daedalus.Rotation.Common;
+using Daedalus.Rotation.Common.Helpers;
+using Daedalus.Rotation.Common.Scheduling;
+using Daedalus.Rotation.TerpsichoreCore.Context;
+using Daedalus.Rotation.TerpsichoreCore.Helpers;
+using Daedalus.Rotation.TerpsichoreCore.Modules;
+using Daedalus.Services;
+using Daedalus.Services.Action;
+using Daedalus.Services.Debuff;
+using Daedalus.Services.Party;
+using Daedalus.Services.Prediction;
+using Daedalus.Services.Stats;
+using Daedalus.Services.Targeting;
+using Daedalus.Services.Training;
+using Daedalus.Timeline;
+
+namespace Daedalus.Rotation;
+
+/// <summary>
+/// Dancer rotation module (RSR-style reactive execution).
+/// Orchestrates modular execution: each module handles a specific concern.
+/// Named after Terpsichore, the Greek muse of dance.
+/// </summary>
+[Rotation("Terpsichore", JobRegistry.Dancer, Role = RotationRole.RangedDps)]
+public sealed class Terpsichore : BaseRangedDpsRotation<ITerpsichoreContext, ITerpsichoreModule>
+{
+    /// <inheritdoc />
+    public override string Name => "Terpsichore";
+
+    /// <inheritdoc />
+    public override uint[] SupportedJobIds => [JobRegistry.Dancer];
+
+    /// <inheritdoc />
+    public override DebugState DebugState => _debugState;
+
+    /// <inheritdoc />
+    protected override List<ITerpsichoreModule> Modules => _modules;
+
+    /// <summary>
+    /// Gets the Terpsichore-specific debug state. Used for Dancer-specific debug display.
+    /// </summary>
+    public TerpsichoreDebugState TerpsichoreDebug => _terpsichoreDebugState;
+
+    // Persistent debug state
+    private readonly TerpsichoreDebugState _terpsichoreDebugState = new();
+
+    // IRotation-compatible debug state (for common debug interface)
+    private readonly DebugState _debugState = new();
+
+    // Helpers (shared across modules)
+    private readonly TerpsichoreStatusHelper _statusHelper;
+    private readonly TerpsichorePartyHelper _partyHelper;
+
+    // Modules (sorted by priority - lower = higher priority)
+    private readonly List<ITerpsichoreModule> _modules;
+
+    // Timeline service for fight-aware rotation (optional)
+    private readonly ITimelineService? _timelineService;
+
+    // Party coordination service for raid buff synchronization (optional)
+    private readonly IPartyCoordinationService? _partyCoordinationService;
+
+    // Training service for explaining rotation decisions (optional)
+    private readonly ITrainingService? _trainingService;
+
+    // Gauge values (read each frame)
+    private int _esprit;
+    private int _feathers;
+    private bool _isDancing;
+    private int _stepIndex;
+    private byte _currentStep;
+    private byte[] _danceSteps = new byte[4];
+
+    // Scheduler
+    private readonly RotationScheduler _scheduler;
+
+    public Terpsichore(
+        IPluginLog log,
+        IActionTracker actionTracker,
+        ICombatEventService combatEventService,
+        IDamageIntakeService damageIntakeService,
+        IDamageTrendService damageTrendService,
+        Configuration configuration,
+        IObjectTable objectTable,
+        IPartyList partyList,
+        ITargetingService targetingService,
+        IHpPredictionService hpPredictionService,
+        ActionService actionService,
+        IPlayerStatsService playerStatsService,
+        IDebuffDetectionService debuffDetectionService,
+        IJobGauges jobGauges,
+        ITimelineService? timelineService = null,
+        IPartyCoordinationService? partyCoordinationService = null,
+        ITrainingService? trainingService = null,
+        IBurstWindowService? burstWindowService = null,
+        IErrorMetricsService? errorMetrics = null,
+        Daedalus.Services.Consumables.ITinctureDispatcher? tinctureDispatcher = null,
+        Daedalus.Services.Pull.IPullIntentService? pullIntentService = null)
+        : base(
+            log,
+            actionTracker,
+            combatEventService,
+            damageIntakeService,
+            damageTrendService,
+            configuration,
+            objectTable,
+            partyList,
+            targetingService,
+            hpPredictionService,
+            actionService,
+            playerStatsService,
+            debuffDetectionService,
+            burstWindowService,
+            errorMetrics,
+            tinctureDispatcher: tinctureDispatcher,
+            pullIntentService: pullIntentService)
+    {
+        _timelineService = timelineService;
+        _partyCoordinationService = partyCoordinationService;
+        _trainingService = trainingService;
+
+        _scheduler = new RotationScheduler(actionService, jobGauges, configuration, timelineService, errorMetrics);
+
+        // Initialize helpers
+        _statusHelper = new TerpsichoreStatusHelper();
+        _partyHelper = new TerpsichorePartyHelper(objectTable, partyList);
+
+        // Initialize modules (ordered by priority - lower = executed first)
+        _modules = new List<ITerpsichoreModule>
+        {
+            new BuffModule(BurstWindowService),    // Priority 20 - Dance execution, buffs, oGCDs
+            new DamageModule(BurstWindowService, SmartAoEService),  // Priority 30 - GCD rotation
+        };
+
+        // Sort by priority
+        _modules.Sort((a, b) => a.Priority.CompareTo(b.Priority));
+    }
+
+    #region Abstract Implementation
+
+    /// <inheritdoc />
+    protected override void ReadGaugeValues()
+    {
+        _esprit = SafeGameAccess.GetDncEsprit(ErrorMetrics);
+        _feathers = SafeGameAccess.GetDncFeathers(ErrorMetrics);
+        _isDancing = SafeGameAccess.IsDncDancing(ErrorMetrics);
+        _stepIndex = SafeGameAccess.GetDncStepIndex(ErrorMetrics);
+        _currentStep = SafeGameAccess.GetDncCurrentStep(ErrorMetrics);
+        _danceSteps = SafeGameAccess.GetDncDanceSteps(ErrorMetrics);
+    }
+
+    /// <inheritdoc />
+    protected override int DetermineComboStep(uint comboAction, float comboTimer)
+        => ComputeComboStep(comboAction, comboTimer);
+
+    internal static int ComputeComboStep(uint comboAction, float comboTimer)
+    {
+        // Dancer has two combo chains:
+        // Single target: Cascade (15989) → Fountain (15990)
+        // AoE: Windmill (15993) → Bladeshower (15994)
+
+        if (comboTimer <= 0)
+            return 0;
+
+        // Cascade started - next is Fountain
+        if (comboAction == DNCActions.Cascade.ActionId)
+            return 1;
+
+        // Windmill started - next is Bladeshower
+        if (comboAction == DNCActions.Windmill.ActionId)
+            return 1;
+
+        return 0;
+    }
+
+    /// <summary>
+    /// Updates MP forecast. Dancers don't use MP for abilities.
+    /// </summary>
+    protected override void UpdateMpForecast(IPlayerCharacter player)
+    {
+        // Dancers don't use MP for any abilities
+        MpForecastService.Update(
+            (int)player.CurrentMp,
+            (int)player.MaxMp,
+            hasLucidDreaming: false);
+    }
+
+    /// <inheritdoc />
+    protected override ITerpsichoreContext CreateContext(IPlayerCharacter player, bool inCombat, bool isMoving)
+    {
+        return new TerpsichoreContext(
+            player: player,
+            inCombat: inCombat,
+            isMoving: isMoving,
+            canExecuteGcd: ActionService.CanExecuteGcd,
+            canExecuteOgcd: ActionService.CanExecuteOgcd,
+            actionService: ActionService,
+            actionTracker: ActionTracker,
+            combatEventService: CombatEventService,
+            damageIntakeService: DamageIntakeService,
+            damageTrendService: DamageTrendService,
+            frameCache: FrameCache,
+            configuration: Configuration,
+            debuffDetectionService: DebuffDetectionService,
+            hpPredictionService: HpPredictionService,
+            mpForecastService: MpForecastService,
+            playerStatsService: PlayerStatsService,
+            targetingService: TargetingService,
+            objectTable: ObjectTable,
+            partyList: PartyList,
+            statusHelper: _statusHelper,
+            partyHelper: _partyHelper,
+            debugState: _terpsichoreDebugState,
+            esprit: _esprit,
+            feathers: _feathers,
+            isDancing: _isDancing,
+            stepIndex: _stepIndex,
+            currentStep: _currentStep,
+            danceSteps: _danceSteps,
+            comboStep: ComboStep,
+            lastComboAction: LastComboAction,
+            comboTimeRemaining: ComboTimeRemaining,
+            timelineService: _timelineService,
+            partyCoordinationService: _partyCoordinationService,
+            trainingService: _trainingService,
+            log: Log);
+    }
+
+    /// <inheritdoc />
+    protected override void SyncDebugState(ITerpsichoreContext context)
+    {
+        // Map Dancer debug state to common debug state fields
+        _debugState.PlanningState = _terpsichoreDebugState.PlanningState;
+        _debugState.PlannedAction = _terpsichoreDebugState.PlannedAction;
+        _debugState.DpsState = _terpsichoreDebugState.DamageState;
+        // Note: BuffState is tracked in TerpsichoreDebugState but not in common DebugState
+
+        // Party/player info
+        _debugState.PlayerHpPercent = (float)context.Player.CurrentHp / context.Player.MaxHp;
+        _debugState.PartyListCount = context.PartyList.Length;
+        _debugState.TargetInfo = TargetingDebugHelper.FormatTargetInfo(null, context.TargetingService);
+    }
+
+    /// <inheritdoc />
+    protected override void ExecuteModules(ITerpsichoreContext context, bool isMoving, bool inCombat)
+    {
+        if (Configuration.Targeting.PauseAllOnStandStillPunisher
+            && PlayerSafetyHelper.IsStandStillPunisherActive(context.Player))
+            return;
+        if (Configuration.Targeting.PauseOnPlayerChannel
+            && PlayerSafetyHelper.IsPlayerIntentChannelActive(context.Player))
+            return;
+
+        if (TryDispatchTincture(context, inCombat)) return;
+
+        _scheduler.Reset();
+        foreach (var module in _modules)
+            module.CollectCandidates(context, _scheduler, isMoving);
+
+        // Terpsichore is the one DPS that fires oGCDs pre-combat (Closed Position +
+        // Standard Step before the pull). Drop the inCombat gate on the oGCD pass so
+        // BuffModule.CollectCandidates can push those candidates and the scheduler
+        // dispatches them. Per-candidate logic in BuffModule still gates correctly.
+        if (ActionService.CanExecuteOgcd)
+            _scheduler.DispatchOgcd(context);
+
+        if (ActionService.CanExecuteGcd)
+            _scheduler.DispatchGcd(context);
+    }
+
+    #endregion
+}

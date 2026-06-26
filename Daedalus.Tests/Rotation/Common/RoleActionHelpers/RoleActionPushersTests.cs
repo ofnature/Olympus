@@ -1,0 +1,484 @@
+using Moq;
+using Daedalus.Config;
+using Daedalus.Data;
+using Daedalus.Rotation.Common;
+using Daedalus.Rotation.Common.RoleActionHelpers;
+using Daedalus.Rotation.Common.Scheduling;
+using Daedalus.Services.Action;
+using Daedalus.Services.Party;
+using Daedalus.Tests.Mocks;
+using Daedalus.Tests.Rotation.Common.Scheduling;
+using Xunit;
+
+namespace Daedalus.Tests.Rotation.Common.RoleActionHelpers;
+
+public class RoleActionPushersLucidTests
+{
+    private static AbilityBehavior LucidBehavior() => new()
+    {
+        Action = RoleActions.LucidDreaming,
+        Toggle = _ => true,
+    };
+
+    private static (Mock<IRotationContext> ctx, Mock<IActionService> actionService) BuildContext(
+        byte playerLevel,
+        uint currentMp,
+        uint maxMp,
+        bool actionReady = true)
+    {
+        var player = MockBuilders.CreateMockPlayerCharacter(
+            level: playerLevel,
+            currentMp: currentMp,
+            maxMp: maxMp);
+        player.SetupGet(p => p.GameObjectId).Returns(123ul);
+
+        var actionService = MockBuilders.CreateMockActionService();
+        actionService.Setup(a => a.IsActionReady(RoleActions.LucidDreaming.ActionId)).Returns(actionReady);
+        actionService.Setup(a => a.PlayerHasStatus(RoleActions.LucidDreaming.AppliedStatusId.GetValueOrDefault())).Returns(false);
+
+        var ctx = new Mock<IRotationContext>();
+        ctx.SetupGet(c => c.Player).Returns(player.Object);
+        ctx.SetupGet(c => c.ActionService).Returns(actionService.Object);
+
+        return (ctx, actionService);
+    }
+
+    [Fact]
+    public void Skips_When_Level_Too_Low()
+    {
+        var (ctx, _) = BuildContext(
+            playerLevel: (byte)(RoleActions.LucidDreaming.MinLevel - 1),
+            currentMp: 5_000,
+            maxMp: 10_000);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushLucidDreaming(ctx.Object, scheduler, LucidBehavior(), 0.70f, 100);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
+    public void Skips_When_Lucid_Already_Active()
+    {
+        var (ctx, actionService) = BuildContext(playerLevel: 90, currentMp: 5_000, maxMp: 10_000);
+        actionService.Setup(a => a.PlayerHasStatus(RoleActions.LucidDreaming.AppliedStatusId.GetValueOrDefault())).Returns(true);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushLucidDreaming(ctx.Object, scheduler, LucidBehavior(), 0.70f, 100);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
+    public void Skips_When_OnCooldown()
+    {
+        var (ctx, _) = BuildContext(playerLevel: 90, currentMp: 5_000, maxMp: 10_000, actionReady: false);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushLucidDreaming(ctx.Object, scheduler, LucidBehavior(), 0.70f, 100);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
+    public void Skips_When_Mp_Above_Threshold()
+    {
+        // 85% MP, threshold 70% -- should not push
+        var (ctx, _) = BuildContext(playerLevel: 90, currentMp: 8_500, maxMp: 10_000);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushLucidDreaming(ctx.Object, scheduler, LucidBehavior(), 0.70f, 100);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
+    public void Pushes_When_All_Gates_Pass()
+    {
+        // 50% MP, threshold 70% -- should push
+        var (ctx, _) = BuildContext(playerLevel: 90, currentMp: 5_000, maxMp: 10_000);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushLucidDreaming(ctx.Object, scheduler, LucidBehavior(), 0.70f, 100);
+
+        var queue = scheduler.InspectOgcdQueue();
+        Assert.Single(queue);
+        Assert.Equal(100, queue[0].Priority);
+        Assert.Equal(RoleActions.LucidDreaming.ActionId, queue[0].Behavior.Action.ActionId);
+    }
+
+    [Fact]
+    public void Invokes_OnDispatched_Callback_Through_Scheduler_Queue()
+    {
+        var (ctx, _) = BuildContext(playerLevel: 90, currentMp: 5_000, maxMp: 10_000);
+        var scheduler = SchedulerFactory.CreateForTest();
+        var dispatched = false;
+
+        RoleActionPushers.TryPushLucidDreaming(ctx.Object, scheduler, LucidBehavior(), 0.70f, 100,
+            onDispatched: _ => dispatched = true);
+
+        var queue = scheduler.InspectOgcdQueue();
+        Assert.Single(queue);
+        // Invoke the callback directly to verify it was wired through correctly
+        queue[0].OnDispatched?.Invoke(ctx.Object);
+        Assert.True(dispatched);
+    }
+}
+
+public class RoleActionPushersSecondWindTests
+{
+    private static AbilityBehavior SecondWindBehavior() => new()
+    {
+        Action = RoleActions.SecondWind,
+        Toggle = _ => true,
+    };
+
+    private static (Mock<IRotationContext> ctx, Mock<IActionService> actionService) BuildContext(
+        byte playerLevel,
+        uint currentHp,
+        uint maxHp,
+        bool actionReady = true)
+    {
+        var player = MockBuilders.CreateMockPlayerCharacter(
+            level: playerLevel,
+            currentHp: currentHp,
+            maxHp: maxHp);
+        player.SetupGet(p => p.GameObjectId).Returns(456ul);
+
+        var actionService = MockBuilders.CreateMockActionService();
+        actionService.Setup(a => a.IsActionReady(RoleActions.SecondWind.ActionId)).Returns(actionReady);
+
+        var ctx = new Mock<IRotationContext>();
+        ctx.SetupGet(c => c.Player).Returns(player.Object);
+        ctx.SetupGet(c => c.ActionService).Returns(actionService.Object);
+
+        return (ctx, actionService);
+    }
+
+    [Fact]
+    public void Skips_When_Level_Too_Low()
+    {
+        var (ctx, _) = BuildContext(
+            playerLevel: (byte)(RoleActions.SecondWind.MinLevel - 1),
+            currentHp: 4_000,
+            maxHp: 10_000);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushSecondWind(ctx.Object, scheduler, SecondWindBehavior(), 0.50f, 100);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
+    public void Skips_When_OnCooldown()
+    {
+        var (ctx, _) = BuildContext(playerLevel: 90, currentHp: 4_000, maxHp: 10_000, actionReady: false);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushSecondWind(ctx.Object, scheduler, SecondWindBehavior(), 0.50f, 100);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
+    public void Skips_When_Hp_Above_Threshold()
+    {
+        // 85% HP, threshold 50% -- should not push
+        var (ctx, _) = BuildContext(playerLevel: 90, currentHp: 8_500, maxHp: 10_000);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushSecondWind(ctx.Object, scheduler, SecondWindBehavior(), 0.50f, 100);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
+    public void Pushes_When_All_Gates_Pass()
+    {
+        // 40% HP, threshold 50% -- should push
+        var (ctx, _) = BuildContext(playerLevel: 90, currentHp: 4_000, maxHp: 10_000);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushSecondWind(ctx.Object, scheduler, SecondWindBehavior(), 0.50f, 100);
+
+        var queue = scheduler.InspectOgcdQueue();
+        Assert.Single(queue);
+        Assert.Equal(100, queue[0].Priority);
+        Assert.Equal(RoleActions.SecondWind.ActionId, queue[0].Behavior.Action.ActionId);
+    }
+
+    [Fact]
+    public void Invokes_OnDispatched_Callback_Through_Scheduler_Queue()
+    {
+        var (ctx, _) = BuildContext(playerLevel: 90, currentHp: 4_000, maxHp: 10_000);
+        var scheduler = SchedulerFactory.CreateForTest();
+        var dispatched = false;
+
+        RoleActionPushers.TryPushSecondWind(ctx.Object, scheduler, SecondWindBehavior(), 0.50f, 100,
+            onDispatched: _ => dispatched = true);
+
+        var queue = scheduler.InspectOgcdQueue();
+        Assert.Single(queue);
+        // Invoke the callback directly to verify it was wired through correctly
+        queue[0].OnDispatched?.Invoke(ctx.Object);
+        Assert.True(dispatched);
+    }
+}
+
+public class RoleActionPushersBloodbathTests
+{
+    private static AbilityBehavior BloodbathBehavior() => new()
+    {
+        Action = RoleActions.Bloodbath,
+        Toggle = _ => true,
+    };
+
+    private static (Mock<IRotationContext> ctx, Mock<IActionService> actionService) BuildContext(
+        byte playerLevel,
+        uint currentHp,
+        uint maxHp,
+        bool actionReady = true,
+        bool buffActive = false)
+    {
+        var player = MockBuilders.CreateMockPlayerCharacter(
+            level: playerLevel,
+            currentHp: currentHp,
+            maxHp: maxHp);
+        player.SetupGet(p => p.GameObjectId).Returns(789ul);
+
+        var actionService = MockBuilders.CreateMockActionService();
+        actionService.Setup(a => a.IsActionReady(RoleActions.Bloodbath.ActionId)).Returns(actionReady);
+        actionService.Setup(a => a.PlayerHasStatus(RoleActions.Bloodbath.AppliedStatusId.GetValueOrDefault())).Returns(buffActive);
+
+        var ctx = new Mock<IRotationContext>();
+        ctx.SetupGet(c => c.Player).Returns(player.Object);
+        ctx.SetupGet(c => c.ActionService).Returns(actionService.Object);
+
+        return (ctx, actionService);
+    }
+
+    [Fact]
+    public void Skips_When_Level_Too_Low()
+    {
+        var (ctx, _) = BuildContext(
+            playerLevel: (byte)(RoleActions.Bloodbath.MinLevel - 1),
+            currentHp: 4_000,
+            maxHp: 10_000);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushBloodbath(ctx.Object, scheduler, BloodbathBehavior(), 0.85f, 100);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
+    public void Skips_When_Buff_Already_Active()
+    {
+        var (ctx, _) = BuildContext(playerLevel: 90, currentHp: 4_000, maxHp: 10_000, buffActive: true);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushBloodbath(ctx.Object, scheduler, BloodbathBehavior(), 0.85f, 100);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
+    public void Skips_When_OnCooldown()
+    {
+        var (ctx, _) = BuildContext(playerLevel: 90, currentHp: 4_000, maxHp: 10_000, actionReady: false);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushBloodbath(ctx.Object, scheduler, BloodbathBehavior(), 0.85f, 100);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
+    public void Skips_When_Hp_Above_Threshold()
+    {
+        // 90% HP, threshold 85% -- should not push
+        var (ctx, _) = BuildContext(playerLevel: 90, currentHp: 9_000, maxHp: 10_000);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushBloodbath(ctx.Object, scheduler, BloodbathBehavior(), 0.85f, 100);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
+    public void Pushes_When_All_Gates_Pass()
+    {
+        // 50% HP, threshold 85% -- should push
+        var (ctx, _) = BuildContext(playerLevel: 90, currentHp: 5_000, maxHp: 10_000);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushBloodbath(ctx.Object, scheduler, BloodbathBehavior(), 0.85f, 100);
+
+        var queue = scheduler.InspectOgcdQueue();
+        Assert.Single(queue);
+        Assert.Equal(100, queue[0].Priority);
+        Assert.Equal(RoleActions.Bloodbath.ActionId, queue[0].Behavior.Action.ActionId);
+    }
+
+    [Fact]
+    public void Invokes_OnDispatched_Callback_Through_Scheduler_Queue()
+    {
+        var (ctx, _) = BuildContext(playerLevel: 90, currentHp: 5_000, maxHp: 10_000);
+        var scheduler = SchedulerFactory.CreateForTest();
+        var dispatched = false;
+
+        RoleActionPushers.TryPushBloodbath(ctx.Object, scheduler, BloodbathBehavior(), 0.85f, 100,
+            onDispatched: _ => dispatched = true);
+
+        var queue = scheduler.InspectOgcdQueue();
+        Assert.Single(queue);
+        // Invoke the callback directly to verify it was wired through correctly
+        queue[0].OnDispatched?.Invoke(ctx.Object);
+        Assert.True(dispatched);
+    }
+}
+
+public class RoleActionPushersRampartTests
+{
+    private static AbilityBehavior RampartBehavior() => new()
+    {
+        Action = RoleActions.Rampart,
+        Toggle = _ => true,
+    };
+
+    private static (Mock<ITankRotationContext> ctx, Mock<IActionService> actionService, Mock<IPartyCoordinationService> partyCoord) BuildContext(
+        byte playerLevel,
+        bool actionReady = true,
+        bool buffActive = false,
+        bool coTankUsedRecently = false,
+        bool nullPartyCoord = false,
+        bool enableDefensiveCoord = true)
+    {
+        var player = MockBuilders.CreateMockPlayerCharacter(
+            level: playerLevel,
+            currentHp: 10_000,
+            maxHp: 10_000);
+        player.SetupGet(p => p.GameObjectId).Returns(321ul);
+
+        var actionService = MockBuilders.CreateMockActionService();
+        actionService.Setup(a => a.IsActionReady(RoleActions.Rampart.ActionId)).Returns(actionReady);
+        actionService.Setup(a => a.PlayerHasStatus(RoleActions.Rampart.AppliedStatusId.GetValueOrDefault())).Returns(buffActive);
+
+        var partyCoord = new Mock<IPartyCoordinationService>();
+        partyCoord.Setup(p => p.WasActionUsedByOther(RoleActions.Rampart.ActionId, 20f)).Returns(coTankUsedRecently);
+
+        var config = new Configuration();
+        config.Tank.EnableDefensiveCoordination = enableDefensiveCoord;
+
+        var ctx = new Mock<ITankRotationContext>();
+        ctx.SetupGet(c => c.Player).Returns(player.Object);
+        ctx.SetupGet(c => c.ActionService).Returns(actionService.Object);
+        ctx.SetupGet(c => c.PartyCoordinationService).Returns(nullPartyCoord ? null : partyCoord.Object);
+        ctx.SetupGet(c => c.Configuration).Returns(config);
+
+        return (ctx, actionService, partyCoord);
+    }
+
+    [Fact]
+    public void Skips_When_Level_Too_Low()
+    {
+        var (ctx, _, _) = BuildContext(playerLevel: (byte)(RoleActions.Rampart.MinLevel - 1));
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushRampart(ctx.Object, scheduler, RampartBehavior(), 100);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
+    public void Skips_When_Buff_Already_Active()
+    {
+        var (ctx, _, _) = BuildContext(playerLevel: 90, buffActive: true);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushRampart(ctx.Object, scheduler, RampartBehavior(), 100);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
+    public void Skips_When_OnCooldown()
+    {
+        var (ctx, _, _) = BuildContext(playerLevel: 90, actionReady: false);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushRampart(ctx.Object, scheduler, RampartBehavior(), 100);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
+    public void Skips_When_CoTank_Used_Rampart_Recently()
+    {
+        var (ctx, _, _) = BuildContext(playerLevel: 90, coTankUsedRecently: true);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushRampart(ctx.Object, scheduler, RampartBehavior(), 100);
+
+        Assert.Empty(scheduler.InspectOgcdQueue());
+    }
+
+    [Fact]
+    public void Pushes_When_All_Gates_Pass()
+    {
+        var (ctx, _, _) = BuildContext(playerLevel: 90);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushRampart(ctx.Object, scheduler, RampartBehavior(), 100);
+
+        var queue = scheduler.InspectOgcdQueue();
+        Assert.Single(queue);
+        Assert.Equal(100, queue[0].Priority);
+        Assert.Equal(RoleActions.Rampart.ActionId, queue[0].Behavior.Action.ActionId);
+    }
+
+    [Fact]
+    public void Broadcasts_OnCooldownUsed_OnDispatch()
+    {
+        var (ctx, _, partyCoord) = BuildContext(playerLevel: 90);
+        var scheduler = SchedulerFactory.CreateForTest();
+
+        RoleActionPushers.TryPushRampart(ctx.Object, scheduler, RampartBehavior(), 100);
+
+        var queue = scheduler.InspectOgcdQueue();
+        Assert.Single(queue);
+        queue[0].OnDispatched?.Invoke(ctx.Object);
+
+        partyCoord.Verify(p => p.OnCooldownUsed(RoleActions.Rampart.ActionId, 90_000), Times.Once);
+    }
+
+    [Fact]
+    public void Invokes_Caller_OnDispatched_Callback()
+    {
+        var (ctx, _, _) = BuildContext(playerLevel: 90);
+        var scheduler = SchedulerFactory.CreateForTest();
+        var callerInvoked = false;
+
+        RoleActionPushers.TryPushRampart(ctx.Object, scheduler, RampartBehavior(), 100,
+            onDispatched: _ => callerInvoked = true);
+
+        var queue = scheduler.InspectOgcdQueue();
+        Assert.Single(queue);
+        queue[0].OnDispatched?.Invoke(ctx.Object);
+        Assert.True(callerInvoked);
+    }
+
+    [Fact]
+    public void Pushes_When_DefensiveCoordination_Disabled_Even_If_CoTank_Used()
+    {
+        // EnableDefensiveCoordination = false should bypass the WasActionUsedByOther skip
+        var (ctx, actionService, partyCoord) = BuildContext(playerLevel: 90, enableDefensiveCoord: false);
+        actionService.Setup(a => a.IsActionReady(RoleActions.Rampart.ActionId)).Returns(true);
+        partyCoord.Setup(p => p.WasActionUsedByOther(RoleActions.Rampart.ActionId, 20f)).Returns(true);
+        var scheduler = SchedulerFactory.CreateForTest(actionService);
+
+        RoleActionPushers.TryPushRampart(ctx.Object, scheduler, RampartBehavior(), priority: 100);
+
+        Assert.Single(scheduler.InspectOgcdQueue());  // Push happens despite co-tank overlap
+    }
+}

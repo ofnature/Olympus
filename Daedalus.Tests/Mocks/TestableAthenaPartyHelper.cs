@@ -1,0 +1,56 @@
+using System.Collections.Generic;
+using System.Linq;
+using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Game.ClientState.Party;
+using Dalamud.Plugin.Services;
+using Moq;
+using Daedalus.Config;
+using Daedalus.Rotation.AthenaCore.Helpers;
+using Daedalus.Services;
+using Daedalus.Services.Prediction;
+
+namespace Daedalus.Tests.Mocks;
+
+/// <summary>
+/// Testable subclass of AthenaPartyHelper that overrides GetAllPartyMembers
+/// to return a pre-built party list without Dalamud runtime dependencies.
+/// Requires AthenaPartyHelper to be non-sealed.
+/// </summary>
+public sealed class TestableAthenaPartyHelper : AthenaPartyHelper
+{
+    private readonly List<IBattleChara> _members;
+
+    public TestableAthenaPartyHelper(IEnumerable<IBattleChara> members, Configuration? config = null)
+        : base(
+            MockBuilders.CreateMockObjectTable().Object,
+            MockBuilders.CreateMockPartyList(length: 0).Object,
+            CreateHpPredictionService(),
+            config ?? new Configuration(),
+            new AthenaStatusHelper())
+    {
+        _members = members.ToList();
+    }
+
+    public override IEnumerable<IBattleChara> GetAllPartyMembers(
+        IPlayerCharacter player, bool includeDead = false)
+    {
+        // Return all members regardless of includeDead — production callers
+        // apply their own dead-member guards (e.g., the IsDead check in
+        // CountPartyMembersNeedingAoEHeal). This ensures tests exercise those guards.
+        return _members;
+    }
+
+    private static HpPredictionService CreateHpPredictionService()
+    {
+        var combatEventsMock = new Mock<ICombatEventService>();
+
+        combatEventsMock.SetupAdd(x => x.OnLocalPlayerHealLanded += It.IsAny<Action<uint>>());
+        combatEventsMock.SetupRemove(x => x.OnLocalPlayerHealLanded -= It.IsAny<Action<uint>>());
+
+        combatEventsMock.Setup(x => x.GetShadowHp(It.IsAny<uint>(), It.IsAny<uint>()))
+            .Returns((uint _, uint hp) => hp);
+
+        return new HpPredictionService(combatEventsMock.Object, new Configuration());
+    }
+}

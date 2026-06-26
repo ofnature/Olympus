@@ -1,0 +1,239 @@
+using System.Numerics;
+using Dalamud.Bindings.ImGui;
+using Daedalus.Localization;
+using Daedalus.Models;
+using Daedalus.Services.Debug;
+
+namespace Daedalus.Windows.Debug.Tabs;
+
+/// <summary>
+/// Actions tab: action history, spell usage, GCD state details.
+/// </summary>
+public static class ActionsTab
+{
+    // Filter state (persists across frames)
+    private static bool _showSuccess = true;
+    private static bool _showFailures = true;
+    private static bool _showSkips = true;
+
+    public static void Draw(DebugSnapshot snapshot, Configuration config, DebugService debugService)
+    {
+        // GCD State Details Section
+        if (IsSectionVisible(config, "GcdDetails"))
+        {
+            DrawGcdStateDetails(snapshot);
+            ImGui.Spacing();
+        }
+
+        // Spell Usage Section
+        if (IsSectionVisible(config, "SpellUsage"))
+        {
+            DrawSpellUsage(snapshot);
+            ImGui.Spacing();
+        }
+
+        // Action History Section
+        if (IsSectionVisible(config, "ActionHistory"))
+        {
+            DrawFilters(debugService, snapshot);
+            ImGui.Separator();
+            DrawActionHistory(snapshot);
+        }
+    }
+
+    private static void DrawGcdStateDetails(DebugSnapshot snapshot)
+    {
+        ImGui.Text(Loc.T(LocalizedStrings.Debug.GcdStateDetails, "GCD State Details"));
+        ImGui.Separator();
+
+        var gcd = snapshot.GcdState;
+        var yes = Loc.T(LocalizedStrings.Debug.Yes, "Yes");
+        var no = Loc.T(LocalizedStrings.Debug.No, "No");
+
+        if (ImGui.BeginTable("GcdDetailsTable", 2, ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.SizingStretchProp))
+        {
+            ImGui.TableSetupColumn(Loc.T(LocalizedStrings.Debug.PropertyHeader, "Property"), ImGuiTableColumnFlags.WidthFixed, 150);
+            ImGui.TableSetupColumn(Loc.T(LocalizedStrings.Debug.ValueHeader, "Value"), ImGuiTableColumnFlags.WidthStretch);
+
+            DrawTableRow(Loc.T(LocalizedStrings.Debug.CurrentStateLabel, "Current State:"), gcd.State.ToString(), DebugColors.GetGcdStateColor(gcd.State));
+            DrawTableRow(Loc.T(LocalizedStrings.Debug.GcdRemaining, "GCD Remaining:"), $"{gcd.GcdRemaining:F3}s");
+            DrawTableRow(Loc.T(LocalizedStrings.Debug.AnimationLock, "Animation Lock:"), $"{gcd.AnimationLockRemaining:F3}s");
+            DrawTableRow(Loc.T(LocalizedStrings.Debug.IsCasting, "Is Casting:"), gcd.IsCasting ? yes : no);
+            DrawTableRow(Loc.T(LocalizedStrings.Debug.CanExecuteGcd, "Can Execute GCD:"), gcd.CanExecuteGcd ? yes : no, gcd.CanExecuteGcd ? DebugColors.Success : DebugColors.Dim);
+            DrawTableRow(Loc.T(LocalizedStrings.Debug.CanExecuteOgcd, "Can Execute oGCD:"), gcd.CanExecuteOgcd ? yes : no, gcd.CanExecuteOgcd ? DebugColors.Heal : DebugColors.Dim);
+            DrawTableRow(Loc.T(LocalizedStrings.Debug.WeaveSlots, "Weave Slots:"), gcd.WeaveSlots.ToString());
+            DrawTableRow(Loc.T(LocalizedStrings.Debug.LastAction, "Last Action:"), gcd.LastActionName);
+
+            // Debug flags from ActionTracker
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.TextColored(DebugColors.Dim, Loc.T(LocalizedStrings.Debug.DebugFlags, "--- Debug Flags ---"));
+            ImGui.TableNextColumn();
+
+            var readyColor = gcd.DebugGcdReady ? DebugColors.Failure : DebugColors.Success;
+            DrawTableRow(Loc.T(LocalizedStrings.Debug.GcdReadyDowntime, "GCD Ready (downtime):"), gcd.DebugGcdReady ? Loc.T(LocalizedStrings.Debug.YesUpper, "YES") : no, readyColor);
+            DrawTableRow(Loc.T(LocalizedStrings.Debug.IsActive, "Is Active:"), gcd.DebugIsActive ? yes : no);
+
+            ImGui.EndTable();
+        }
+    }
+
+    private static void DrawTableRow(string label, string value, Vector4? color = null)
+    {
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.Text(label);
+        ImGui.TableNextColumn();
+        if (color.HasValue)
+            ImGui.TextColored(color.Value, value);
+        else
+            ImGui.Text(value);
+    }
+
+    private static void DrawSpellUsage(DebugSnapshot snapshot)
+    {
+        ImGui.Text(Loc.T(LocalizedStrings.Debug.SpellUsage, "Spell Usage"));
+        ImGui.Separator();
+
+        var actions = snapshot.Actions;
+
+        if (actions.SpellUsage.Count == 0)
+        {
+            ImGui.TextColored(DebugColors.Dim, Loc.T(LocalizedStrings.Debug.NoSpellsCastYet, "No spells cast yet"));
+            return;
+        }
+
+        // Calculate columns based on available width
+        var columnWidth = 160f;
+        var columns = (int)(ImGui.GetContentRegionAvail().X / columnWidth);
+        if (columns < 1) columns = 1;
+
+        var i = 0;
+        foreach (var spell in actions.SpellUsage)
+        {
+            if (i > 0 && i % columns != 0)
+                ImGui.SameLine(columnWidth * (i % columns));
+
+            ImGui.TextColored(DebugColors.Success, $"{spell.Count}");
+            ImGui.SameLine();
+            ImGui.Text(spell.Name);
+
+            i++;
+        }
+    }
+
+    private static void DrawFilters(DebugService debugService, DebugSnapshot snapshot)
+    {
+        ImGui.Text(Loc.T(LocalizedStrings.Debug.Filters, "Filters:"));
+        ImGui.SameLine();
+        ImGui.Checkbox(Loc.T(LocalizedStrings.Debug.SuccessFilter, "Success"), ref _showSuccess);
+        ImGui.SameLine();
+        ImGui.Checkbox(Loc.T(LocalizedStrings.Debug.Failures, "Failures"), ref _showFailures);
+        ImGui.SameLine();
+        ImGui.Checkbox(Loc.T(LocalizedStrings.Debug.Skips, "Skips"), ref _showSkips);
+
+        ImGui.SameLine(ImGui.GetContentRegionAvail().X - 160);
+        if (ImGui.Button(Loc.T(LocalizedStrings.Debug.Export, "Export")))
+        {
+            var lines = new System.Text.StringBuilder();
+            foreach (var attempt in snapshot.Actions.History)
+            {
+                if (!ShouldShowAttempt(attempt))
+                    continue;
+
+                var ts = attempt.Timestamp.ToString("HH:mm:ss.fff");
+                var icon = DebugColors.GetResultIcon(attempt.Result);
+                if (attempt.Result == ActionResult.Success)
+                    lines.AppendLine($"{ts} {icon} [{attempt.SpellName}] -> {attempt.TargetName} (HP: {attempt.TargetHp})");
+                else
+                    lines.AppendLine($"{ts} {icon} [{attempt.SpellName}] {attempt.FailureReason ?? attempt.Result.ToString()}");
+            }
+            ImGui.SetClipboardText(lines.ToString());
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button(Loc.T(LocalizedStrings.Debug.Clear, "Clear")))
+        {
+            debugService.ClearHistory();
+        }
+    }
+
+    private static void DrawActionHistory(DebugSnapshot snapshot)
+    {
+        ImGui.Text(Loc.T(LocalizedStrings.Debug.ActionHistory, "Action History"));
+
+        var childSize = new Vector2(0, -1);
+        if (ImGui.BeginChild("ActionLog", childSize, true, ImGuiWindowFlags.HorizontalScrollbar))
+        {
+            var history = snapshot.Actions.History;
+
+            foreach (var attempt in history)
+            {
+                if (!ShouldShowAttempt(attempt))
+                    continue;
+
+                DrawAttemptLine(attempt);
+            }
+        }
+
+        ImGui.EndChild();
+    }
+
+    private static bool ShouldShowAttempt(ActionAttempt attempt)
+    {
+        return attempt.Result switch
+        {
+            ActionResult.Success => _showSuccess,
+            ActionResult.NoTarget => _showSkips,
+            ActionResult.ActionNotReady or ActionResult.OnCooldown => _showSkips,
+            _ => _showFailures
+        };
+    }
+
+    private static void DrawAttemptLine(ActionAttempt attempt)
+    {
+        var color = DebugColors.GetResultColor(attempt.Result);
+        var timestamp = attempt.Timestamp.ToString("HH:mm:ss.fff");
+        var resultIcon = DebugColors.GetResultIcon(attempt.Result);
+
+        // Timestamp
+        ImGui.TextColored(DebugColors.Dim, timestamp);
+        ImGui.SameLine();
+
+        // Result icon and spell name
+        ImGui.TextColored(color, $"{resultIcon} [{attempt.SpellName}]");
+        ImGui.SameLine();
+
+        // Target or failure reason
+        if (attempt.Result == ActionResult.Success)
+        {
+            ImGui.TextColored(color, $"-> {attempt.TargetName} (HP: {attempt.TargetHp})");
+
+            // Show time since last cast if significant
+            if (attempt.TimeSinceLastCast > 0.1f)
+            {
+                ImGui.SameLine();
+                var gapColor = attempt.TimeSinceLastCast > 3.0f ? DebugColors.Failure : DebugColors.Dim;
+                ImGui.TextColored(gapColor, $"[+{attempt.TimeSinceLastCast:F2}s]");
+            }
+        }
+        else
+        {
+            ImGui.TextColored(color, attempt.FailureReason ?? attempt.Result.ToString());
+
+            // Show status code if available
+            if (attempt.StatusCode.HasValue && attempt.StatusCode.Value != 0)
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(DebugColors.Dim, $"(code: {attempt.StatusCode})");
+            }
+        }
+    }
+
+    private static bool IsSectionVisible(Configuration config, string section)
+    {
+        if (config.Debug.DebugSectionVisibility.TryGetValue(section, out var visible))
+            return visible;
+        return true;
+    }
+}

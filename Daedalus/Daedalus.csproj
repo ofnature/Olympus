@@ -1,0 +1,42 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+
+  <PropertyGroup>
+    <AssemblyName>Daedalus</AssemblyName>
+    <RootNamespace>Daedalus</RootNamespace>
+    <Version>0.1.0</Version>
+    <DalamudLibPath>$(AppData)\XIVLauncher\addon\Hooks\dev\</DalamudLibPath>
+  </PropertyGroup>
+
+  <!-- Allow the test assembly to access internal types -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Daedalus.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <!-- Embedded timeline resources -->
+  <ItemGroup>
+    <EmbeddedResource Include="Timeline\Data\*.txt" />
+  </ItemGroup>
+
+  <!-- Embedded training data (lessons and quizzes) - supports language subfolders -->
+  <ItemGroup>
+    <EmbeddedResource Include="Training\Data\Lessons\**\*.json" />
+    <EmbeddedResource Include="Training\Data\Quizzes\**\*.json" />
+  </ItemGroup>
+
+  <!-- Embedded localization files -->
+  <ItemGroup>
+    <EmbeddedResource Include="Localization\Loc\*.json" />
+  </ItemGroup>
+
+  <!-- Embedded changelog for in-game display -->
+  <ItemGroup>
+    <EmbeddedResource Include="CHANGELOG.md" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Pictomancy" Version="0.0.2" />
+  </ItemGroup>
+
+</Project>

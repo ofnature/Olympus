@@ -1,20 +1,20 @@
-# Olympus
+# Daedalus
 
-![Version](https://img.shields.io/github/v/release/RoseOfficial/Olympus?label=version)
-![Downloads](https://img.shields.io/github/downloads/RoseOfficial/Olympus/total)
-![Lines of Code](https://aschey.tech/tokei/github/RoseOfficial/Olympus?category=code)
-![Code Size](https://img.shields.io/github/languages/code-size/RoseOfficial/Olympus)
-![Last Commit](https://img.shields.io/github/last-commit/RoseOfficial/Olympus)
-![C#](https://img.shields.io/github/languages/top/RoseOfficial/Olympus)
+![Version](https://img.shields.io/github/v/release/RoseOfficial/Daedalus?label=version)
+![Downloads](https://img.shields.io/github/downloads/RoseOfficial/Daedalus/total)
+![Lines of Code](https://aschey.tech/tokei/github/RoseOfficial/Daedalus?category=code)
+![Code Size](https://img.shields.io/github/languages/code-size/RoseOfficial/Daedalus)
+![Last Commit](https://img.shields.io/github/last-commit/RoseOfficial/Daedalus)
+![C#](https://img.shields.io/github/languages/top/RoseOfficial/Daedalus)
 
-An intelligent rotation assistant for FFXIV that goes beyond automation. Olympus provides **intelligent decision-making** through fight prediction, party coordination, performance analytics, and an integrated training system to help you master your job.
+An intelligent rotation assistant for FFXIV that goes beyond automation. Daedalus provides **intelligent decision-making** through fight prediction, party coordination, performance analytics, and an integrated training system to help you master your job.
 
-## What Makes Olympus Different
+## What Makes Daedalus Different
 
 | Feature | Description |
 |---------|-------------|
 | **Fight Awareness** | Timeline integration predicts raidwides and tankbusters before they happen |
-| **Party Coordination** | Multiple Olympus users coordinate heals, mitigations, and burst windows via IPC |
+| **Party Coordination** | Multiple Daedalus users coordinate heals, mitigations, and burst windows via IPC |
 | **Training Mode** | Learn *why* abilities are chosen with real-time explanations and skill tracking |
 | **Performance Analytics** | Track GCD uptime, cooldown efficiency, and compare against FFLogs |
 
@@ -46,7 +46,7 @@ An intelligent rotation assistant for FFXIV that goes beyond automation. Olympus
 - **Arcadion Savage support** - Full timeline data for current tier
 
 ### Party Coordination (IPC)
-When multiple party members use Olympus, they coordinate automatically:
+When multiple party members use Daedalus, they coordinate automatically:
 
 | Coordination Type | What It Does |
 |-------------------|--------------|
@@ -101,21 +101,21 @@ Transform from passenger to pilot with intelligent coaching:
 2. Go to **Settings** (gear icon) → **Experimental**
 3. Under "Custom Plugin Repositories", add:
    ```
-   https://raw.githubusercontent.com/RoseOfficial/Olympus/main/repo.json
+   https://raw.githubusercontent.com/RoseOfficial/daedalus/main/repo.json
    ```
 4. Click **Save and Close**
-5. Search for "Olympus" and install
+5. Search for "Daedalus" and install
 
 Updates are delivered automatically.
 
 ### Manual Installation
-1. Download `Olympus.zip` from [Releases](https://github.com/RoseOfficial/Olympus/releases)
-2. Extract to `%APPDATA%\XIVLauncher\installedPlugins\Olympus\`
+1. Download `Daedalus.zip` from [Releases](https://github.com/RoseOfficial/daedalus/releases)
+2. Extract to `%APPDATA%\XIVLauncher\installedPlugins\Daedalus\`
 3. Reload plugins or restart the game
 
 ## Quick Start
 
-1. `/olympus` - Open the main window
+1. `/daedalus` - Open the main window
 2. Click **Enable** to activate
 3. Enter combat on any supported job
 4. Open **Training** to learn as you play
@@ -126,9 +126,9 @@ Updates are delivered automatically.
 
 | Command | Description |
 |---------|-------------|
-| `/olympus` | Open main window |
-| `/olympus toggle` | Enable/disable rotation |
-| `/olympus debug` | Open debug window |
+| `/daedalus` | Open main window |
+| `/daedalus toggle` | Enable/disable rotation |
+| `/daedalus debug` | Open debug window |
 
 ## Job Modules
 
@@ -161,7 +161,7 @@ Each rotation is named after a Greek deity:
 
 ## Contributing
 
-Issues and pull requests welcome at [GitHub](https://github.com/RoseOfficial/Olympus).
+Issues and pull requests welcome at [GitHub](https://github.com/RoseOfficial/daedalus).
 
 ## License
 

@@ -1,0 +1,255 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Game.ClientState.Party;
+using Dalamud.Plugin.Services;
+using Daedalus.Rotation.Common;
+using Daedalus.Rotation.Common.Helpers;
+using Daedalus.Services.Targeting;
+using Daedalus.Services;
+using Daedalus.Services.Action;
+using Daedalus.Services.Cooldown;
+using Daedalus.Services.Debuff;
+using Daedalus.Services.Healing;
+using Daedalus.Services.Party;
+using Daedalus.Services.Prediction;
+using Daedalus.Services.Stats;
+
+namespace Daedalus.Rotation.Base;
+
+/// <summary>
+/// Base class for healer rotation implementations.
+/// Provides shared healer services and update patterns.
+/// </summary>
+/// <typeparam name="TContext">The healer job-specific context type.</typeparam>
+/// <typeparam name="TModule">The healer job-specific module interface type.</typeparam>
+public abstract class BaseHealerRotation<TContext, TModule> : BaseRotation<TContext, TModule>
+    where TContext : IHealerRotationContext
+    where TModule : IRotationModule<TContext>
+{
+    #region Healer-Specific Services
+
+    protected readonly HealingSpellSelector HealingSpellSelector;
+    protected readonly ICooldownPlanner CooldownPlanner;
+    protected readonly CoHealerDetectionService CoHealerDetectionService;
+    protected readonly BossMechanicDetector BossMechanicDetector;
+    protected readonly ShieldTrackingService ShieldTrackingService;
+    protected readonly IPartyCoordinationService? PartyCoordinationService;
+
+    /// <summary>
+    /// Timer for rate-limiting gauge state broadcasts to once per second.
+    /// </summary>
+    private readonly Stopwatch _gaugeBroadcastTimer = Stopwatch.StartNew();
+
+    // Reusable lists to avoid per-frame allocations in UpdateJobSpecificServices
+    private readonly List<IBattleChara> _allMembersBuffer = new(8);
+    private readonly List<IBattleChara> _aliveMembersBuffer = new(8);
+    private readonly List<uint> _entityIdBuffer = new(8);
+
+    #endregion
+
+    #region Constructor
+
+    protected BaseHealerRotation(
+        IPluginLog log,
+        IActionTracker actionTracker,
+        ICombatEventService combatEventService,
+        IDamageIntakeService damageIntakeService,
+        IDamageTrendService damageTrendService,
+        Configuration configuration,
+        IObjectTable objectTable,
+        IPartyList partyList,
+        ITargetingService targetingService,
+        IHpPredictionService hpPredictionService,
+        ActionService actionService,
+        IPlayerStatsService playerStatsService,
+        IDebuffDetectionService debuffDetectionService,
+        HealingSpellSelector healingSpellSelector,
+        ICooldownPlanner cooldownPlanner,
+        ShieldTrackingService shieldTrackingService,
+        IPartyCoordinationService? partyCoordinationService = null,
+        IErrorMetricsService? errorMetrics = null,
+        Daedalus.Services.Consumables.ITinctureDispatcher? tinctureDispatcher = null,
+        Daedalus.Services.Pull.IPullIntentService? pullIntentService = null,
+        IBurstWindowService? burstWindowService = null)
+        : base(
+            log,
+            actionTracker,
+            combatEventService,
+            damageIntakeService,
+            damageTrendService,
+            configuration,
+            objectTable,
+            partyList,
+            targetingService,
+            hpPredictionService,
+            actionService,
+            playerStatsService,
+            debuffDetectionService,
+            errorMetrics,
+            tinctureDispatcher: tinctureDispatcher,
+            pullIntentService: pullIntentService,
+            burstWindowService: burstWindowService)
+    {
+        HealingSpellSelector = healingSpellSelector;
+        CooldownPlanner = cooldownPlanner;
+        ShieldTrackingService = shieldTrackingService;
+        PartyCoordinationService = partyCoordinationService;
+
+        // Initialize smart healing services (these are healer-specific and per-rotation)
+        CoHealerDetectionService = new CoHealerDetectionService(
+            combatEventService, partyList, objectTable, configuration.Healing, partyCoordinationService);
+        BossMechanicDetector = new BossMechanicDetector(
+            configuration.Healing, combatEventService, damageIntakeService, partyList, objectTable);
+    }
+
+    #endregion
+
+    #region Healer-Specific Updates
+
+    /// <summary>
+    /// Updates shared healer services (shield tracking, co-healer detection, mechanic detection).
+    /// </summary>
+    protected virtual void UpdateHealerServices(IPlayerCharacter player, bool inCombat)
+    {
+        CoHealerDetectionService.Update(player.EntityId);
+        BossMechanicDetector.Update();
+    }
+
+    /// <summary>
+    /// Updates damage trend service with party entity IDs.
+    /// </summary>
+    protected virtual void UpdateDamageTrend(IPlayerCharacter player, IEnumerable<uint> partyEntityIds)
+    {
+        DamageTrendService.Update(1f / 60f, partyEntityIds);
+    }
+
+    /// <summary>
+    /// Updates cooldown planner with party health state.
+    /// </summary>
+    protected virtual void UpdateCooldownPlanner(float avgHpPercent, float lowestHpPercent, int injuredCount)
+    {
+        var criticalCount = lowestHpPercent < 0.30f ? Math.Max(1, injuredCount / 2) : 0;
+        CooldownPlanner.Update(avgHpPercent, lowestHpPercent, injuredCount, criticalCount);
+    }
+
+    /// <summary>
+    /// The party helper for this healer rotation.
+    /// Used by the default implementations of GetPartyEntityIds and GetPartyHealthMetrics.
+    /// </summary>
+    protected abstract HealerPartyHelper HealerParty { get; }
+
+    /// <summary>
+    /// Collects party entity IDs for damage trend tracking.
+    /// </summary>
+    protected virtual IEnumerable<uint> GetPartyEntityIds(IPlayerCharacter player)
+    {
+        foreach (var member in HealerParty.GetAllPartyMembers(player))
+            yield return member.EntityId;
+    }
+
+    /// <summary>
+    /// Gets party health metrics for cooldown planning.
+    /// </summary>
+    protected virtual (float avgHpPercent, float lowestHpPercent, int injuredCount) GetPartyHealthMetrics(IPlayerCharacter player)
+    {
+        return HealerParty.CalculatePartyHealthMetrics(player);
+    }
+
+    #endregion
+
+    #region IDisposable
+
+    /// <summary>
+    /// Disposes resources used by the healer rotation.
+    /// </summary>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            CoHealerDetectionService.Dispose();
+            BossMechanicDetector.Dispose();
+        }
+        base.Dispose(disposing);
+    }
+
+    #endregion
+
+    #region Override Base Methods
+
+    /// <inheritdoc />
+    protected override void UpdateModuleDebugStates(TContext context)
+    {
+        base.UpdateModuleDebugStates(context);
+
+        if (Configuration.IsDebugWindowOpen)
+        {
+            DebugState.TargetInfo = TargetingDebugHelper.FormatTargetInfo(null, context.TargetingService);
+        }
+    }
+
+    /// <summary>
+    /// Override to add healer-specific service updates.
+    /// </summary>
+    protected override void UpdateJobSpecificServices(IPlayerCharacter player, bool inCombat)
+    {
+        // Combat state is now updated centrally in Plugin.OnFrameworkUpdate()
+        // before the dead-player gate, so all roles get correct session tracking.
+
+        // Update healer services
+        UpdateHealerServices(player, inCombat);
+
+        // Update damage trends and cooldown planner when in combat.
+        // Compute party members once and reuse for both calls to avoid a second object-table scan.
+        if (inCombat)
+        {
+            // Reuse buffers to avoid per-frame allocations
+            _allMembersBuffer.Clear();
+            _aliveMembersBuffer.Clear();
+            _entityIdBuffer.Clear();
+
+            foreach (var member in HealerParty.GetAllPartyMembers(player, includeDead: true))
+            {
+                _allMembersBuffer.Add(member);
+                if (!member.IsDead)
+                {
+                    _aliveMembersBuffer.Add(member);
+                    _entityIdBuffer.Add(member.EntityId);
+                }
+            }
+
+            UpdateDamageTrend(player, _entityIdBuffer);
+
+            var (avgHpPercent, lowestHpPercent, injuredCount) = HealerPartyHelper.CalculatePartyHealthMetrics(_aliveMembersBuffer);
+            UpdateCooldownPlanner(avgHpPercent, lowestHpPercent, injuredCount);
+
+            // Update party counts for debug tabs
+            DebugState.PartyListCount = _allMembersBuffer.Count;
+            DebugState.PartyValidCount = _aliveMembersBuffer.Count;
+        }
+
+        // Broadcast gauge state every 1s (not every frame) for multi-healer coordination
+        if (PartyCoordinationService != null &&
+            PartyCoordinationService.IsPartyCoordinationEnabled &&
+            _gaugeBroadcastTimer.ElapsedMilliseconds >= 1000)
+        {
+            BroadcastHealerGaugeState(player);
+            _gaugeBroadcastTimer.Restart();
+        }
+    }
+
+    /// <summary>
+    /// Override in derived classes to broadcast job-specific gauge state.
+    /// Called once per second when party coordination is enabled.
+    /// </summary>
+    /// <param name="player">The local player character.</param>
+    protected virtual void BroadcastHealerGaugeState(IPlayerCharacter player)
+    {
+        // Default implementation does nothing.
+        // Override in derived healer classes to broadcast job-specific gauge state.
+    }
+
+    #endregion
+}

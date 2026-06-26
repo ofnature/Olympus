@@ -1,0 +1,592 @@
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
+using System.Numerics;
+using System.Threading;
+using Dalamud.Plugin.Services;
+using Daedalus.Models;
+using Daedalus.Services.Analytics;
+
+using LuminaAction = Lumina.Excel.Sheets.Action;
+
+namespace Daedalus.Services;
+
+/// <summary>
+/// Tracks action attempts for debugging and GCD uptime analysis
+/// </summary>
+public sealed class ActionTracker : IActionTracker
+{
+    private readonly IDataManager dataManager;
+    private readonly int historySize;
+
+    private readonly LinkedList<ActionAttempt> history = new();
+    private readonly object historyLock = new();
+    private readonly ConcurrentDictionary<uint, string> _actionNameCache = new();
+    private IReadOnlyList<ActionAttempt>? cachedHistory;
+    private int cachedVersion;
+    private int historyVersion;
+
+    // GCD tracking - XIVAnalysis style (event-based, not frame-based)
+    private DateTime? combatStartTime;
+    private float totalGcdTimeSeconds;
+    private float lastCombatGcdUptime;
+    private DateTime? lastSuccessfulCast;
+
+    // Debug: current GCD state (updated each frame)
+    public float DebugGcdRemaining { get; private set; }
+    public bool DebugIsCasting { get; private set; }
+    public bool DebugHasAnimLock { get; private set; }
+    public bool DebugGcdReady { get; private set; }
+    public bool DebugIsActive { get; private set; }
+
+    // Debug: track last downtime event
+    public string LastDowntimeReason { get; private set; } = "";
+    public DateTime LastDowntimeTime { get; private set; }
+    private bool wasOnGcdLastFrame = true;
+    private int _downtimeEventCount;
+    public int DowntimeEventCount => _downtimeEventCount;
+
+    // Downtime categorization tracking
+    private float movementDowntimeSeconds;
+    private float deathDowntimeSeconds;
+    private float mechanicDowntimeSeconds;
+    private float unforcedDowntimeSeconds;
+    private Vector3 lastPlayerPosition;
+    private DateTime lastFrameTime;
+    private const float MovementThreshold = 0.5f; // Units moved to count as "moving"
+
+    // Incapacitation window tracking (Willful, Stun, etc.)
+    private readonly List<(DateTime Start, DateTime End)> incapacitationWindows = new();
+    private DateTime? incapacitationStart;
+    private bool wasIncapacitatedLastFrame;
+
+
+    // Statistics
+    private int totalAttempts;
+    private int successfulCasts;
+    private readonly Dictionary<ActionResult, int> failureReasons = new();
+    private readonly Dictionary<uint, int> spellUsageCounts = new();
+
+    public int HistorySize => historySize;
+
+    public ActionTracker(
+        IDataManager dataManager,
+        Configuration configuration)
+    {
+        this.dataManager = dataManager;
+        this.historySize = configuration.Debug.ActionHistorySize;
+    }
+
+    /// <summary>
+    /// Log an action attempt with full details
+    /// </summary>
+    public void LogAttempt(
+        uint actionId,
+        string? targetName,
+        uint? targetHp,
+        ActionResult result,
+        byte playerLevel,
+        uint? statusCode = null)
+    {
+        var now = DateTime.Now;
+
+        var spellName = GetActionName(actionId);
+        var failureReason = statusCode.HasValue && statusCode.Value != 0
+            ? ActionAttempt.StatusCodeDescription(statusCode.Value)
+            : result switch
+            {
+                ActionResult.NoTarget => "No valid target found",
+                ActionResult.Failed => "UseAction returned false",
+                _ => null
+            };
+
+        // Add to ring buffer and update statistics
+        lock (historyLock)
+        {
+            // Compute timeSinceLastCast inside the lock
+            var timeSinceLastCast = lastSuccessfulCast.HasValue
+                ? (float)(now - lastSuccessfulCast.Value).TotalSeconds
+                : 0f;
+
+            var attempt = new ActionAttempt
+            {
+                Timestamp = now,
+                SpellName = spellName,
+                ActionId = actionId,
+                TargetName = targetName,
+                TargetHp = targetHp,
+                Result = result,
+                PlayerLevel = playerLevel,
+                FailureReason = failureReason,
+                TimeSinceLastCast = timeSinceLastCast,
+                StatusCode = statusCode
+            };
+
+            // Update statistics
+            totalAttempts++;
+            if (result == ActionResult.Success)
+            {
+                successfulCasts++;
+                lastSuccessfulCast = now;
+
+                // Track spell usage
+                spellUsageCounts.TryGetValue(actionId, out var spellCount);
+                spellUsageCounts[actionId] = spellCount + 1;
+            }
+            else
+            {
+                failureReasons.TryGetValue(result, out var count);
+                failureReasons[result] = count + 1;
+            }
+
+            history.AddFirst(attempt);
+            while (history.Count > HistorySize)
+            {
+                history.RemoveLast();
+            }
+            historyVersion++;
+        }
+    }
+
+    /// <summary>
+    /// Get a cached copy of the action history.
+    /// Only regenerates when history has changed, avoiding per-frame allocations.
+    /// </summary>
+    public IReadOnlyList<ActionAttempt> GetHistory()
+    {
+        lock (historyLock)
+        {
+            if (cachedHistory == null || cachedVersion != historyVersion)
+            {
+                cachedHistory = history.ToArray();
+                cachedVersion = historyVersion;
+            }
+            return cachedHistory;
+        }
+    }
+
+    /// <summary>
+    /// Track GCD state each frame - call this every frame when you have a target.
+    /// Basic overload for backwards compatibility.
+    /// </summary>
+    public void TrackGcdState(bool gcdReady, float gcdRemaining = 0, bool isCasting = false, bool hasAnimLock = false, bool isActive = false)
+    {
+        TrackGcdState(gcdReady, gcdRemaining, isCasting, hasAnimLock, isActive, true, Vector3.Zero, false);
+    }
+
+    /// <summary>
+    /// Track GCD state each frame with downtime categorization.
+    /// </summary>
+    /// <param name="gcdReady">Whether the GCD is ready to be used.</param>
+    /// <param name="gcdRemaining">Seconds remaining on GCD.</param>
+    /// <param name="isCasting">Whether player is casting.</param>
+    /// <param name="hasAnimLock">Whether player has animation lock.</param>
+    /// <param name="isActive">Whether the rotation is actively trying to use abilities.</param>
+    /// <param name="playerAlive">Whether the player is alive.</param>
+    /// <param name="playerPosition">Current player world position for movement detection.</param>
+    /// <param name="inMechanicWindow">Whether a known boss mechanic is occurring.</param>
+    public void TrackGcdState(
+        bool gcdReady,
+        float gcdRemaining,
+        bool isCasting,
+        bool hasAnimLock,
+        bool isActive,
+        bool playerAlive,
+        Vector3 playerPosition,
+        bool inMechanicWindow)
+    {
+        // Calculate frame delta time
+        var now = DateTime.Now;
+        var deltaTime = lastFrameTime != default
+            ? (float)(now - lastFrameTime).TotalSeconds
+            : 0f;
+        lastFrameTime = now;
+
+        // Clamp delta time to avoid spikes during lag or when not called regularly
+        deltaTime = Math.Min(deltaTime, 0.1f);
+
+        // Capture the moment downtime starts (transition from on-GCD to ready)
+        if (gcdReady && wasOnGcdLastFrame)
+        {
+            Interlocked.Increment(ref _downtimeEventCount);
+            lock (historyLock)
+            {
+                LastDowntimeTime = now;
+                LastDowntimeReason = $"GCD:{gcdRemaining:F2}s Cast:{isCasting} Anim:{hasAnimLock} Active:{isActive}";
+            }
+        }
+        wasOnGcdLastFrame = !gcdReady;
+
+        // Track incapacitation windows and categorized downtime when in combat
+        var isIncapacitated = !playerAlive;
+        lock (historyLock)
+        {
+            // Store debug info inside lock to ensure consistent reads
+            DebugGcdRemaining = gcdRemaining;
+            DebugIsCasting = isCasting;
+            DebugHasAnimLock = hasAnimLock;
+            DebugGcdReady = gcdReady;
+            DebugIsActive = isActive;
+
+            if (combatStartTime != null)
+            {
+                if (isIncapacitated && !wasIncapacitatedLastFrame)
+                {
+                    // Entering incapacitation
+                    incapacitationStart = now;
+                }
+                else if (!isIncapacitated && wasIncapacitatedLastFrame && incapacitationStart.HasValue)
+                {
+                    // Leaving incapacitation — record the window
+                    incapacitationWindows.Add((incapacitationStart.Value, now));
+                    incapacitationStart = null;
+                }
+
+                // Track categorized downtime
+                if (deltaTime > 0)
+                {
+                    // Incapacitated time counts as death/incapacitated regardless of GCD state
+                    if (isIncapacitated)
+                    {
+                        deathDowntimeSeconds += deltaTime;
+                    }
+                    else if (gcdReady)
+                    {
+                        // GCD ready but not casting — categorize the idle time
+                        if (HasMovedSignificantly(playerPosition))
+                        {
+                            movementDowntimeSeconds += deltaTime;
+                        }
+                        else if (inMechanicWindow)
+                        {
+                            mechanicDowntimeSeconds += deltaTime;
+                        }
+                        else
+                        {
+                            unforcedDowntimeSeconds += deltaTime;
+                        }
+                    }
+                }
+            }
+            wasIncapacitatedLastFrame = isIncapacitated;
+        }
+
+        // Update last position for movement tracking
+        if (playerPosition != Vector3.Zero)
+        {
+            lastPlayerPosition = playerPosition;
+        }
+    }
+
+    /// <summary>
+    /// Check if player has moved significantly since last frame.
+    /// </summary>
+    private bool HasMovedSignificantly(Vector3 currentPosition)
+    {
+        if (currentPosition == Vector3.Zero)
+            return false;
+
+        if (lastPlayerPosition == Vector3.Zero)
+        {
+            lastPlayerPosition = currentPosition;
+            return false;
+        }
+
+        var distance = Vector3.Distance(lastPlayerPosition, currentPosition);
+        return distance > MovementThreshold;
+    }
+
+    /// <summary>
+    /// Get recorded incapacitation windows (Willful, Stun, etc.) from the current/last combat session.
+    /// </summary>
+    public IReadOnlyList<(DateTime Start, DateTime End)> GetIncapacitationWindows()
+    {
+        lock (historyLock)
+        {
+            return incapacitationWindows.ToList();
+        }
+    }
+
+    /// <summary>
+    /// Get breakdown of downtime by cause.
+    /// </summary>
+    public DowntimeBreakdown GetDowntimeBreakdown()
+    {
+        lock (historyLock)
+        {
+            var total = movementDowntimeSeconds + deathDowntimeSeconds +
+                        mechanicDowntimeSeconds + unforcedDowntimeSeconds;
+
+            return new DowntimeBreakdown
+            {
+                TotalDowntimeSeconds = total,
+                MovementSeconds = movementDowntimeSeconds,
+                DeathSeconds = deathDowntimeSeconds,
+                MechanicSeconds = mechanicDowntimeSeconds,
+                UnforcedSeconds = unforcedDowntimeSeconds
+            };
+        }
+    }
+
+    /// <summary>
+    /// Start tracking combat time. Call when player enters combat.
+    /// </summary>
+    public void StartCombat()
+    {
+        lock (historyLock)
+        {
+            if (combatStartTime == null)
+            {
+                combatStartTime = DateTime.Now;
+                totalGcdTimeSeconds = 0f;
+                lastCombatGcdUptime = 0f;
+
+                // Reset downtime categorization for new combat
+                movementDowntimeSeconds = 0f;
+                deathDowntimeSeconds = 0f;
+                mechanicDowntimeSeconds = 0f;
+                unforcedDowntimeSeconds = 0f;
+                lastPlayerPosition = Vector3.Zero;
+                lastFrameTime = DateTime.Now;
+                incapacitationWindows.Clear();
+                incapacitationStart = null;
+                wasIncapacitatedLastFrame = false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Stop tracking combat time. Call when player leaves combat.
+    /// Caches the final uptime so it persists for review after combat.
+    /// </summary>
+    public void EndCombat()
+    {
+        lock (historyLock)
+        {
+            if (combatStartTime != null)
+            {
+                lastCombatGcdUptime = CalculateGcdUptime();
+            }
+            combatStartTime = null;
+        }
+    }
+
+    /// <summary>
+    /// Record a GCD cast with its duration (XIVAnalysis style).
+    /// The duration should be the actual recast time from ActionManager.
+    /// </summary>
+    public void LogGcdCast(float gcdDuration)
+    {
+        lock (historyLock)
+        {
+            if (combatStartTime != null)
+            {
+                totalGcdTimeSeconds += gcdDuration;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Get current GCD uptime percentage using XIVAnalysis methodology.
+    /// Returns cached value after combat ends, resets when new combat starts.
+    /// </summary>
+    public float GetGcdUptime()
+    {
+        lock (historyLock)
+        {
+            if (combatStartTime == null)
+                return lastCombatGcdUptime;
+
+            return CalculateGcdUptime();
+        }
+    }
+
+    /// <summary>
+    /// Calculate GCD uptime: (totalGcdTime / combatDuration) * 100
+    /// </summary>
+    private float CalculateGcdUptime()
+    {
+        if (combatStartTime == null)
+            return 0f;
+
+        var combatDuration = (DateTime.Now - combatStartTime.Value).TotalSeconds;
+        if (combatDuration <= 0)
+            return 0f;
+
+        // Cap at 100% - slight overlaps from queue window can cause >100%
+        var uptime = (float)(totalGcdTimeSeconds / combatDuration) * 100f;
+        return Math.Min(uptime, 100f);
+    }
+
+    /// <summary>
+    /// Get average time between successful casts
+    /// </summary>
+    public float GetAverageTimeBetweenCasts()
+    {
+        lock (historyLock)
+        {
+            if (history.Count < 2)
+                return 0f;
+
+            // Single-pass calculation without intermediate list allocation
+            float totalTime = 0f;
+            int count = 0;
+            DateTime? lastSuccessTime = null;
+
+            foreach (var attempt in history)
+            {
+                if (attempt.Result != ActionResult.Success)
+                    continue;
+
+                if (lastSuccessTime.HasValue)
+                {
+                    totalTime += (float)(lastSuccessTime.Value - attempt.Timestamp).TotalSeconds;
+                    count++;
+                }
+                lastSuccessTime = attempt.Timestamp;
+            }
+
+            return count > 0 ? totalTime / count : 0f;
+        }
+    }
+
+    /// <summary>
+    /// Get success rate percentage
+    /// </summary>
+    public float GetSuccessRate()
+    {
+        lock (historyLock)
+        {
+            if (totalAttempts == 0)
+                return 0f;
+
+            return (float)successfulCasts / totalAttempts * 100f;
+        }
+    }
+
+    /// <summary>
+    /// Get the most common failure reason
+    /// </summary>
+    public (ActionResult reason, int count)? GetMostCommonFailure()
+    {
+        lock (historyLock)
+        {
+            if (failureReasons.Count == 0)
+                return null;
+
+            var most = failureReasons.MaxBy(kvp => kvp.Value);
+            return (most.Key, most.Value);
+        }
+    }
+
+    /// <summary>
+    /// Get statistics summary
+    /// </summary>
+    public (int total, int success, float successRate, float gcdUptime, float avgCastGap) GetStatistics()
+    {
+        lock (historyLock)
+        {
+            var total = totalAttempts;
+            var success = successfulCasts;
+            var successRate = total == 0 ? 0f : (float)success / total * 100f;
+
+            return (
+                total,
+                success,
+                successRate,
+                GetGcdUptime(),
+                GetAverageTimeBetweenCasts()
+            );
+        }
+    }
+
+    /// <summary>
+    /// Clear all tracking data
+    /// </summary>
+    public void Clear()
+    {
+        lock (historyLock)
+        {
+            history.Clear();
+            cachedHistory = null;
+            historyVersion++;
+            totalAttempts = 0;
+            successfulCasts = 0;
+            failureReasons.Clear();
+            spellUsageCounts.Clear();
+            lastSuccessfulCast = null;
+
+            // Reset XIVAnalysis-style GCD tracking (inside lock: read by CalculateGcdUptime under same lock)
+            combatStartTime = null;
+            totalGcdTimeSeconds = 0f;
+            lastCombatGcdUptime = 0f;
+            Interlocked.Exchange(ref _downtimeEventCount, 0);
+
+            // Reset downtime categorization
+            movementDowntimeSeconds = 0f;
+            deathDowntimeSeconds = 0f;
+            mechanicDowntimeSeconds = 0f;
+            unforcedDowntimeSeconds = 0f;
+            lastPlayerPosition = Vector3.Zero;
+            lastFrameTime = default;
+            incapacitationWindows.Clear();
+            incapacitationStart = null;
+            wasIncapacitatedLastFrame = false;
+        }
+    }
+
+    /// <summary>
+    /// Resets only the spell usage counts dictionary.
+    /// Does not affect GCD uptime, action history, downtime tracking, or any other state.
+    /// </summary>
+    public void ClearSpellUsageCounts()
+    {
+        lock (historyLock)
+        {
+            spellUsageCounts.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Get spell usage counts with resolved names, sorted by count descending
+    /// </summary>
+    public List<(string name, uint actionId, int count)> GetSpellUsageCounts()
+    {
+        Dictionary<uint, int> snapshot;
+        lock (historyLock)
+        {
+            snapshot = new Dictionary<uint, int>(spellUsageCounts);
+        }
+
+        var result = new List<(string name, uint actionId, int count)>();
+        foreach (var (actionId, count) in snapshot)
+        {
+            var name = GetActionName(actionId);
+            result.Add((name, actionId, count));
+        }
+
+        result.Sort((a, b) => b.count.CompareTo(a.count));
+        return result;
+    }
+
+    /// <summary>
+    /// Resolve action ID to display name
+    /// </summary>
+    private string GetActionName(uint actionId)
+    {
+        return _actionNameCache.GetOrAdd(actionId, id =>
+        {
+            var actionSheet = dataManager.GetExcelSheet<LuminaAction>();
+            if (actionSheet == null)
+                return $"Action {id}";
+
+            var row = actionSheet.GetRowOrDefault(id);
+            if (!row.HasValue)
+                return $"Action {id}";
+
+            var name = row.Value.Name.ToString();
+            return string.IsNullOrEmpty(name) ? $"Action {id}" : name;
+        });
+    }
+}

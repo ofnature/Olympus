@@ -1,0 +1,437 @@
+using System;
+using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Game.ClientState.Party;
+using Dalamud.Plugin.Services;
+using Daedalus.Data;
+using Daedalus.Rotation.Common.Helpers;
+using Daedalus.Rotation.CirceCore.Helpers;
+using Daedalus.Services;
+using Daedalus.Services.Action;
+using Daedalus.Services.Cache;
+using Daedalus.Services.Debuff;
+using Daedalus.Services.Party;
+using Daedalus.Services.Prediction;
+using Daedalus.Services.Resource;
+using Daedalus.Services.Stats;
+using Daedalus.Services.Targeting;
+using Daedalus.Services.Training;
+using Daedalus.Timeline;
+
+namespace Daedalus.Rotation.CirceCore.Context;
+
+/// <summary>
+/// Red Mage-specific context implementation.
+/// Provides all state needed for Circe rotation modules.
+/// </summary>
+public sealed class CirceContext : ICirceContext
+{
+    #region IRotationContext Implementation
+
+    public IPlayerCharacter Player { get; }
+    public bool InCombat { get; }
+    public bool IsMoving { get; }
+    public bool CanExecuteGcd { get; }
+    public bool CanExecuteOgcd { get; }
+
+    public IActionService ActionService { get; }
+    public IActionTracker ActionTracker { get; }
+    public ICombatEventService CombatEventService { get; }
+    public IDamageIntakeService DamageIntakeService { get; }
+    public IDamageTrendService DamageTrendService { get; }
+    public IFrameScopedCache FrameCache { get; }
+    public Configuration Configuration { get; }
+    public IDebuffDetectionService DebuffDetectionService { get; }
+    public IHpPredictionService HpPredictionService { get; }
+    public IMpForecastService MpForecastService { get; }
+    public IPlayerStatsService PlayerStatsService { get; }
+    public ITargetingService TargetingService { get; }
+    public ITimelineService? TimelineService { get; }
+
+    public IObjectTable ObjectTable { get; }
+    public IPartyList PartyList { get; }
+    public IPluginLog? Log { get; }
+
+    public (float avgHpPercent, float lowestHpPercent, int injuredCount) PartyHealthMetrics { get; }
+
+    #endregion
+
+    #region ICasterDpsRotationContext Implementation
+
+    public int CurrentMp { get; }
+    public int MaxMp { get; }
+    public float MpPercent { get; }
+
+    public bool IsCasting { get; }
+    public float CastRemaining { get; }
+    public bool CanSlidecast { get; }
+
+    public bool HasSwiftcast { get; }
+    public bool HasTriplecast { get; } // RDM doesn't have Triplecast
+    public int TriplecastStacks { get; }
+    public bool HasInstantCast { get; }
+
+    #endregion
+
+    #region ICirceContext Implementation
+
+    // Mana state
+    public int BlackMana { get; }
+    public int WhiteMana { get; }
+    public int ManaImbalance { get; }
+    public int AbsoluteManaImbalance { get; }
+    public bool IsManaBalanced { get; }
+    public int ManaStacks { get; }
+    public bool CanStartMeleeCombo { get; }
+    public int LowerMana { get; }
+
+    // Dualcast state
+    public bool HasDualcast { get; }
+    public float DualcastRemaining { get; }
+    public bool ShouldHardcast { get; }
+
+    // Proc state
+    public bool HasVerfire { get; }
+    public float VerfireRemaining { get; }
+    public bool HasVerstone { get; }
+    public float VerstoneRemaining { get; }
+    public bool HasAnyProc { get; }
+    public bool HasBothProcs { get; }
+
+    // Melee combo state
+    public bool IsInMeleeCombo { get; }
+    public int MeleeComboStep { get; }
+    public bool IsInMoulinetCombo { get; }
+    public int MoulinetStep { get; }
+    public bool IsFinisherReady { get; }
+    public bool IsScorchReady { get; }
+    public bool IsResolutionReady { get; }
+    public bool IsGrandImpactReady { get; }
+
+    // Buff state
+    public bool HasEmbolden { get; }
+    public float EmboldenRemaining { get; }
+    public bool HasManafication { get; }
+    public float ManaficationRemaining { get; }
+    public bool HasAcceleration { get; }
+    public float AccelerationRemaining { get; }
+    public bool HasThornedFlourish { get; }
+    public bool HasPrefulgenceReady { get; }
+    public bool HasMagickBarrier { get; }
+
+    // Cooldown state
+    public bool FlecheReady { get; }
+    public bool ContreSixteReady { get; }
+    public bool EmboldenReady { get; }
+    public bool ManaficationReady { get; }
+    public int CorpsACorpsCharges { get; }
+    public int EngagementCharges { get; }
+    public int AccelerationCharges { get; }
+    public bool SwiftcastReady { get; }
+    public bool LucidDreamingReady { get; }
+
+    // Helpers
+    public CirceStatusHelper StatusHelper { get; }
+    public CasterPartyHelper PartyHelper { get; }
+    public CirceDebugState Debug { get; }
+
+    // Party Coordination
+    public IPartyCoordinationService? PartyCoordinationService { get; }
+
+    // Training
+    public ITrainingService? TrainingService { get; }
+
+    #endregion
+
+    private readonly IBattleChara? _currentTarget;
+
+    public CirceContext(
+        IPlayerCharacter player,
+        bool inCombat,
+        bool isMoving,
+        bool canExecuteGcd,
+        bool canExecuteOgcd,
+        IActionService actionService,
+        IActionTracker actionTracker,
+        ICombatEventService combatEventService,
+        IDamageIntakeService damageIntakeService,
+        IDamageTrendService damageTrendService,
+        IFrameScopedCache frameCache,
+        Configuration configuration,
+        IDebuffDetectionService debuffDetectionService,
+        IHpPredictionService hpPredictionService,
+        IMpForecastService mpForecastService,
+        IPlayerStatsService playerStatsService,
+        ITargetingService targetingService,
+        IObjectTable objectTable,
+        IPartyList partyList,
+        CirceStatusHelper statusHelper,
+        CasterPartyHelper partyHelper,
+        CirceDebugState debugState,
+        int blackMana,
+        int whiteMana,
+        int manaStacks,
+        int meleeComboStep,
+        int moulinetStep,
+        ITimelineService? timelineService = null,
+        IPartyCoordinationService? partyCoordinationService = null,
+        ITrainingService? trainingService = null,
+        IPluginLog? log = null)
+    {
+        Player = player;
+        InCombat = inCombat;
+        IsMoving = isMoving;
+        CanExecuteGcd = canExecuteGcd;
+        CanExecuteOgcd = canExecuteOgcd;
+        ActionService = actionService;
+        ActionTracker = actionTracker;
+        CombatEventService = combatEventService;
+        DamageIntakeService = damageIntakeService;
+        DamageTrendService = damageTrendService;
+        FrameCache = frameCache;
+        Configuration = configuration;
+        DebuffDetectionService = debuffDetectionService;
+        HpPredictionService = hpPredictionService;
+        MpForecastService = mpForecastService;
+        PlayerStatsService = playerStatsService;
+        TargetingService = targetingService;
+        TimelineService = timelineService;
+        PartyCoordinationService = partyCoordinationService;
+        TrainingService = trainingService;
+        ObjectTable = objectTable;
+        PartyList = partyList;
+        Log = log;
+
+        StatusHelper = statusHelper;
+        PartyHelper = partyHelper;
+        Debug = debugState;
+
+        // MP state
+        CurrentMp = (int)player.CurrentMp;
+        MaxMp = (int)player.MaxMp;
+        MpPercent = MaxMp > 0 ? (float)CurrentMp / MaxMp : 0f;
+
+        // Cast state
+        IsCasting = player.IsCasting;
+        CastRemaining = player.TotalCastTime - player.CurrentCastTime;
+        CanSlidecast = IsCasting && CastRemaining <= 0.5f;
+
+        // RDM doesn't have Triplecast
+        HasTriplecast = false;
+        TriplecastStacks = 0;
+
+        // Mana state (from gauge)
+        BlackMana = blackMana;
+        WhiteMana = whiteMana;
+        ManaImbalance = blackMana - whiteMana;
+        AbsoluteManaImbalance = Math.Abs(ManaImbalance);
+        IsManaBalanced = AbsoluteManaImbalance < 30;
+        ManaStacks = manaStacks;
+        var hasMeleeMana = blackMana >= configuration.RedMage.MeleeComboMinMana
+                        && whiteMana >= configuration.RedMage.MeleeComboMinMana;
+        var combatElapsed = inCombat ? combatEventService.GetCombatDurationSeconds() : 0f;
+        CanStartMeleeCombo = inCombat
+            && hasMeleeMana
+            && combatElapsed >= configuration.RedMage.MeleeComboMinCombatSeconds;
+        LowerMana = Math.Min(blackMana, whiteMana);
+
+        // Dualcast state
+        HasDualcast = statusHelper.HasDualcast(player);
+        DualcastRemaining = statusHelper.GetDualcastRemaining(player);
+
+        // Buff state
+        HasSwiftcast = BaseStatusHelper.HasSwiftcast(player);
+        HasAcceleration = statusHelper.HasAcceleration(player);
+        AccelerationRemaining = statusHelper.GetAccelerationRemaining(player);
+
+        // Instant cast check
+        HasInstantCast = HasDualcast || HasSwiftcast || HasAcceleration;
+        ShouldHardcast = !HasInstantCast;
+
+        // Proc state
+        HasVerfire = statusHelper.HasVerfireReady(player);
+        VerfireRemaining = statusHelper.GetVerfireRemaining(player);
+        HasVerstone = statusHelper.HasVerstoneReady(player);
+        VerstoneRemaining = statusHelper.GetVerstoneRemaining(player);
+        HasAnyProc = HasVerfire || HasVerstone;
+        HasBothProcs = HasVerfire && HasVerstone;
+
+        // Other buff state
+        HasEmbolden = statusHelper.HasEmbolden(player);
+        EmboldenRemaining = statusHelper.GetEmboldenRemaining(player);
+        HasManafication = statusHelper.HasManafication(player);
+        ManaficationRemaining = statusHelper.GetManaficationRemaining(player);
+        HasThornedFlourish = statusHelper.HasThornedFlourish(player);
+        HasPrefulgenceReady = statusHelper.HasPrefulgenceReady(player);
+        IsGrandImpactReady = statusHelper.HasGrandImpactReady(player);
+        HasMagickBarrier = statusHelper.HasMagickBarrier(player);
+
+        // Melee combo state - determined by mana stacks + game combo field
+        // (computed upstream in Circe.UpdateMeleeComboStep and passed in as meleeComboStep)
+        DetermineComboState(meleeComboStep, player.Level, out var inCombo, out var comboStep,
+            out var finisherReady, out var scorchReady, out var resolutionReady);
+        IsInMeleeCombo = inCombo;
+        MeleeComboStep = comboStep;
+        IsFinisherReady = finisherReady;
+        IsScorchReady = scorchReady;
+        IsResolutionReady = resolutionReady;
+
+        // Moulinet (AoE melee) combo state - from action replacement upstream
+        MoulinetStep = moulinetStep;
+        IsInMoulinetCombo = moulinetStep > 0;
+
+        // Calculate party health metrics
+        PartyHealthMetrics = CalculatePartyHealth(player);
+
+        // Get current target
+        _currentTarget = targetingService.FindEnemy(
+            configuration.Targeting.EnemyStrategy,
+            FFXIVConstants.CasterTargetingRange,
+            player);
+
+        // Cooldown tracking
+        var level = player.Level;
+        FlecheReady = level >= RDMActions.Fleche.MinLevel &&
+                      actionService.IsActionReady(RDMActions.Fleche.ActionId);
+        ContreSixteReady = level >= RDMActions.ContreSixte.MinLevel &&
+                          actionService.IsActionReady(RDMActions.ContreSixte.ActionId);
+        EmboldenReady = level >= RDMActions.Embolden.MinLevel &&
+                       actionService.IsActionReady(RDMActions.Embolden.ActionId);
+        ManaficationReady = level >= RDMActions.Manafication.MinLevel &&
+                          actionService.IsActionReady(RDMActions.Manafication.ActionId);
+
+        CorpsACorpsCharges = level >= RDMActions.CorpsACorps.MinLevel
+            ? (int)actionService.GetCurrentCharges(RDMActions.CorpsACorps.ActionId)
+            : 0;
+        EngagementCharges = level >= RDMActions.Engagement.MinLevel
+            ? (int)actionService.GetCurrentCharges(RDMActions.Engagement.ActionId)
+            : 0;
+        AccelerationCharges = level >= RDMActions.Acceleration.MinLevel
+            ? (int)actionService.GetCurrentCharges(RDMActions.Acceleration.ActionId)
+            : 0;
+
+        SwiftcastReady = level >= RoleActions.Swiftcast.MinLevel &&
+                        actionService.IsActionReady(RoleActions.Swiftcast.ActionId);
+        LucidDreamingReady = level >= RoleActions.LucidDreaming.MinLevel &&
+                            actionService.IsActionReady(RoleActions.LucidDreaming.ActionId);
+
+        // Update debug state
+        UpdateDebugState();
+    }
+
+    private static void DetermineComboState(int step, byte level,
+        out bool inCombo, out int comboStep, out bool finisherReady, out bool scorchReady, out bool resolutionReady)
+    {
+        inCombo = step > 0;
+        comboStep = step;
+        finisherReady = step == 3 && level >= RDMActions.Verflare.MinLevel;
+        scorchReady = step == 4 && level >= RDMActions.Scorch.MinLevel;
+        resolutionReady = step == 5 && level >= RDMActions.Resolution.MinLevel;
+    }
+
+    private (float avgHpPercent, float lowestHpPercent, int injuredCount) CalculatePartyHealth(IPlayerCharacter player)
+    {
+        var totalHp = 0f;
+        var lowestHp = 1f;
+        var injuredCount = 0;
+        var memberCount = 0;
+
+        foreach (var member in PartyHelper.GetAllPartyMembers(player))
+        {
+            var hp = PartyHelper.GetHpPercent(member);
+            totalHp += hp;
+            memberCount++;
+
+            if (hp < lowestHp)
+                lowestHp = hp;
+
+            if (hp < 0.95f)
+                injuredCount++;
+        }
+
+        var avgHp = memberCount > 0 ? totalHp / memberCount : 1f;
+        return (avgHp, lowestHp, injuredCount);
+    }
+
+    private void UpdateDebugState()
+    {
+        // Mana state
+        Debug.BlackMana = BlackMana;
+        Debug.WhiteMana = WhiteMana;
+        Debug.ManaImbalance = ManaImbalance;
+        Debug.ManaStacks = ManaStacks;
+        Debug.CanStartMeleeCombo = CanStartMeleeCombo;
+
+        // Dualcast state
+        Debug.HasDualcast = HasDualcast;
+        Debug.DualcastRemaining = DualcastRemaining;
+
+        // Proc state
+        Debug.HasVerfire = HasVerfire;
+        Debug.VerfireRemaining = VerfireRemaining;
+        Debug.HasVerstone = HasVerstone;
+        Debug.VerstoneRemaining = VerstoneRemaining;
+
+        // Melee combo state
+        Debug.IsInMeleeCombo = IsInMeleeCombo;
+        Debug.MeleeComboStep = MeleeComboStep switch
+        {
+            0 => "None",
+            1 => "Zwerchhau",
+            2 => "Redoublement",
+            3 => "Finisher",
+            4 => "Scorch",
+            5 => "Resolution",
+            _ => "Unknown"
+        };
+        Debug.IsFinisherReady = IsFinisherReady;
+        Debug.IsScorchReady = IsScorchReady;
+        Debug.IsResolutionReady = IsResolutionReady;
+
+        // Buff state
+        Debug.HasEmbolden = HasEmbolden;
+        Debug.EmboldenRemaining = EmboldenRemaining;
+        Debug.HasManafication = HasManafication;
+        Debug.ManaficationRemaining = ManaficationRemaining;
+        Debug.HasAcceleration = HasAcceleration;
+        Debug.AccelerationRemaining = AccelerationRemaining;
+        Debug.HasSwiftcast = HasSwiftcast;
+
+        // Special abilities
+        Debug.HasThornedFlourish = HasThornedFlourish;
+        Debug.HasGrandImpactReady = IsGrandImpactReady;
+        Debug.HasPrefulgenceReady = HasPrefulgenceReady;
+
+        // Cooldowns
+        Debug.FlecheReady = FlecheReady;
+        Debug.ContreSixteReady = ContreSixteReady;
+        Debug.EmboldenReady = EmboldenReady;
+        Debug.ManaficationReady = ManaficationReady;
+        Debug.CorpsACorpsCharges = CorpsACorpsCharges;
+        Debug.EngagementCharges = EngagementCharges;
+        Debug.AccelerationCharges = AccelerationCharges;
+
+        // Resources
+        Debug.CurrentMp = CurrentMp;
+        Debug.MaxMp = MaxMp;
+
+        // Target
+        Debug.CurrentTarget = _currentTarget?.Name?.TextValue ?? "None";
+
+        // Phase
+        if (IsResolutionReady)
+            Debug.Phase = "Resolution";
+        else if (IsScorchReady)
+            Debug.Phase = "Scorch";
+        else if (IsFinisherReady)
+            Debug.Phase = "Finisher";
+        else if (IsInMeleeCombo)
+            Debug.Phase = $"Melee ({Debug.MeleeComboStep})";
+        else if (CanStartMeleeCombo)
+            Debug.Phase = "Combo Ready";
+        else if (HasDualcast)
+            Debug.Phase = "Dualcast";
+        else
+            Debug.Phase = "Building Mana";
+    }
+}

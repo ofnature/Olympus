@@ -1,0 +1,71 @@
+using System;
+using Daedalus.Config;
+using Daedalus.Data;
+using Daedalus.Rotation.AsclepiusCore.Abilities;
+using Daedalus.Rotation.AsclepiusCore.Context;
+using Daedalus.Rotation.AsclepiusCore.Helpers;
+using Daedalus.Rotation.Common.RoleActionHelpers;
+using Daedalus.Rotation.Common.Scheduling;
+using Daedalus.Services.Training;
+
+namespace Daedalus.Rotation.AsclepiusCore.Modules.Healing;
+
+public sealed class LucidDreamingHandler : IHealingHandler
+{
+    public int Priority => 1;
+    public string Name => "LucidDreaming";
+
+    public void CollectCandidates(IAsclepiusContext context, RotationScheduler scheduler, bool isMoving)
+    {
+        var config = context.Configuration;
+
+        if (!config.HealerShared.EnableLucidDreaming) { context.Debug.LucidState = "Disabled"; return; }
+
+        var preCallMp = context.Player.MaxMp > 0 ? (float)context.Player.CurrentMp / context.Player.MaxMp : 1f;
+
+        RoleActionPushers.TryPushLucidDreaming(
+            context, scheduler, AsclepiusAbilities.LucidDreaming,
+            mpThresholdPct: config.HealerShared.LucidDreamingThreshold,
+            priority: 1,
+            onDispatched: _ =>
+            {
+                context.Debug.PlannedAction = RoleActions.LucidDreaming.Name;
+                context.Debug.PlanningState = "Lucid Dreaming";
+                context.Debug.LucidState = $"Lucid Dreaming (MP {preCallMp:P0})";
+
+                if (context.TrainingService?.IsTrainingEnabled == true)
+                {
+                    context.TrainingService.RecordDecision(new ActionExplanation
+                    {
+                        Timestamp = DateTime.UtcNow,
+                        ActionId = RoleActions.LucidDreaming.ActionId,
+                        ActionName = "Lucid Dreaming",
+                        Category = "Resource",
+                        TargetName = "Self",
+                        ShortReason = $"Lucid Dreaming at {preCallMp:P0} MP",
+                        DetailedReason = $"Lucid Dreaming activated at {preCallMp:P0} MP (threshold: {config.HealerShared.LucidDreamingThreshold:P0}). Restores 3850 MP over 21 seconds. SGE is less MP-dependent than other healers (Addersgall heals restore MP!), but Lucid is still important for GCD heals and raises.",
+                        Factors = new[]
+                        {
+                            $"Current MP: {preCallMp:P0}",
+                            $"Threshold: {config.HealerShared.LucidDreamingThreshold:P0}",
+                            "3850 MP over 21s",
+                            "60s cooldown",
+                        },
+                        Alternatives = new[]
+                        {
+                            "Use Addersgall heals (restore 700 MP each)",
+                            "Wait for natural MP regen",
+                            "Accept MP constraints",
+                        },
+                        Tip = "SGE has the best MP economy of all healers! Addersgall heals (Druochole, Kerachole, etc.) actually RESTORE 700 MP. Use Lucid mainly for GCD heals and raises. Don't panic about MP as SGE!",
+                        ConceptId = SgeConcepts.AddersgallManagement,
+                        Priority = ExplanationPriority.Low,
+                    });
+                }
+            });
+
+        // Update LucidState even when not pushed (for UI visibility)
+        if (preCallMp > config.HealerShared.LucidDreamingThreshold)
+            context.Debug.LucidState = $"MP {preCallMp:P0}";
+    }
+}

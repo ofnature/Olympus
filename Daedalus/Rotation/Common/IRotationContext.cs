@@ -1,0 +1,198 @@
+using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game.ClientState.Party;
+using Dalamud.Plugin.Services;
+using Daedalus.Services;
+using Daedalus.Services.Action;
+using Daedalus.Services.Cache;
+using Daedalus.Services.Combat;
+using Daedalus.Services.Cooldown;
+using Daedalus.Services.Debuff;
+using Daedalus.Services.Healing;
+using Daedalus.Services.Party;
+using Daedalus.Services.Prediction;
+using Daedalus.Services.Resource;
+using Daedalus.Services.Stats;
+using Daedalus.Services.Targeting;
+using Daedalus.Timeline;
+
+namespace Daedalus.Rotation.Common;
+
+/// <summary>
+/// Base interface for rotation contexts across all jobs.
+/// Contains common player state, services, and helper utilities.
+/// Job-specific contexts extend this interface with their own properties.
+/// </summary>
+public interface IRotationContext
+{
+    #region Player State
+
+    /// <summary>
+    /// The local player character.
+    /// </summary>
+    IPlayerCharacter Player { get; }
+
+    /// <summary>
+    /// Whether the player is currently in combat.
+    /// </summary>
+    bool InCombat { get; }
+
+    /// <summary>
+    /// Whether the player is currently moving.
+    /// </summary>
+    bool IsMoving { get; }
+
+    /// <summary>
+    /// Whether the player can currently execute a GCD action.
+    /// </summary>
+    bool CanExecuteGcd { get; }
+
+    /// <summary>
+    /// Whether the player can currently execute an oGCD action.
+    /// </summary>
+    bool CanExecuteOgcd { get; }
+
+    #endregion
+
+    #region Core Services
+
+    /// <summary>
+    /// Service for executing actions.
+    /// </summary>
+    IActionService ActionService { get; }
+
+    /// <summary>
+    /// Tracks action execution history.
+    /// </summary>
+    IActionTracker ActionTracker { get; }
+
+    /// <summary>
+    /// Service for tracking combat events (damage, healing).
+    /// </summary>
+    ICombatEventService CombatEventService { get; }
+
+    /// <summary>
+    /// Service for tracking damage intake rates.
+    /// </summary>
+    IDamageIntakeService DamageIntakeService { get; }
+
+    /// <summary>
+    /// Service for damage trend analysis (spike detection).
+    /// </summary>
+    IDamageTrendService DamageTrendService { get; }
+
+    /// <summary>
+    /// Frame-scoped cache for reducing redundant calculations.
+    /// </summary>
+    IFrameScopedCache FrameCache { get; }
+
+    /// <summary>
+    /// Plugin configuration.
+    /// </summary>
+    Configuration Configuration { get; }
+
+    /// <summary>
+    /// Service for detecting cleansable debuffs.
+    /// </summary>
+    IDebuffDetectionService DebuffDetectionService { get; }
+
+    /// <summary>
+    /// Service for predicting HP after pending heals.
+    /// </summary>
+    IHpPredictionService HpPredictionService { get; }
+
+    /// <summary>
+    /// Service for MP forecasting and conservation mode.
+    /// </summary>
+    IMpForecastService MpForecastService { get; }
+
+    /// <summary>
+    /// Service for reading player stats (Mind, Determination, etc.).
+    /// </summary>
+    IPlayerStatsService PlayerStatsService { get; }
+
+    /// <summary>
+    /// Service for enemy targeting.
+    /// </summary>
+    ITargetingService TargetingService { get; }
+
+    /// <summary>
+    /// Service for fight timeline tracking and mechanic prediction.
+    /// Null if no timeline is loaded for the current zone.
+    /// </summary>
+    ITimelineService? TimelineService { get; }
+
+    /// <summary>
+    /// Optional enemy time-to-kill estimator. Defaults to null; a job opts in by
+    /// overriding this in its context (pilot: Themis/PLD). Additive default member
+    /// so existing contexts compile unchanged.
+    /// </summary>
+    ITimeToKillService? TimeToKillService => null;
+
+    #endregion
+
+    #region Dalamud Services
+
+    /// <summary>
+    /// Game object table for finding entities.
+    /// </summary>
+    IObjectTable ObjectTable { get; }
+
+    /// <summary>
+    /// Party list for party member information.
+    /// </summary>
+    IPartyList PartyList { get; }
+
+    /// <summary>
+    /// Optional plugin logger.
+    /// </summary>
+    IPluginLog? Log { get; }
+
+    #endregion
+
+    #region Party Health
+
+    /// <summary>
+    /// Cached party health metrics (avgHpPercent, lowestHpPercent, injuredCount).
+    /// Computed once per frame.
+    /// </summary>
+    (float avgHpPercent, float lowestHpPercent, int injuredCount) PartyHealthMetrics { get; }
+
+    #endregion
+
+    #region Role Actions
+
+    /// <summary>
+    /// Whether the player has Swiftcast active.
+    /// </summary>
+    bool HasSwiftcast { get; }
+
+    #endregion
+}
+
+/// <summary>
+/// Extended rotation context for healer jobs.
+/// Adds healing-specific services and helpers.
+/// </summary>
+public interface IHealerRotationContext : IRotationContext
+{
+    /// <summary>
+    /// Service for selecting optimal healing spells.
+    /// </summary>
+    IHealingSpellSelector HealingSpellSelector { get; }
+
+    /// <summary>
+    /// Service for analyzing party health and finding heal targets.
+    /// </summary>
+    IPartyAnalyzer? PartyAnalyzer { get; }
+
+    /// <summary>
+    /// Service for cooldown planning decisions (defensive cooldowns, resource management).
+    /// </summary>
+    ICooldownPlanner CooldownPlanner { get; }
+
+    /// <summary>
+    /// Service for coordinating heals and cooldowns with other Daedalus instances.
+    /// Null if party coordination is disabled or unavailable.
+    /// </summary>
+    IPartyCoordinationService? PartyCoordinationService { get; }
+}

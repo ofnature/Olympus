@@ -1,0 +1,287 @@
+using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game.ClientState.Objects.Types;
+using Dalamud.Game.ClientState.Party;
+using Dalamud.Plugin.Services;
+using Daedalus.Data;
+using Daedalus.Services;
+using Daedalus.Services.Action;
+using Daedalus.Services.Cache;
+using Daedalus.Services.Combat;
+using Daedalus.Services.Cooldown;
+using Daedalus.Services.Debuff;
+using Daedalus.Services.Prediction;
+using Daedalus.Services.Resource;
+using Daedalus.Services.Stats;
+using Daedalus.Services.Party;
+using Daedalus.Services.Tank;
+using Daedalus.Services.Targeting;
+using Daedalus.Services.Training;
+using Daedalus.Rotation.ThemisCore.Helpers;
+using Daedalus.Rotation.Common.Helpers;
+using Daedalus.Timeline;
+
+namespace Daedalus.Rotation.ThemisCore.Context;
+
+/// <summary>
+/// Paladin-specific context implementation.
+/// Provides all state needed for Themis rotation modules.
+/// </summary>
+public sealed class ThemisContext : IThemisContext
+{
+    #region IRotationContext Implementation
+
+    public IPlayerCharacter Player { get; }
+    public bool InCombat { get; }
+    public bool IsMoving { get; }
+    public bool CanExecuteGcd { get; }
+    public bool CanExecuteOgcd { get; }
+
+    public IActionService ActionService { get; }
+    public IActionTracker ActionTracker { get; }
+    public ICombatEventService CombatEventService { get; }
+    public IDamageIntakeService DamageIntakeService { get; }
+    public IDamageTrendService DamageTrendService { get; }
+    public IFrameScopedCache FrameCache { get; }
+    public Configuration Configuration { get; }
+    public IDebuffDetectionService DebuffDetectionService { get; }
+    public IHpPredictionService HpPredictionService { get; }
+    public IMpForecastService MpForecastService { get; }
+    public IPlayerStatsService PlayerStatsService { get; }
+    public ITargetingService TargetingService { get; }
+    public ITimelineService? TimelineService { get; }
+
+    public IObjectTable ObjectTable { get; }
+    public IPartyList PartyList { get; }
+    public IPluginLog? Log { get; }
+
+    public (float avgHpPercent, float lowestHpPercent, int injuredCount) PartyHealthMetrics { get; }
+    public bool HasSwiftcast => false; // Tanks don't use Swiftcast
+
+    #endregion
+
+    #region ITankRotationContext Implementation
+
+    public IEnmityService EnmityService { get; }
+    public ITankCooldownService TankCooldownService { get; }
+    public IPartyCoordinationService? PartyCoordinationService { get; }
+    public bool IsMainTank { get; }
+    public bool HasTankStance { get; }
+    public int ComboStep { get; }
+    public uint LastComboAction { get; }
+    public float ComboTimeRemaining { get; }
+
+    #endregion
+
+    #region IThemisContext Implementation
+
+    public int OathGauge { get; }
+    public bool HasFightOrFlight { get; }
+    public bool HasGoringBladeReady { get; }
+    public float FightOrFlightRemaining { get; }
+    public bool HasRequiescat { get; }
+    public int RequiescatStacks { get; }
+    public bool HasDivineMight { get; }
+    public bool HasSwordOath { get; }
+    public int SwordOathStacks { get; }
+    public int AtonementStep { get; private set; }
+    public int ConfiteorStep { get; private set; }
+    public bool HasBladeOfHonor { get; }
+    public bool HasActiveMitigation { get; }
+    public bool HasHallowedGround { get; }
+    public float GoringBladeRemaining { get; }
+
+    public ThemisStatusHelper StatusHelper { get; }
+    public ThemisPartyHelper PartyHelper { get; }
+    public ThemisDebugState Debug { get; }
+    public ITrainingService? TrainingService { get; }
+    public ITimeToKillService? TimeToKillService { get; }
+
+    public IBattleChara? CurrentTarget { get; private set; }
+
+    #endregion
+
+    public ThemisContext(
+        IPlayerCharacter player,
+        bool inCombat,
+        bool isMoving,
+        bool canExecuteGcd,
+        bool canExecuteOgcd,
+        IActionService actionService,
+        IActionTracker actionTracker,
+        ICombatEventService combatEventService,
+        IDamageIntakeService damageIntakeService,
+        IDamageTrendService damageTrendService,
+        IFrameScopedCache frameCache,
+        Configuration configuration,
+        IDebuffDetectionService debuffDetectionService,
+        IHpPredictionService hpPredictionService,
+        IMpForecastService mpForecastService,
+        IPlayerStatsService playerStatsService,
+        ITargetingService targetingService,
+        IObjectTable objectTable,
+        IPartyList partyList,
+        IEnmityService enmityService,
+        ITankCooldownService tankCooldownService,
+        ThemisStatusHelper statusHelper,
+        ThemisPartyHelper partyHelper,
+        ThemisDebugState debugState,
+        int oathGauge,
+        int comboStep,
+        uint lastComboAction,
+        float comboTimeRemaining,
+        ITimelineService? timelineService = null,
+        IPartyCoordinationService? partyCoordinationService = null,
+        ITrainingService? trainingService = null,
+        ITimeToKillService? timeToKillService = null,
+        IPluginLog? log = null)
+    {
+        Player = player;
+        InCombat = inCombat;
+        IsMoving = isMoving;
+        CanExecuteGcd = canExecuteGcd;
+        CanExecuteOgcd = canExecuteOgcd;
+        ActionService = actionService;
+        ActionTracker = actionTracker;
+        CombatEventService = combatEventService;
+        DamageIntakeService = damageIntakeService;
+        DamageTrendService = damageTrendService;
+        FrameCache = frameCache;
+        Configuration = configuration;
+        DebuffDetectionService = debuffDetectionService;
+        HpPredictionService = hpPredictionService;
+        MpForecastService = mpForecastService;
+        PlayerStatsService = playerStatsService;
+        TargetingService = targetingService;
+        TimelineService = timelineService;
+        ObjectTable = objectTable;
+        PartyList = partyList;
+        Log = log;
+
+        EnmityService = enmityService;
+        TankCooldownService = tankCooldownService;
+        PartyCoordinationService = partyCoordinationService;
+        TrainingService = trainingService;
+        TimeToKillService = timeToKillService;
+        StatusHelper = statusHelper;
+        PartyHelper = partyHelper;
+        Debug = debugState;
+
+        OathGauge = oathGauge;
+        ComboStep = comboStep;
+        LastComboAction = lastComboAction;
+        ComboTimeRemaining = comboTimeRemaining;
+
+        // Calculate party health metrics
+        PartyHealthMetrics = CalculatePartyHealth(player);
+
+        // Get current target using game API range check for accuracy
+        CurrentTarget = targetingService.FindEnemyForAction(
+            configuration.Targeting.EnemyStrategy,
+            PLDActions.FastBlade.ActionId,
+            player);
+
+        // Check main tank status
+        IsMainTank = TankRoleHelper.ResolveIsMainTank(
+            configuration.Tank.IsMainTankOverride,
+            CurrentTarget,
+            player.EntityId,
+            partyHelper.FindCoTank(player) != null,
+            enmityService);
+
+        // Status checks
+        HasTankStance = statusHelper.HasIronWill(player);
+        HasFightOrFlight = statusHelper.HasFightOrFlight(player);
+        HasGoringBladeReady = statusHelper.HasGoringBladeReady(player);
+        FightOrFlightRemaining = statusHelper.GetFightOrFlightRemaining(player);
+        HasRequiescat = statusHelper.HasRequiescat(player);
+        RequiescatStacks = statusHelper.GetRequiescatStacks(player);
+        HasDivineMight = statusHelper.HasDivineMight(player);
+        HasSwordOath = statusHelper.HasSwordOath(player);
+        SwordOathStacks = statusHelper.GetSwordOathStacks(player);
+        HasActiveMitigation = statusHelper.HasActiveMitigation(player);
+        HasHallowedGround = statusHelper.HasHallowedGround(player);
+
+        // DoT tracking
+        GoringBladeRemaining = statusHelper.GetGoringBladeRemaining(CurrentTarget, player.EntityId);
+
+        var level = player.Level;
+        // Blade of Honor Ready (after Blade of Valor) replaces the Imperator slot. RSR parity
+        // (PaladinRotation.BladeOfHonorReady). The old IsActionReady check used cooldown readiness,
+        // which is always true for this no-recast proc oGCD and caused per-frame requeue spam.
+        HasBladeOfHonor = level >= PLDActions.BladeOfHonor.MinLevel &&
+                         actionService.GetAdjustedActionId(PLDActions.Imperator.ActionId) == PLDActions.BladeOfHonor.ActionId;
+
+        // Atonement chain: button replacement (Supplication/Sepulchre) + Atonement Ready proc (RSR parity)
+        AtonementStep = Daedalus.Rotation.Themis.ComputeAtonementStep(actionService, statusHelper, player, level);
+
+        // Confiteor chain advances by button replacement, detected via GetAdjustedActionId(Confiteor)
+        // — RSR parity (PaladinRotation.BladeOf{Faith,Truth,Valor}Ready). The old IsActionReady checks
+        // were ~always true (combo GCDs have no independent recast), so the step was effectively pinned.
+        // Step values are 1-based to match the module switch (1=Confiteor, 2=Faith, 3=Truth, 4=Valor;
+        // 0=not in chain). The previous 0-based values were off-by-one vs that switch.
+        var confiteorAdjusted = actionService.GetAdjustedActionId(PLDActions.Confiteor.ActionId);
+        if (level >= PLDActions.BladeOfValor.MinLevel && confiteorAdjusted == PLDActions.BladeOfValor.ActionId)
+            ConfiteorStep = 4;  // Blade of Valor ready
+        else if (level >= PLDActions.BladeOfTruth.MinLevel && confiteorAdjusted == PLDActions.BladeOfTruth.ActionId)
+            ConfiteorStep = 3;  // Blade of Truth ready
+        else if (level >= PLDActions.BladeOfFaith.MinLevel && confiteorAdjusted == PLDActions.BladeOfFaith.ActionId)
+            ConfiteorStep = 2;  // Blade of Faith ready
+        else if (HasRequiescat && level >= PLDActions.Confiteor.MinLevel)
+            ConfiteorStep = 1;  // Confiteor ready (chain entry)
+        else
+            ConfiteorStep = 0;  // Not in chain
+
+        // Update debug state
+        UpdateDebugState();
+    }
+
+    private (float avgHpPercent, float lowestHpPercent, int injuredCount) CalculatePartyHealth(IPlayerCharacter player)
+    {
+        var totalHp = 0f;
+        var lowestHp = 1f;
+        var injuredCount = 0;
+        var memberCount = 0;
+
+        foreach (var member in PartyHelper.GetAllPartyMembers(player))
+        {
+            var hp = PartyHelper.GetHpPercent(member);
+            totalHp += hp;
+            memberCount++;
+
+            if (hp < lowestHp)
+                lowestHp = hp;
+
+            if (hp < 0.95f)
+                injuredCount++;
+        }
+
+        var avgHp = memberCount > 0 ? totalHp / memberCount : 1f;
+        return (avgHp, lowestHp, injuredCount);
+    }
+
+    private void UpdateDebugState()
+    {
+        // Execution flow debug info (critical for diagnosing issues)
+        Debug.InCombat = InCombat;
+        Debug.CanExecuteGcd = CanExecuteGcd;
+        Debug.CanExecuteOgcd = CanExecuteOgcd;
+        Debug.GcdState = ActionService.CurrentGcdState.ToString();
+        Debug.GcdRemaining = ActionService.GcdRemaining;
+
+        Debug.ComboStep = ComboStep;
+        Debug.ComboTimeRemaining = ComboTimeRemaining;
+        Debug.OathGauge = OathGauge;
+        Debug.HasFightOrFlight = HasFightOrFlight;
+        Debug.FightOrFlightRemaining = FightOrFlightRemaining;
+        Debug.HasRequiescat = HasRequiescat;
+        Debug.RequiescatStacks = RequiescatStacks;
+        Debug.SwordOathStacks = SwordOathStacks;
+        Debug.AtonementStep = AtonementStep;
+        Debug.ConfiteorStep = ConfiteorStep;
+        Debug.GoringBladeRemaining = GoringBladeRemaining;
+        Debug.HasActiveMitigation = HasActiveMitigation;
+        Debug.ActiveMitigations = StatusHelper.GetActiveMitigations(Player);
+        Debug.IsMainTank = IsMainTank;
+        Debug.CurrentTarget = CurrentTarget?.Name?.TextValue ?? "None";
+    }
+}

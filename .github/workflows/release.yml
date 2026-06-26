@@ -30,13 +30,13 @@ jobs:
           unzip -q dalamud.zip -d ~/dalamud
 
       - name: Restore
-        run: dotnet restore
+        run: dotnet restore Daedalus.sln
 
       - name: Build
-        run: dotnet build -c Release --no-restore -p:DalamudLibPath=$HOME/dalamud/
+        run: dotnet build Daedalus.sln -c Release --no-restore -p:DalamudLibPath=$HOME/dalamud/
 
       - name: Create Release Archive
-        run: cp bin/Release/Olympus/latest.zip Olympus.zip
+        run: cp Daedalus/bin/Release/Daedalus/latest.zip Daedalus.zip
 
       - name: Extract Version
         id: version
@@ -49,25 +49,25 @@ jobs:
           # Use heredoc syntax to preserve newlines without URL encoding
           {
             echo 'notes<<EOF'
-            sed -n '/<!-- LATEST-START -->/,/<!-- LATEST-END -->/p' CHANGELOG.md | sed '1d;$d' | sed 's/^## .*//'
+            sed -n '/<!-- LATEST-START -->/,/<!-- LATEST-END -->/p' Daedalus/CHANGELOG.md | sed '1d;$d' | sed 's/^## .*//'
             echo 'EOF'
           } >> $GITHUB_OUTPUT
 
-      - name: Update Olympus entry in aggregator repo.json
+      - name: Update Daedalus entry in aggregator repo.json
         run: |
           # repo.json is the shared aggregator listing every RoseOfficial plugin.
-          # Update ONLY the Olympus entry; preserve all other plugins (Memoria, etc.).
+          # Update ONLY the Daedalus entry; preserve all other plugins (Memoria, etc.).
           NEW_VERSION="${{ steps.version.outputs.version }}"
           TAG="${{ github.ref_name }}"
-          ZIP_URL="https://github.com/RoseOfficial/Olympus/releases/download/${TAG}/Olympus.zip"
-          OLYMPUS_API=$(jq -r '.DalamudApiLevel' Olympus.json)
+          ZIP_URL="https://github.com/RoseOfficial/Daedalus/releases/download/${TAG}/Daedalus.zip"
+          DAEDALUS_API=$(jq -r '.DalamudApiLevel' Daedalus/Daedalus.json)
           # Tags are 3-part (vX.Y.Z); Dalamud.NET.Sdk auto-pads the bundled
           # manifest's AssemblyVersion to 4-part (X.Y.Z.0). repo.json must use
           # the 4-part form so Dalamud's strict manifest verification passes.
           ASSEMBLY_VERSION="${NEW_VERSION}.0"
-          jq --arg v "$ASSEMBLY_VERSION" --arg url "$ZIP_URL" --argjson api "$OLYMPUS_API" '
+          jq --arg v "$ASSEMBLY_VERSION" --arg url "$ZIP_URL" --argjson api "$DAEDALUS_API" '
             map(
-              if .InternalName == "Olympus" then
+              if .InternalName == "Daedalus" then
                 .AssemblyVersion = $v
                 | .DalamudApiLevel = $api
                 | .DownloadLinkInstall = $url
@@ -77,9 +77,9 @@ jobs:
             )
           ' repo.json > repo.json.tmp
           mv repo.json.tmp repo.json
-          # Sanity check — ensure the Olympus entry was actually updated.
-          if ! jq -e --arg v "$ASSEMBLY_VERSION" 'any(.[]; .InternalName == "Olympus" and .AssemblyVersion == $v)' repo.json > /dev/null; then
-            echo "ERROR: Olympus entry missing or version not updated in repo.json" >&2
+          # Sanity check — ensure the Daedalus entry was actually updated.
+          if ! jq -e --arg v "$ASSEMBLY_VERSION" 'any(.[]; .InternalName == "Daedalus" and .AssemblyVersion == $v)' repo.json > /dev/null; then
+            echo "ERROR: Daedalus entry missing or version not updated in repo.json" >&2
             cat repo.json >&2
             exit 1
           fi
@@ -87,7 +87,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: Olympus.zip
+          files: Daedalus.zip
           generate_release_notes: true
 
       - name: Commit repo.json
@@ -110,9 +110,9 @@ jobs:
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           nodetail: true
-          title: "Olympus ${{ github.ref_name }}"
+          title: "Daedalus ${{ github.ref_name }}"
           description: |
             ${{ steps.changelog.outputs.notes }}
 
-            **[Download from GitHub](https://github.com/RoseOfficial/Olympus/releases/tag/${{ github.ref_name }})** • Refresh your plugin list to update
+            **[Download from GitHub](https://github.com/RoseOfficial/Daedalus/releases/tag/${{ github.ref_name }})** • Refresh your plugin list to update
           color: 0x5865F2
