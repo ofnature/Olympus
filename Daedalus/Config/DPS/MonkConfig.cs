@@ -130,6 +130,11 @@ public sealed class MonkConfig
     #region Positional Settings
 
     /// <summary>
+    /// Whether to use vNav to reposition before positional finishers.
+    /// </summary>
+    public bool EnablePositionalMovement { get; set; } = true;
+
+    /// <summary>
     /// Whether to enforce positional requirements.
     /// MNK has the most positionals, so this can significantly impact DPS.
     /// </summary>

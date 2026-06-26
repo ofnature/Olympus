@@ -177,6 +177,14 @@ public sealed class BuffModule : IKratosModule
         }
         if (!context.ActionService.IsActionReady(MNKActions.PerfectBalance.ActionId)) return;
 
+        // PB fires only after an Opo-opo GCD for proper form flow (RSR EmergencyAbility cadence).
+        if (context.CurrentForm != MonkForm.OpoOpo && context.CurrentForm != MonkForm.None
+            && !context.HasFormlessFist)
+        {
+            context.Debug.BuffState = "Waiting for Opo-opo for PB";
+            return;
+        }
+
         bool shouldUsePB = context.HasRiddleOfFire ||
                            (context.HasDisciplinedFist && !context.ActionService.IsActionReady(MNKActions.RiddleOfFire.ActionId));
         if (!shouldUsePB)

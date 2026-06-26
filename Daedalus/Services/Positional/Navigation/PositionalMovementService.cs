@@ -171,12 +171,10 @@ public sealed class PositionalMovementService : IPositionalMovementService
         var distance = HorizontalDistanceTo(request.PlayerPosition, target.Position);
         var flex = System.MathF.Max(0f, request.VNavFlex);
 
-        // A mob that targets the player (solo / self-tanked) re-closes every frame, so stepping out only
-        // starts a kite-bounce — suppress the back-off for it. The approach still runs (e.g. after knockback).
-        var tooClose = !request.MaxMeleeTargetFollowsPlayer && distance < standDistance - flex;
-        var tooFar = distance > standDistance + flex;
-        if (!tooClose && !tooFar)
-            return false; // within the grace band — suppress the vNav call entirely.
+        // One-directional: only move IN when outside max melee, never move away when too close.
+        // Back-off causes kite-bounce oscillation with every mob type, not just self-targeted ones.
+        if (distance <= standDistance + flex)
+            return false;
 
         var standRequest = new MeleeApproachStandRequest(
             PlayerPosition: request.PlayerPosition,

@@ -146,6 +146,13 @@ public sealed class MachinistSection
                 v => config.Machinist.EnableAutomatonQueen = v,
                 null, save, actionId: MCHActions.AutomatonQueen.ActionId);
 
+            var queenMode = config.Machinist.QueenMode;
+            if (ConfigUIHelpers.EnumCombo("Queen Mode", ref queenMode,
+                "Auto: 14-step in raids/trials, simple in dungeons. Simple: overcap-only. Complex: always use 14-step script.", save))
+            {
+                config.Machinist.QueenMode = queenMode;
+            }
+
             ConfigUIHelpers.Toggle(
                 Loc.T(LocalizedStrings.Machinist.SaveBatteryForBurst, "Save Battery for Burst"),
                 () => config.Machinist.SaveBatteryForBurst,

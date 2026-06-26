@@ -29,9 +29,21 @@ public interface ITargetingService
     float GetBestStatusRemainingFromSourceOnAnyEnemy(uint[] statusIds, uint sourceId, float maxRange, IPlayerCharacter player);
 
     /// <summary>
+    /// Finds the nearest valid enemy within range, bypassing <c>PauseWhenNoTarget</c>.
+    /// Used as an AoE fallback when the player has no hard target but enemies are nearby.
+    /// </summary>
+    IBattleNpc? FindNearbyEnemy(float maxRange, IPlayerCharacter player);
+
+    /// <summary>
     /// Counts the number of valid enemies within the specified radius of the player.
     /// </summary>
     int CountEnemiesInRange(float radius, IPlayerCharacter player);
+
+    /// <summary>
+    /// Counts valid in-combat enemies within range, bypassing <c>PauseWhenNoTarget</c>.
+    /// Paired with <see cref="FindNearbyEnemy"/> for AoE fallback.
+    /// </summary>
+    int CountNearbyEnemiesInRange(float radius, IPlayerCharacter player);
 
     /// <summary>
     /// Counts valid enemies within <paramref name="radius"/> of <paramref name="target"/>'s position.

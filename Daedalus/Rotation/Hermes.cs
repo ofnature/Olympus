@@ -209,12 +209,16 @@ public sealed class Hermes : BaseMeleeDpsRotation<IHermesContext, IHermesModule>
         if (PositionalMovementService != null
             && !(burst.InBurstPrep && !burst.AlreadyInMelee && Configuration.Ninja.EnableBurstMeleeApproach))
         {
-            PositionalMovementTarget? movementTarget = PositionalTarget is { } positionalTarget
+            var resolvedTarget = PositionalTarget
+                ?? TargetingService.FindEnemy(
+                    Configuration.Targeting.EnemyStrategy, 25f, ObjectTable.LocalPlayer!) as IBattleChara;
+
+            PositionalMovementTarget? movementTarget = resolvedTarget is { } t
                 ? new PositionalMovementTarget(
-                    positionalTarget.Position,
-                    positionalTarget.HitboxRadius,
-                    positionalTarget.Rotation,
-                    TargetHasPositionalImmunity)
+                    t.Position,
+                    t.HitboxRadius,
+                    t.Rotation,
+                    PositionalService.HasPositionalImmunity(t))
                 : null;
 
             var request = new PositionalMovementUpdateRequest(
@@ -499,16 +503,40 @@ public sealed class Hermes : BaseMeleeDpsRotation<IHermesContext, IHermesModule>
     /// <inheritdoc />
     protected override void SyncDebugState(IHermesContext context)
     {
-        // Map Ninja debug state to common debug state fields
-        _debugState.PlanningState = _hermesDebugState.PlanningState;
-        _debugState.PlannedAction = _hermesDebugState.PlannedAction;
-        _debugState.DpsState = _hermesDebugState.DamageState;
-        // Note: NinjutsuState and BuffState are tracked in HermesDebugState
+        _debugState.PlannedAction = string.IsNullOrEmpty(_hermesDebugState.PlannedAction)
+            ? "None" : _hermesDebugState.PlannedAction;
+        _debugState.DpsState = string.IsNullOrEmpty(_hermesDebugState.DamageState)
+            ? (context.InCombat ? "Idle" : "Out of combat") : _hermesDebugState.DamageState;
 
-        // Party/player info
+        if (!string.IsNullOrEmpty(_hermesDebugState.NinjutsuState))
+            _debugState.PlanningState = _hermesDebugState.NinjutsuState;
+        else if (!string.IsNullOrEmpty(_hermesDebugState.BuffState))
+            _debugState.PlanningState = _hermesDebugState.BuffState;
+        else if (!string.IsNullOrEmpty(_hermesDebugState.DamageState))
+            _debugState.PlanningState = _hermesDebugState.DamageState;
+        else
+            _debugState.PlanningState = context.InCombat ? "Active" : "Idle";
+
+        _debugState.AoEDpsEnemyCount = _hermesDebugState.NearbyEnemies;
+        var aoeMin = context.Configuration.Ninja.AoEMinTargets;
+        _debugState.AoEDpsState = _hermesDebugState.NearbyEnemies >= aoeMin
+            ? $"AoE ({_hermesDebugState.NearbyEnemies} enemies)"
+            : _hermesDebugState.NearbyEnemies > 0
+                ? $"ST ({_hermesDebugState.NearbyEnemies} nearby)"
+                : "No enemies";
+
+        var target = TargetingService.FindEnemy(
+            context.Configuration.Targeting.EnemyStrategy,
+            25f,
+            context.Player)
+            ?? TargetingService.GetUserEnemyTarget() as IBattleNpc;
+        _debugState.TargetInfo = target != null
+            ? $"{target.Name} ({(float)target.CurrentHp / target.MaxHp:P0})"
+            : "None";
+        _hermesDebugState.CurrentTarget = _debugState.TargetInfo;
+
         _debugState.PlayerHpPercent = (float)context.Player.CurrentHp / context.Player.MaxHp;
         _debugState.PartyListCount = context.PartyList.Length;
-        _debugState.TargetInfo = TargetingDebugHelper.FormatTargetInfo(null, context.TargetingService);
     }
 
     /// <inheritdoc />
@@ -532,6 +560,8 @@ public sealed class Hermes : BaseMeleeDpsRotation<IHermesContext, IHermesModule>
 
         if (ActionService.CanExecuteGcd)
             _scheduler.DispatchGcd(context);
+
+        SyncDebugState(context);
     }
 
     #endregion

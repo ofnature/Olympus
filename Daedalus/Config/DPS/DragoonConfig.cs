@@ -133,6 +133,11 @@ public sealed class DragoonConfig
     #region Positional Settings
 
     /// <summary>
+    /// Whether to use vNav to reposition before positional finishers.
+    /// </summary>
+    public bool EnablePositionalMovement { get; set; } = true;
+
+    /// <summary>
     /// Whether to enforce positional requirements.
     /// When enabled, will not use positional actions if not in correct position.
     /// </summary>

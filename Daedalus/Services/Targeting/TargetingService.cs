@@ -251,6 +251,51 @@ public sealed class TargetingService : ITargetingService
     /// Counts the number of valid enemies within the specified radius of the player.
     /// Used for AoE damage decisions (e.g., Holy when 3+ enemies).
     /// </summary>
+    /// <inheritdoc />
+    public int CountNearbyEnemiesInRange(float radius, IPlayerCharacter player)
+    {
+        var count = 0;
+        foreach (var enemy in GetValidEnemies(radius, player))
+        {
+            if (IsEngagedOrHostile(enemy, player))
+                count++;
+        }
+        return count;
+    }
+
+    /// <inheritdoc />
+    public IBattleNpc? FindNearbyEnemy(float maxRange, IPlayerCharacter player)
+    {
+        IBattleNpc? nearest = null;
+        var nearestDist = float.MaxValue;
+        foreach (var enemy in GetValidEnemies(maxRange, player))
+        {
+            if (!IsEngagedOrHostile(enemy, player))
+                continue;
+            var dist = Vector3.DistanceSquared(player.Position, enemy.Position);
+            if (dist < nearestDist)
+            {
+                nearest = enemy;
+                nearestDist = dist;
+            }
+        }
+        return nearest;
+    }
+
+    private static bool IsEngagedOrHostile(IBattleNpc enemy, IPlayerCharacter player)
+    {
+        if ((enemy.StatusFlags & StatusFlags.InCombat) != 0)
+            return true;
+        if (enemy.TargetObjectId == player.GameObjectId)
+            return true;
+        // Hostile + has a target = engaged with someone (trust tank, party member)
+        if ((enemy.StatusFlags & StatusFlags.Hostile) != 0 && enemy.TargetObjectId != 0)
+            return true;
+        if ((enemy.StatusFlags & StatusFlags.Hostile) != 0 && enemy.CurrentHp < enemy.MaxHp)
+            return true;
+        return false;
+    }
+
     /// <param name="radius">Radius in yalms to check.</param>
     /// <param name="player">Current player character.</param>
     /// <returns>Number of valid enemies within radius.</returns>

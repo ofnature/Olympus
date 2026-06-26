@@ -144,27 +144,22 @@ public class NinjaBurstApproachServiceTests
         service.Update(CreateRequest(alreadyInMelee: false));
 
         Assert.Equal(PositionalMovementPhase.Moving, service.State.Phase);
-        Assert.Contains("pathfind in progress", service.State.SkipReason);
+        Assert.Contains("burst melee approach", service.State.SkipReason);
         _vNav.Verify(x => x.PathfindAndMoveCloseTo(It.IsAny<Vector3>(), It.IsAny<float>(), It.IsAny<bool>()), Times.Never);
     }
 
     [Fact]
-    public void Update_WhenVNavBusyAfterPreemptStop_RetriesOnce()
+    public void Update_WhenVNavBusy_SkipsWithoutRetry()
     {
         var service = CreateService();
-        var attempts = 0;
         _vNav.Setup(x => x.PathfindAndMoveCloseTo(It.IsAny<Vector3>(), It.IsAny<float>(), It.IsAny<bool>()))
-            .Returns(() =>
-            {
-                attempts++;
-                return attempts >= 2 ? VNavMoveResult.Queued : VNavMoveResult.Busy;
-            });
+            .Returns(VNavMoveResult.Busy);
 
         service.Update(CreateRequest(alreadyInMelee: false));
 
-        Assert.Equal(PositionalMovementPhase.Moving, service.State.Phase);
-        Assert.Equal(2, attempts);
-        _vNav.Verify(x => x.Stop(), Times.AtLeastOnce);
+        Assert.Equal(PositionalMovementPhase.Skipped, service.State.Phase);
+        Assert.Contains("vNav unavailable", service.State.SkipReason);
+        _vNav.Verify(x => x.Stop(), Times.Never);
     }
 
     private NinjaBurstApproachService CreateService()

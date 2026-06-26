@@ -83,6 +83,27 @@ public sealed class NinjaBurstApproachService
             return;
         }
 
+        // Hold an in-progress approach path until vNav finishes. Without this we'd re-issue
+        // PathfindAndMoveCloseTo every frame while the path is computing or running — the
+        // vNav "stutter step". Re-arm only once the path has fully completed.
+        if (_vNav.IsPathRunning || _vNav.IsPathfindInProgress)
+        {
+            State = new PositionalMovementState(
+                PositionalMovementPhase.Moving, null, State.Destination, "burst melee approach");
+            return;
+        }
+
+        // Dead-band: once the player is within melee stand distance ± arrival tolerance, suppress
+        // re-pathing. Without this, micro target position shifts cause a new path every frame.
+        var standDistance = PositionalStandCalculator.MaxMeleeStandDistance(
+            target.HitboxRadius, request.PlayerHitboxRadius);
+        var currentDistance = HorizontalDistanceTo(request.PlayerPosition, target.Position);
+        if (currentDistance <= standDistance + PositionalMovementConstants.BurstApproachArrivalToleranceYalms)
+        {
+            SetSkipped("within melee dead-band", stopPath: true);
+            return;
+        }
+
         // NIN abilities are instant — vNav can start during animation lock / while weaving.
         var standRequest = new MeleeApproachStandRequest(
             PlayerPosition: request.PlayerPosition,
@@ -106,16 +127,6 @@ public sealed class NinjaBurstApproachService
             return;
         }
 
-        if (_vNav.IsPathRunning)
-        {
-            State = new PositionalMovementState(
-                PositionalMovementPhase.Moving,
-                null,
-                destination,
-                SkipReason: "burst melee approach");
-            return;
-        }
-
         if (TryQueueBurstMove(destination, out var skipReason))
             return;
 
@@ -126,18 +137,6 @@ public sealed class NinjaBurstApproachService
     {
         skipReason = null;
 
-        if (_vNav.IsPathfindInProgress)
-        {
-            State = new PositionalMovementState(
-                PositionalMovementPhase.Moving,
-                null,
-                destination,
-                SkipReason: "burst approach (pathfind in progress)");
-            return true;
-        }
-
-        _vNav.Stop();
-
         var moveResult = QueueBurstMove(destination);
         if (moveResult == VNavMoveResult.Queued)
         {
@@ -147,31 +146,6 @@ public sealed class NinjaBurstApproachService
                 destination,
                 SkipReason: "burst melee approach");
             return true;
-        }
-
-        if (moveResult == VNavMoveResult.Busy && _vNav.IsPathfindInProgress)
-        {
-            State = new PositionalMovementState(
-                PositionalMovementPhase.Moving,
-                null,
-                destination,
-                SkipReason: "burst approach (pathfind in progress)");
-            return true;
-        }
-
-        if (moveResult == VNavMoveResult.Busy)
-        {
-            _vNav.Stop();
-            moveResult = QueueBurstMove(destination);
-            if (moveResult == VNavMoveResult.Queued)
-            {
-                State = new PositionalMovementState(
-                    PositionalMovementPhase.Moving,
-                    null,
-                    destination,
-                    SkipReason: "burst melee approach");
-                return true;
-            }
         }
 
         skipReason = $"vNav unavailable ({moveResult})";
@@ -202,6 +176,13 @@ public sealed class NinjaBurstApproachService
         State = new PositionalMovementState(
             PositionalMovementPhase.Skipped,
             SkipReason: reason);
+    }
+
+    private static float HorizontalDistanceTo(Vector3 from, Vector3 to)
+    {
+        var dx = from.X - to.X;
+        var dz = from.Z - to.Z;
+        return System.MathF.Sqrt((dx * dx) + (dz * dz));
     }
 
     private void StopOwnedPathIfActive()

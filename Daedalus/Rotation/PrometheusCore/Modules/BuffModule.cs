@@ -54,10 +54,12 @@ public sealed class BuffModule : IPrometheusModule
         }
 
         var player = context.Player;
-        var target = context.TargetingService.FindEnemy(
+        IBattleChara? target = context.TargetingService.FindEnemy(
             context.Configuration.Targeting.EnemyStrategy,
             FFXIVConstants.RangedTargetingRange,
             player);
+        target ??= context.TargetingService.FindNearbyEnemy(
+            FFXIVConstants.RangedTargetingRange, player);
         if (target == null)
         {
             context.Debug.BuffState = "No target";
@@ -65,6 +67,9 @@ public sealed class BuffModule : IPrometheusModule
         }
 
         var enemyCount = context.TargetingService.CountEnemiesInRange(12f, player);
+        if (enemyCount == 0)
+            enemyCount = context.TargetingService.CountNearbyEnemiesInRange(
+                FFXIVConstants.RangedTargetingRange, player);
 
         TryPushWildfire(context, scheduler, target);
         TryPushBarrelStabilizer(context, scheduler);
@@ -81,8 +86,11 @@ public sealed class BuffModule : IPrometheusModule
         if (player.Level < MCHActions.Wildfire.MinLevel) return;
         if (context.HasWildfire) return;
 
-        var shouldUse = context.IsOverheated
-                        || (context.Heat >= 50 && context.ActionService.IsActionReady(MCHActions.Hypercharge.ActionId));
+        // Wildfire must pair with Hypercharge — only fire when already Overheated or when
+        // Hypercharge will fire this frame (Heat >= 50, HC ready, no holds blocking it)
+        var hcReady = context.Heat >= 50 && context.ActionService.IsActionReady(MCHActions.Hypercharge.ActionId);
+        var shouldUse = context.IsOverheated || (hcReady && !context.HasReassemble
+            && !PrometheusRotationHelper.ShouldHoldHyperchargeForTools(context, 0));
         if (!shouldUse)
         {
             context.Debug.BuffState = "Waiting for Hypercharge alignment";
@@ -186,8 +194,8 @@ public sealed class BuffModule : IPrometheusModule
 
         bool shouldUse = strategy switch
         {
-            ReassembleStrategy.Automatic => nextIsBlessed || (atMaxCharges && nextIsAnyWeaponskill),
-            ReassembleStrategy.Any => nextIsAnyWeaponskill,
+            ReassembleStrategy.Automatic => nextIsBlessed,
+            ReassembleStrategy.Any => nextIsBlessed || (atMaxCharges && nextIsAnyWeaponskill),
             ReassembleStrategy.HoldOne => nextIsBlessed && atMaxCharges,
             _ => false,
         };
@@ -389,7 +397,14 @@ public sealed class BuffModule : IPrometheusModule
         var nextGcdId = PredictNextGcd(context, enemyCount);
         var batteryMin = context.Configuration.Machinist.BatteryMinGauge;
         var batteryOvercap = context.Configuration.Machinist.BatteryOvercapThreshold;
-        var useStepPairs = PrometheusRotationHelper.UseRaidQueenStepPairs(_dutyContentService, context.Configuration);
+
+        var queenMode = context.Configuration.Machinist.QueenMode;
+        var useStepPairs = queenMode switch
+        {
+            QueenMode.Complex => true,
+            QueenMode.Simple => false,
+            _ => PrometheusRotationHelper.UseRaidQueenStepPairs(_dutyContentService, context.Configuration),
+        };
 
         bool shouldSummon;
         if (useStepPairs)
@@ -450,7 +465,9 @@ public sealed class BuffModule : IPrometheusModule
         if (context.HasFullMetalMachinist && nextGcdId == MCHActions.FullMetalField.ActionId)
             return;
 
+        // Kickstart: only when at max charges (3) so we don't dump charges needed for Overheat weaving
         if (level >= ricochetAction.MinLevel
+            && context.RicochetCharges >= 3
             && PrometheusRotationHelper.ShouldKickstartCharge(context.ActionService, ricochetAction.ActionId, context.RicochetCharges)
             && context.ActionService.IsActionReady(ricochetAction.ActionId))
         {
@@ -459,6 +476,7 @@ public sealed class BuffModule : IPrometheusModule
         }
 
         if (level >= gaussAction.MinLevel
+            && context.GaussRoundCharges >= 3
             && PrometheusRotationHelper.ShouldKickstartCharge(context.ActionService, gaussAction.ActionId, context.GaussRoundCharges)
             && context.ActionService.IsActionReady(gaussAction.ActionId))
         {

@@ -288,12 +288,18 @@ public abstract class BaseMeleeDpsRotation<TContext, TModule> : BaseRotation<TCo
         if (PositionalMovementService == null)
             return;
 
-        PositionalMovementTarget? movementTarget = PositionalTarget is { } positionalTarget
+        // Use the melee-range positional target when available; fall back to a wider search
+        // so vNav can path toward a target that's currently out of melee range.
+        var resolvedTarget = PositionalTarget
+            ?? TargetingService.FindEnemy(
+                Configuration.Targeting.EnemyStrategy, 25f, player) as IBattleChara;
+
+        PositionalMovementTarget? movementTarget = resolvedTarget is { } t
             ? new PositionalMovementTarget(
-                positionalTarget.Position,
-                positionalTarget.HitboxRadius,
-                positionalTarget.Rotation,
-                TargetHasPositionalImmunity)
+                t.Position,
+                t.HitboxRadius,
+                t.Rotation,
+                PositionalService.HasPositionalImmunity(t))
             : null;
 
         var request = new PositionalMovementUpdateRequest(

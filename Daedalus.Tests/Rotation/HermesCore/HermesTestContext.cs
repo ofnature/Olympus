@@ -100,6 +100,9 @@ public static class HermesTestContext
         mock.Setup(x => x.TrainingService).Returns((ITrainingService?)null);
         mock.Setup(x => x.PartyCoordinationService).Returns((IPartyCoordinationService?)null);
         mock.Setup(x => x.TimelineService).Returns((ITimelineService?)null);
+        var combatEvent = new Mock<ICombatEventService>();
+        combatEvent.Setup(x => x.GetCombatDurationSeconds()).Returns(30f);
+        mock.Setup(x => x.CombatEventService).Returns(combatEvent.Object);
         mock.Setup(x => x.StatusHelper).Returns(statusHelper);
         mock.Setup(x => x.PartyHelper).Returns(partyHelper);
         mock.Setup(x => x.MudraHelper).Returns(helper);

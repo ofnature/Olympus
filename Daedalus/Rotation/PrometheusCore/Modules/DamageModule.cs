@@ -41,11 +41,6 @@ public sealed class DamageModule : IPrometheusModule
             context.Debug.DamageState = "Not in combat";
             return;
         }
-        if (context.TargetingService.IsDamageTargetingPaused())
-        {
-            context.Debug.DamageState = "Paused (no target)";
-            return;
-        }
         if (context.Configuration.Targeting.SuppressDamageOnForcedMovement
             && PlayerSafetyHelper.IsForcedMovementActive(context.Player))
         {
@@ -54,10 +49,17 @@ public sealed class DamageModule : IPrometheusModule
         }
 
         var player = context.Player;
-        var target = context.TargetingService.FindEnemy(
+        IBattleChara? target = context.TargetingService.FindEnemy(
             context.Configuration.Targeting.EnemyStrategy,
             FFXIVConstants.RangedTargetingRange,
             player);
+
+        // AoE fallback: FindEnemy returns null when PauseWhenNoTarget is on and the player
+        // has no hard target (common in dungeon trash pulls). Fall back to the nearest
+        // in-combat enemy so AoE rotation can fire.
+        target ??= context.TargetingService.FindNearbyEnemy(
+            FFXIVConstants.RangedTargetingRange, player);
+
         if (target == null)
         {
             context.Debug.DamageState = "No target";
@@ -67,6 +69,9 @@ public sealed class DamageModule : IPrometheusModule
         var aoeEnabled = context.Configuration.Machinist.EnableAoERotation;
         var aoeThreshold = context.Configuration.Machinist.AoEMinTargets;
         var rawEnemyCount = context.TargetingService.CountEnemiesInRange(12f, player);
+        if (rawEnemyCount == 0)
+            rawEnemyCount = context.TargetingService.CountNearbyEnemiesInRange(
+                FFXIVConstants.RangedTargetingRange, player);
         context.Debug.NearbyEnemies = rawEnemyCount;
         var enemyCount = aoeEnabled ? rawEnemyCount : 0;
 
@@ -79,7 +84,7 @@ public sealed class DamageModule : IPrometheusModule
         TryPushComboRescue(context, scheduler, target);
         TryPushBioblaster(context, scheduler, target, enemyCount);
         TryPushAirAnchor(context, scheduler, target);
-        TryPushDrill(context, scheduler, target);
+        TryPushDrill(context, scheduler, target, enemyCount);
         TryPushExcavator(context, scheduler, target);
         TryPushChainSaw(context, scheduler, target);
         TryPushFullMetalField(context, scheduler, target);
@@ -172,6 +177,7 @@ public sealed class DamageModule : IPrometheusModule
     private void TryPushFullMetalField(IPrometheusContext context, RotationScheduler scheduler, IBattleChara target)
     {
         if (!context.Configuration.Machinist.EnableFullMetalField) return;
+        if (context.IsOverheated) return;
         var player = context.Player;
         if (player.Level < MCHActions.FullMetalField.MinLevel) return;
         if (!PrometheusRotationHelper.ShouldUseFullMetalFieldNow(context)) return;
@@ -207,6 +213,7 @@ public sealed class DamageModule : IPrometheusModule
     private void TryPushExcavator(IPrometheusContext context, RotationScheduler scheduler, IBattleChara target)
     {
         if (!context.Configuration.Machinist.EnableExcavator) return;
+        if (context.IsOverheated) return;
         var player = context.Player;
         if (player.Level < MCHActions.Excavator.MinLevel) return;
         if (!context.HasExcavatorReady) return;
@@ -250,6 +257,7 @@ public sealed class DamageModule : IPrometheusModule
         var useAoe = enemyCount >= aoeThreshold;
 
         if (!useAoe || level < MCHActions.Bioblaster.MinLevel) return;
+        if (context.IsOverheated) return;
         if (context.HasBioblaster && context.BioblasterRemaining >= 3f) return;
         if (!context.ActionService.IsActionReady(MCHActions.Bioblaster.ActionId)) return;
 
@@ -281,13 +289,19 @@ public sealed class DamageModule : IPrometheusModule
             });
     }
 
-    private void TryPushDrill(IPrometheusContext context, RotationScheduler scheduler, IBattleChara target)
+    private void TryPushDrill(IPrometheusContext context, RotationScheduler scheduler, IBattleChara target, int enemyCount)
     {
         if (!context.Configuration.Machinist.EnableDrill) return;
         var player = context.Player;
         var level = player.Level;
 
         if (level < MCHActions.Drill.MinLevel) return;
+        if (context.IsOverheated) return;
+        // In AoE, Bioblaster replaces Drill (shared CD) — suppress Drill so it doesn't consume the charge
+        var aoeThreshold = context.Configuration.Machinist.AoEMinTargets;
+        if (context.Configuration.Machinist.EnableAoERotation && enemyCount >= aoeThreshold
+            && level >= MCHActions.Bioblaster.MinLevel)
+            return;
         if (context.DrillCharges == 0) return;
         if (!context.ActionService.IsActionReady(MCHActions.Drill.ActionId)) return;
         var stCastTime = context.HasSwiftcast ? 0f : MCHActions.Drill.CastTime;
@@ -323,6 +337,7 @@ public sealed class DamageModule : IPrometheusModule
         if (!context.Configuration.Machinist.EnableAirAnchor) return;
         var player = context.Player;
         var level = player.Level;
+        if (context.IsOverheated) return;
         var action = MCHActions.GetAirAnchor((byte)level, context.ActionService);
         if (level < action.MinLevel) return;
         if (context.Battery > 80) return;
@@ -360,6 +375,7 @@ public sealed class DamageModule : IPrometheusModule
     private void TryPushChainSaw(IPrometheusContext context, RotationScheduler scheduler, IBattleChara target)
     {
         if (!context.Configuration.Machinist.EnableChainSaw) return;
+        if (context.IsOverheated) return;
         var player = context.Player;
         if (player.Level < MCHActions.ChainSaw.MinLevel) return;
         if (context.Battery > 80) return;
@@ -396,6 +412,8 @@ public sealed class DamageModule : IPrometheusModule
 
     private void TryPushCombo(IPrometheusContext context, RotationScheduler scheduler, IBattleChara target, int enemyCount)
     {
+        if (context.IsOverheated) return;
+
         var player = context.Player;
         var level = player.Level;
         var aoeThreshold = context.Configuration.Machinist.AoEMinTargets;
@@ -405,7 +423,6 @@ public sealed class DamageModule : IPrometheusModule
         {
             var aoeAction = MCHActions.GetAoeAction((byte)level, context.ActionService);
             if (level < aoeAction.MinLevel) aoeAction = MCHActions.SpreadShot;
-            if (!context.ActionService.IsActionReady(aoeAction.ActionId)) return;
             var castTime = context.HasSwiftcast ? 0f : aoeAction.CastTime;
             if (MechanicCastGate.ShouldBlock(context, castTime))
             {
@@ -461,7 +478,6 @@ public sealed class DamageModule : IPrometheusModule
         }
 
         if (level < action.MinLevel) { action = MCHActions.SplitShot; ability = PrometheusAbilities.SplitShot; }
-        if (!context.ActionService.IsActionReady(action.ActionId)) return;
         var comboCastTime = context.HasSwiftcast ? 0f : action.CastTime;
         if (MechanicCastGate.ShouldBlock(context, comboCastTime))
         {

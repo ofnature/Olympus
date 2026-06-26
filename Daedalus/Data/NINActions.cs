@@ -498,6 +498,52 @@ public static class NINActions
 
     #endregion
 
+    #region Damage oGCDs
+
+    /// <summary>
+    /// Assassinate - Single-target oGCD (Lv.40). Replaced by Dream Within a Dream at Lv.56.
+    /// </summary>
+    public static readonly ActionDefinition Assassinate = new()
+    {
+        ActionId = 2246,
+        Name = "Assassinate",
+        MinLevel = 40,
+        Category = ActionCategory.oGCD,
+        TargetType = ActionTargetType.SingleEnemy,
+        EffectTypes = ActionEffectType.Damage,
+        CastTime = 0f,
+        RecastTime = 60f,
+        Range = 3f,
+        MpCost = 0,
+        DamagePotency = 200
+    };
+
+    /// <summary>
+    /// Dream Within a Dream - Triple-hit oGCD (Lv.56). Replaces Assassinate.
+    /// </summary>
+    public static readonly ActionDefinition DreamWithinADream = new()
+    {
+        ActionId = 3566,
+        Name = "Dream Within a Dream",
+        MinLevel = 56,
+        Category = ActionCategory.oGCD,
+        TargetType = ActionTargetType.SingleEnemy,
+        EffectTypes = ActionEffectType.Damage,
+        CastTime = 0f,
+        RecastTime = 60f,
+        Range = 3f,
+        MpCost = 0,
+        DamagePotency = 150 // per hit × 3
+    };
+
+    /// <summary>
+    /// Gets Dream Within a Dream or Assassinate based on level.
+    /// </summary>
+    public static ActionDefinition GetDreamAction(byte level, IActionService? actionService = null)
+        => ActionAvailability.Pick(level, actionService, DreamWithinADream, Assassinate);
+
+    #endregion
+
     #region Buff Actions (oGCD)
 
     /// <summary>

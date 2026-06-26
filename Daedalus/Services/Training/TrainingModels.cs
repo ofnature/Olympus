@@ -746,6 +746,9 @@ public static class NinConcepts
     public const string TrueNorthUsage = "nin.true_north_usage";
     public const string KazematoiManagement = "nin.kazematoi_management";
 
+    // Damage oGCDs (1)
+    public const string DreamWithinADream = "nin.dream_within_a_dream";
+
     // Procs & Raiju (3)
     public const string RaijuProcs = "nin.raiju_procs";
     public const string PhantomKamaitachi = "nin.phantom_kamaitachi";

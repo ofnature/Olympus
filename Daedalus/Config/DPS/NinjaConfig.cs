@@ -40,6 +40,11 @@ public sealed class NinjaConfig
     /// </summary>
     public bool EnableRaiju { get; set; } = true;
 
+    /// <summary>
+    /// Whether to use Dream Within a Dream / Assassinate.
+    /// </summary>
+    public bool EnableDreamWithinADream { get; set; } = true;
+
     #endregion
 
     #region Buff Toggles

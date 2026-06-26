@@ -99,13 +99,14 @@ public sealed class DamageModule : IKratosModule
         TryPushChakraSpender(context, scheduler, target, useAoE);
         TryPushThunderclap(context, scheduler, target);
 
-        // GCDs (priority order: Blitz > Procs > PB GCD > Form rotation > Six-Sided Star)
+        // GCDs (priority order: Blitz > Procs > PB GCD > Form rotation > Six-Sided Star > Ranged filler)
         TryPushMasterfulBlitz(context, scheduler, target, useAoE);
         TryPushFiresReply(context, scheduler, target);
         TryPushWindsReply(context, scheduler, target);
         TryPushPerfectBalanceAction(context, scheduler, target, useAoE);
         TryPushFormRotation(context, scheduler, target, useAoE);
         TryPushSixSidedStar(context, scheduler, target);
+        TryPushRangedFiller(context, scheduler, target);
     }
 
     private static bool ShouldSkipMnkPositional(IKratosContext context, bool correctPositional)
@@ -174,6 +175,12 @@ public sealed class DamageModule : IKratosModule
         var level = player.Level;
         if (context.Chakra < context.Configuration.Monk.ChakraMinGauge) return;
         if (context.Configuration.Monk.EnableBurstPooling && ShouldHoldForBurst(8f) && context.Chakra < 45) return;
+
+        // Hold Chakra when Brotherhood is imminent — BH grants Chakra generation,
+        // so spending at 4-5 right before BH wastes the incoming Chakra.
+        if (level >= MNKActions.Brotherhood.MinLevel && context.Chakra < 5
+            && context.ActionService.GetCooldownRemaining(MNKActions.Brotherhood.ActionId) is > 0f and < 10f)
+            return;
 
         if (useAoE && level >= MNKActions.HowlingFist.MinLevel)
         {
@@ -285,6 +292,13 @@ public sealed class DamageModule : IKratosModule
         if (level < MNKActions.ElixirField.MinLevel) return;
         if (context.BeastChakraCount < 3) return;
 
+        // RoF gate: only Blitz during RoF or within 42s of RoF ending (covers odd-minute windows).
+        // Without this, Blitz fires immediately and drifts out of burst alignment.
+        if (level >= MNKActions.RiddleOfFire.MinLevel
+            && !context.HasRiddleOfFire
+            && context.ActionService.GetCooldownRemaining(MNKActions.RiddleOfFire.ActionId) > 18f)
+            return;
+
         var blitzAction = MNKActions.GetBlitzAction(
             (byte)level,
             context.HasLunarNadi,
@@ -333,6 +347,9 @@ public sealed class DamageModule : IKratosModule
         var player = context.Player;
         if (player.Level < MNKActions.FiresReply.MinLevel) return;
         if (!context.HasFiresRumination) return;
+        if (context.HasPerfectBalance) return;
+        if (context.HasFormlessFist) return;
+        if (context.CurrentForm != MonkForm.OpoOpo && context.CurrentForm != MonkForm.None) return;
         if (!context.ActionService.IsActionReady(MNKActions.FiresReply.ActionId)) return;
 
         scheduler.PushGcd(KratosAbilities.FiresReply, target.GameObjectId, priority: 2,
@@ -669,6 +686,28 @@ public sealed class DamageModule : IKratosModule
                     .Concept("mnk_chakra_gauge")
                     .Record();
                 context.TrainingService?.RecordConceptApplication("mnk_chakra_gauge", true, "Six-Sided Star");
+            });
+    }
+
+    private void TryPushRangedFiller(IKratosContext context, RotationScheduler scheduler, IBattleChara target)
+    {
+        var player = context.Player;
+        var level = player.Level;
+        if (level < MNKActions.HowlingFist.MinLevel) return;
+        if (DistanceHelper.IsActionInRange(MNKActions.Bootshine.ActionId, player, target)) return;
+        if (context.Chakra < 5) return;
+
+        var action = MNKActions.GetAoeChakraSpender((byte)level, context.ActionService);
+        if (!context.ActionService.IsActionReady(action.ActionId)) return;
+
+        var ability = level >= MNKActions.Enlightenment.MinLevel
+            ? KratosAbilities.Enlightenment : KratosAbilities.HowlingFist;
+
+        scheduler.PushOgcd(ability, target.GameObjectId, priority: 1,
+            onDispatched: _ =>
+            {
+                context.Debug.PlannedAction = action.Name;
+                context.Debug.DamageState = $"{action.Name} (ranged filler)";
             });
     }
 

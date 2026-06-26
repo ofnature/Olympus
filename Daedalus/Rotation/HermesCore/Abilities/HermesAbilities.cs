@@ -36,6 +36,10 @@ public static class HermesAbilities
     public static readonly AbilityBehavior ZeshoMeppo = new() { Action = NINActions.ZeshoMeppo, Toggle = cfg => cfg.Ninja.EnableBhavacakra };
     public static readonly AbilityBehavior DeathfrogMedium = new() { Action = NINActions.DeathfrogMedium, Toggle = cfg => cfg.Ninja.EnableHellfrogMedium };
 
+    // --- Damage oGCDs ---
+    public static readonly AbilityBehavior DreamWithinADream = new() { Action = NINActions.DreamWithinADream, Toggle = cfg => cfg.Ninja.EnableDreamWithinADream };
+    public static readonly AbilityBehavior Assassinate = new() { Action = NINActions.Assassinate, Toggle = cfg => cfg.Ninja.EnableDreamWithinADream };
+
     // --- Burst window oGCDs ---
     public static readonly AbilityBehavior KunaisBane = new() { Action = NINActions.KunaisBane, Toggle = cfg => cfg.Ninja.EnableKunaisBane };
     public static readonly AbilityBehavior TrickAttack = new() { Action = NINActions.TrickAttack, Toggle = cfg => cfg.Ninja.EnableKunaisBane };

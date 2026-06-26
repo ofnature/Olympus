@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using Daedalus.Data;
@@ -55,6 +56,7 @@ public sealed unsafe class ActionService : IActionService
 
     // Track oGCD usage per GCD cycle (allows up to 2 weaves)
     private int _ogcdsUsedThisCycle;
+    private float _prevGcdRemaining;
 
     // Guard so modules can't spam UseAction every frame while GcdRemaining stays at 0
     // after a successful submit but before recast group 57 activates.
@@ -82,9 +84,9 @@ public sealed unsafe class ActionService : IActionService
     private DateTime _nextGcdAttemptAllowed = DateTime.MinValue;
 
     private const float MinRecastCompletionRatio = 0.85f;
-    private const double UncommittedSubmitStaleSeconds = 0.75;
-    private const double PartialRecastStaleSeconds = 2.5;
-    private const double FailedSubmitBackoffSeconds = 0.5;
+    private const double UncommittedSubmitStaleSeconds = 0.5;
+    private const double PartialRecastStaleSeconds = 1.5;
+    private const double FailedSubmitBackoffSeconds = 0.1;
 
     /// <summary>Current GCD state.</summary>
     public GcdState CurrentGcdState { get; private set; } = GcdState.Ready;
@@ -285,6 +287,13 @@ public sealed unsafe class ActionService : IActionService
             _lastGcdElapsed = 0;
         }
 
+        // Detect new GCD cycle: GcdRemaining jumped up, meaning a new GCD fired via the queue window.
+        // Without this, _ogcdsUsedThisCycle accumulates across queue-submitted GCDs (e.g. Heat Blast spam)
+        // and blocks all oGCD weaving during Overheat.
+        if (GcdRemaining > _prevGcdRemaining + 0.3f)
+            _ogcdsUsedThisCycle = 0;
+        _prevGcdRemaining = GcdRemaining;
+
         // Determine current state
         if (_lastIsCasting)
         {
@@ -297,7 +306,8 @@ public sealed unsafe class ActionService : IActionService
         else if (GcdRemaining <= 0)
         {
             CurrentGcdState = GcdState.Ready;
-            _ogcdsUsedThisCycle = 0; // Reset for new GCD cycle
+            _ogcdsUsedThisCycle = 0;
+            _gcdSubmittedThisCycle = false;
         }
         else if (GcdRemaining <= FFXIVTimings.QueueWindow)
         {
@@ -363,7 +373,8 @@ public sealed unsafe class ActionService : IActionService
             // Track for statistics
             var gcdDuration = actionManager->GetRecastTime(ActionType.Action, dispatchId);
             _actionTracker.LogGcdCast(gcdDuration);
-            _actionTracker.LogAttempt(action.ActionId, null, null, ActionResult.Success, 0);
+            var (tName, tHp) = ResolveTargetInfo(targetId);
+            _actionTracker.LogAttempt(action.ActionId, tName, tHp, ActionResult.Success, 0);
             RaiseActionExecuted(action);
         }
 
@@ -405,10 +416,11 @@ public sealed unsafe class ActionService : IActionService
             _lastExecutedAction = action;
             _lastExecuteTime = DateTime.UtcNow;
             _history.RecordOgcd(action.ActionId);
-            _ogcdsUsedThisCycle++; // Increment oGCD count for double-weave tracking
+            _ogcdsUsedThisCycle++;
             _blockedRepeatOgcdId = action.ActionId;
             _blockedRepeatOgcdUntil = DateTime.UtcNow.AddSeconds(1.0);
-            _actionTracker.LogAttempt(action.ActionId, null, null, ActionResult.Success, 0);
+            var (oName, oHp) = ResolveTargetInfo(targetId);
+            _actionTracker.LogAttempt(action.ActionId, oName, oHp, ActionResult.Success, 0);
             RaiseActionExecuted(action);
         }
 
@@ -500,7 +512,8 @@ public sealed unsafe class ActionService : IActionService
 
             var gcdDuration = actionManager->GetRecastTime(ActionType.Action, rawDispatchId);
             _actionTracker.LogGcdCast(gcdDuration);
-            _actionTracker.LogAttempt(action.ActionId, null, null, ActionResult.Success, 0);
+            var (rName, rHp) = ResolveTargetInfo(targetId);
+            _actionTracker.LogAttempt(action.ActionId, rName, rHp, ActionResult.Success, 0);
             RaiseActionExecuted(action);
         }
 
@@ -528,7 +541,8 @@ public sealed unsafe class ActionService : IActionService
             _ogcdsUsedThisCycle++;
             _blockedRepeatOgcdId = action.ActionId;
             _blockedRepeatOgcdUntil = DateTime.UtcNow.AddSeconds(1.0);
-            _actionTracker.LogAttempt(action.ActionId, null, null, ActionResult.Success, 0);
+            var (rwName, rwHp) = ResolveTargetInfo(targetId);
+            _actionTracker.LogAttempt(action.ActionId, rwName, rwHp, ActionResult.Success, 0);
             RaiseActionExecuted(action);
         }
 
@@ -565,6 +579,16 @@ public sealed unsafe class ActionService : IActionService
 
         var slotAdjusted = actionManager->GetAdjustedActionId(useActionId);
         return slotAdjusted == useActionId;
+    }
+
+    private (string? name, uint? hp) ResolveTargetInfo(ulong targetId)
+    {
+        if (targetId == 0 || _objectTable == null)
+            return (null, null);
+        var obj = _objectTable.SearchById(targetId);
+        if (obj is IBattleChara bc)
+            return (bc.Name?.TextValue, bc.CurrentHp);
+        return (obj?.Name?.TextValue, null);
     }
 
     /// <inheritdoc/>
@@ -725,7 +749,14 @@ public sealed unsafe class ActionService : IActionService
 
         // Each oGCD takes ~0.7s animation lock. Reserve the queue window at the tail of the GCD for the next
         // GCD's early submission so a weaved oGCD can never clip into it.
-        var availableTime = GcdRemaining - FFXIVTimings.QueueWindow - FFXIVConstants.WeaveWindowBuffer;
+        // For short GCDs (Heat Blast 1.5s), the standard 0.5s queue reserve + 0.1s buffer leaves
+        // no room for a 0.7s weave (0.9s - 0.6 = 0.3s). Drop the queue reserve entirely — the
+        // game's built-in action queue handles the next Heat Blast submission, and a single weaved
+        // oGCD's animation lock (~0.6s) finishes before the GCD rolls over.
+        var queueReserve = _lastKnownGcdTotal > 0 && _lastKnownGcdTotal <= 1.6f
+            ? 0f
+            : FFXIVTimings.QueueWindow;
+        var availableTime = GcdRemaining - queueReserve - FFXIVConstants.WeaveWindowBuffer;
         var slots = (int)(availableTime / FFXIVTimings.AnimationLockBase);
 
         return Math.Max(0, Math.Min(2, slots)); // Max 2 weaves (double weave)
@@ -753,6 +784,22 @@ public sealed unsafe class ActionService : IActionService
         var actionManager = SafeGameAccess.GetActionManager(_errorMetrics);
         if (actionManager is null)
             return 0;
+
+        var maxCharges = ActionManager.GetMaxCharges(actionId, 0);
+        if (maxCharges <= 1)
+        {
+            // Single-charge abilities on their own recast group (Drill, Air Anchor, Chain Saw):
+            // GetCurrentCharges may return 1 even on cooldown. Fall back to cooldown check.
+            // Skip for global GCD abilities (recast group 57) — their cooldown = GCD remaining,
+            // which would incorrectly report 0 charges during the normal GCD roll.
+            var adjustedId = actionManager->GetAdjustedActionId(actionId);
+            var recastGroup = actionManager->GetRecastGroup((int)ActionType.Action, adjustedId);
+            if (recastGroup != 57)
+            {
+                var remaining = GetCooldownRemaining(actionId);
+                return remaining <= 0f ? 1u : 0u;
+            }
+        }
 
         return actionManager->GetCurrentCharges(actionId);
     }

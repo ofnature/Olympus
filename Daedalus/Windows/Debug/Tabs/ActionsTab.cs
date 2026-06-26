@@ -141,6 +141,11 @@ public static class ActionsTab
                 if (!ShouldShowAttempt(attempt))
                     continue;
 
+                if (attempt.ActionId == 0 && attempt.Result == ActionResult.NotInCombat)
+                {
+                    lines.AppendLine(attempt.SpellName);
+                    continue;
+                }
                 var ts = attempt.Timestamp.ToString("HH:mm:ss.fff");
                 var icon = DebugColors.GetResultIcon(attempt.Result);
                 if (attempt.Result == ActionResult.Success)
@@ -192,6 +197,15 @@ public static class ActionsTab
 
     private static void DrawAttemptLine(ActionAttempt attempt)
     {
+        // Combat markers render as separator lines
+        if (attempt.ActionId == 0 && attempt.Result == ActionResult.NotInCombat)
+        {
+            ImGui.Separator();
+            ImGui.TextColored(DebugColors.Dim, $"{attempt.Timestamp:HH:mm:ss} {attempt.SpellName}");
+            ImGui.Separator();
+            return;
+        }
+
         var color = DebugColors.GetResultColor(attempt.Result);
         var timestamp = attempt.Timestamp.ToString("HH:mm:ss.fff");
         var resultIcon = DebugColors.GetResultIcon(attempt.Result);

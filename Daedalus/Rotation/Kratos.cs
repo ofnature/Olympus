@@ -78,6 +78,9 @@ public sealed class Kratos : BaseMeleeDpsRotation<IKratosContext, IKratosModule>
     private bool _hasLunarNadi;
     private bool _hasSolarNadi;
 
+    // Positional anticipation
+    private readonly DelegatePositionalAnticipationProvider _positionalAnticipationProvider;
+
     // Scheduler
     private readonly RotationScheduler _scheduler;
 
@@ -130,6 +133,7 @@ public sealed class Kratos : BaseMeleeDpsRotation<IKratosContext, IKratosModule>
         _partyCoordinationService = partyCoordinationService;
         _trainingService = trainingService;
 
+        _positionalAnticipationProvider = new DelegatePositionalAnticipationProvider(GetNextRequiredPositional);
         _scheduler = new RotationScheduler(actionService, jobGauges, configuration, timelineService, errorMetrics);
 
         // Initialize helpers
@@ -212,12 +216,19 @@ public sealed class Kratos : BaseMeleeDpsRotation<IKratosContext, IKratosModule>
         return PositionalType.Rear;
     }
 
+    /// <inheritdoc />
+    protected override IPositionalAnticipationProvider? GetPositionalAnticipationProvider()
+        => _positionalAnticipationProvider;
+
+    /// <inheritdoc />
+    protected override bool IsPositionalMovementEnabled()
+        => Configuration.Monk.EnablePositionalMovement;
+
     /// <summary>
     /// Updates MP forecast. Monks don't use MP for abilities.
     /// </summary>
     protected override void UpdateMpForecast(IPlayerCharacter player)
     {
-        // Monks don't use MP for any abilities
         MpForecastService.Update(
             (int)player.CurrentMp,
             (int)player.MaxMp,

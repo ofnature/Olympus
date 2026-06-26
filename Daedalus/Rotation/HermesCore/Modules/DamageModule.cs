@@ -24,6 +24,8 @@ public sealed class DamageModule : IHermesModule
     public int Priority => 30;
     public string Name => "Damage";
 
+    private const int NinkiForceDumpThreshold = 100;
+
     private readonly IBurstWindowService? _burstWindowService;
     private readonly ISmartAoEService? _smartAoEService;
     private readonly IHermesNinjutsuExecutor _executor;
@@ -135,7 +137,10 @@ public sealed class DamageModule : IHermesModule
             return;
 
         // RSR: (!InMug || InTrickAttack) — skip when not pooling so Ninki is spent on CD.
-        if (context.InMug && !context.InTrickAttack && HermesBurnHelper.ShouldPoolForRaidBurst(context))
+        // Force dump at 100 Ninki regardless to prevent overcap.
+        if (context.Ninki < NinkiForceDumpThreshold
+            && context.InMug && !context.InTrickAttack
+            && HermesBurnHelper.ShouldPoolForRaidBurst(context))
             return;
 
         var aoeThreshold = context.Configuration.Ninja.AoEMinTargets;

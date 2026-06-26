@@ -145,6 +145,11 @@ public sealed class ViperConfig
     #region Positional Settings
 
     /// <summary>
+    /// Whether to use vNav to reposition before positional finishers.
+    /// </summary>
+    public bool EnablePositionalMovement { get; set; } = true;
+
+    /// <summary>
     /// Whether to enforce positional requirements.
     /// </summary>
     public bool EnforcePositionals { get; set; } = false;

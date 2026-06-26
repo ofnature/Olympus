@@ -79,6 +79,9 @@ public sealed class Echidna : BaseMeleeDpsRotation<IEchidnaContext, IEchidnaModu
     private VPRActions.DreadCombo _dreadCombo;
     private VPRActions.SerpentCombo _serpentCombo;
 
+    // Positional anticipation
+    private readonly DelegatePositionalAnticipationProvider _positionalAnticipationProvider;
+
     // Scheduler
     private readonly RotationScheduler _scheduler;
 
@@ -131,6 +134,7 @@ public sealed class Echidna : BaseMeleeDpsRotation<IEchidnaContext, IEchidnaModu
         _partyCoordinationService = partyCoordinationService;
         _trainingService = trainingService;
 
+        _positionalAnticipationProvider = new DelegatePositionalAnticipationProvider(GetNextRequiredPositional);
         _scheduler = new RotationScheduler(actionService, jobGauges, configuration, timelineService, errorMetrics);
 
         // Initialize helpers
@@ -185,6 +189,14 @@ public sealed class Echidna : BaseMeleeDpsRotation<IEchidnaContext, IEchidnaModu
         // Default: flank (Flanksting is the default when no venom)
         return PositionalType.Flank;
     }
+
+    /// <inheritdoc />
+    protected override IPositionalAnticipationProvider? GetPositionalAnticipationProvider()
+        => _positionalAnticipationProvider;
+
+    /// <inheritdoc />
+    protected override bool IsPositionalMovementEnabled()
+        => Configuration.Viper.EnablePositionalMovement;
 
     /// <inheritdoc />
     protected override int DetermineComboStep(uint comboAction, float comboTimer)

@@ -146,6 +146,11 @@ public sealed class MachinistConfig
     /// </summary>
     public bool EnableAutomatonQueen { get; set; } = true;
 
+    /// <summary>
+    /// Queen summoning behavior mode.
+    /// </summary>
+    public QueenMode QueenMode { get; set; } = QueenMode.Auto;
+
     #endregion
 
     #region Burst Window Settings
@@ -235,4 +240,25 @@ public enum ReassembleStrategy
     /// Never fire Reassemble automatically. Manual usage only.
     /// </summary>
     Delay
+}
+
+/// <summary>
+/// Automaton Queen summoning behavior.
+/// </summary>
+public enum QueenMode
+{
+    /// <summary>
+    /// Uses 14-step script in raids/trials, simple overcap in dungeons.
+    /// </summary>
+    Auto,
+
+    /// <summary>
+    /// Simple overcap-only: summon when Battery exceeds threshold or would overcap from tools.
+    /// </summary>
+    Simple,
+
+    /// <summary>
+    /// RSR 14-step battery transition table for optimal Queen timing in raids/trials.
+    /// </summary>
+    Complex
 }

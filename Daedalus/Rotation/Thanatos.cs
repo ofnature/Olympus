@@ -79,6 +79,9 @@ public sealed class Thanatos : BaseMeleeDpsRotation<IThanatosContext, IThanatosM
     private int _voidShroud;
     private float _enshroudTimer;
 
+    // Positional anticipation
+    private readonly DelegatePositionalAnticipationProvider _positionalAnticipationProvider;
+
     // Scheduler
     private readonly RotationScheduler _scheduler;
 
@@ -131,6 +134,7 @@ public sealed class Thanatos : BaseMeleeDpsRotation<IThanatosContext, IThanatosM
         _partyCoordinationService = partyCoordinationService;
         _trainingService = trainingService;
 
+        _positionalAnticipationProvider = new DelegatePositionalAnticipationProvider(GetNextRequiredPositional);
         _scheduler = new RotationScheduler(actionService, jobGauges, configuration, timelineService, errorMetrics);
 
         // Initialize helpers
@@ -182,6 +186,14 @@ public sealed class Thanatos : BaseMeleeDpsRotation<IThanatosContext, IThanatosM
         // Default: Gallows (rear) if no enhanced buff
         return null;
     }
+
+    /// <inheritdoc />
+    protected override IPositionalAnticipationProvider? GetPositionalAnticipationProvider()
+        => _positionalAnticipationProvider;
+
+    /// <inheritdoc />
+    protected override bool IsPositionalMovementEnabled()
+        => Configuration.Reaper.EnablePositionalMovement;
 
     /// <inheritdoc />
     protected override int DetermineComboStep(uint comboAction, float comboTimer)

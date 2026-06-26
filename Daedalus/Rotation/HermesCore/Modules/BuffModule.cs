@@ -22,6 +22,8 @@ public sealed class BuffModule : IHermesModule
 
     private readonly IBurstWindowService? _burstWindowService;
     private const int NinkiThreshold = 50;
+    private const int NinkiForceDumpThreshold = 100;
+    private const float BunshinOpenerDelaySeconds = 5f;
 
     public BuffModule(IBurstWindowService? burstWindowService = null)
     {
@@ -52,6 +54,7 @@ public sealed class BuffModule : IHermesModule
         }
 
         TryPushTenriJindo(context, scheduler);
+        TryPushDreamWithinADream(context, scheduler);
         TryPushTrueNorth(context, scheduler);
         TryPushKunaisBane(context, scheduler);
         TryPushMug(context, scheduler);
@@ -83,6 +86,50 @@ public sealed class BuffModule : IHermesModule
                     .Tip("Save charges for when movement is impossible.")
                     .Concept(NinConcepts.KazematoiManagement)
                     .Record();
+            });
+    }
+
+    private void TryPushDreamWithinADream(IHermesContext context, RotationScheduler scheduler)
+    {
+        if (!context.Configuration.Ninja.EnableDreamWithinADream) return;
+        var player = context.Player;
+        var level = (byte)player.Level;
+        if (level < NINActions.Assassinate.MinLevel) return;
+
+        var action = NINActions.GetDreamAction(level, context.ActionService);
+        if (!context.ActionService.IsActionReady(action.ActionId)) return;
+
+        if (!context.HasKunaisBaneOnTarget && ShouldHoldForBurst(15f))
+        {
+            context.Debug.BuffState = $"Holding {action.Name} for burst";
+            return;
+        }
+
+        var target = context.TargetingService.FindEnemy(
+            context.Configuration.Targeting.EnemyStrategy, action.Range, player);
+        if (target == null) return;
+
+        var ability = action == NINActions.DreamWithinADream
+            ? HermesAbilities.DreamWithinADream : HermesAbilities.Assassinate;
+
+        scheduler.PushOgcd(ability, target.GameObjectId, priority: 2,
+            onDispatched: _ =>
+            {
+                context.Debug.PlannedAction = action.Name;
+                context.Debug.BuffState = $"Activating {action.Name}";
+                TrainingHelper.Decision(context.TrainingService)
+                    .Action(action.ActionId, action.Name)
+                    .AsMeleeDamage().Target(target.Name?.TextValue ?? "Target")
+                    .Reason($"Using {action.Name} in burst window",
+                        "Dream Within a Dream is a high-potency oGCD that should fire inside Kunai's Bane.")
+                    .Factors(context.HasKunaisBaneOnTarget ? "Kunai's Bane active" : "On cooldown",
+                        "60s cooldown ready")
+                    .Alternatives("Hold for burst (if imminent)")
+                    .Tip("Always use inside Kunai's Bane/Trick Attack window when possible.")
+                    .Concept(NinConcepts.DreamWithinADream)
+                    .Record();
+                context.TrainingService?.RecordConceptApplication(
+                    NinConcepts.DreamWithinADream, true, "Burst oGCD");
             });
     }
 
@@ -279,6 +326,11 @@ public sealed class BuffModule : IHermesModule
         if (context.HasBunshin) return;
         if (context.Ninki < NinkiThreshold) return;
         if (!context.ActionService.IsActionReady(NINActions.Bunshin.ActionId)) return;
+        if (context.CombatEventService.GetCombatDurationSeconds() < BunshinOpenerDelaySeconds)
+        {
+            context.Debug.BuffState = "Holding Bunshin (opener delay)";
+            return;
+        }
 
         scheduler.PushOgcd(HermesAbilities.Bunshin, player.GameObjectId, priority: 5,
             onDispatched: _ =>

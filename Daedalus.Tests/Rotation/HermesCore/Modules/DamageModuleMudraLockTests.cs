@@ -368,7 +368,7 @@ public class DamageModuleMudraLockTests
     [Fact]
     public void NinkiSpender_HeldDuringMugWindow_OutsideTrickAttack_WhenBurstPoolingEnabled()
     {
-        var (scheduler, context) = CreateReadyContext(ninki: 100, inMug: true, inTrickAttack: false);
+        var (scheduler, context) = CreateReadyContext(ninki: 80, inMug: true, inTrickAttack: false);
         context.Configuration.Ninja.EnableBurstPooling = true;
 
         _module.CollectCandidates(context, scheduler, isMoving: false);

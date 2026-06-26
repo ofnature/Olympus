@@ -367,9 +367,26 @@ public sealed class ActionTracker : IActionTracker
             if (combatStartTime != null)
             {
                 lastCombatGcdUptime = CalculateGcdUptime();
+                var duration = (DateTime.Now - combatStartTime.Value).TotalSeconds;
+                InsertMarker($"--- Combat ended ({duration:F0}s, uptime {lastCombatGcdUptime:F0}%) ---");
             }
             combatStartTime = null;
         }
+    }
+
+    private void InsertMarker(string text)
+    {
+        var marker = new ActionAttempt
+        {
+            Timestamp = DateTime.Now,
+            SpellName = text,
+            ActionId = 0,
+            Result = ActionResult.NotInCombat,
+        };
+        history.AddFirst(marker);
+        while (history.Count > HistorySize)
+            history.RemoveLast();
+        historyVersion++;
     }
 
     /// <summary>

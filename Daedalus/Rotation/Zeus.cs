@@ -78,6 +78,9 @@ public sealed class Zeus : BaseMeleeDpsRotation<IZeusContext, IZeusModule>
     private bool _isLifeOfDragonActive;
     private float _lifeOfDragonRemaining;
 
+    // Positional anticipation
+    private readonly DelegatePositionalAnticipationProvider _positionalAnticipationProvider;
+
     // Scheduler
     private readonly RotationScheduler _scheduler;
 
@@ -130,6 +133,7 @@ public sealed class Zeus : BaseMeleeDpsRotation<IZeusContext, IZeusModule>
         _partyCoordinationService = partyCoordinationService;
         _trainingService = trainingService;
 
+        _positionalAnticipationProvider = new DelegatePositionalAnticipationProvider(GetNextRequiredPositional);
         _scheduler = new RotationScheduler(actionService, jobGauges, configuration, timelineService, errorMetrics);
 
         // Initialize helpers
@@ -182,6 +186,14 @@ public sealed class Zeus : BaseMeleeDpsRotation<IZeusContext, IZeusModule>
 
         return null;
     }
+
+    /// <inheritdoc />
+    protected override IPositionalAnticipationProvider? GetPositionalAnticipationProvider()
+        => _positionalAnticipationProvider;
+
+    /// <inheritdoc />
+    protected override bool IsPositionalMovementEnabled()
+        => Configuration.Dragoon.EnablePositionalMovement;
 
     /// <inheritdoc />
     protected override int DetermineComboStep(uint comboAction, float comboTimer)

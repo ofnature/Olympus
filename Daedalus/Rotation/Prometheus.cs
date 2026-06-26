@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Dalamud.Game.ClientState.JobGauge;
 using Dalamud.Game.ClientState.Objects.SubKinds;
+using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Game.ClientState.Party;
 using Dalamud.Plugin.Services;
 using Daedalus.Data;
@@ -251,16 +252,38 @@ public sealed class Prometheus : BaseRangedDpsRotation<IPrometheusContext, IProm
     /// <inheritdoc />
     protected override void SyncDebugState(IPrometheusContext context)
     {
-        // Map Machinist debug state to common debug state fields
-        _debugState.PlanningState = _prometheusDebugState.PlanningState;
-        _debugState.PlannedAction = _prometheusDebugState.PlannedAction;
-        _debugState.DpsState = _prometheusDebugState.DamageState;
-        // Note: BuffState is tracked in PrometheusDebugState but not in common DebugState
+        _debugState.PlannedAction = string.IsNullOrEmpty(_prometheusDebugState.PlannedAction)
+            ? "None" : _prometheusDebugState.PlannedAction;
+        _debugState.DpsState = string.IsNullOrEmpty(_prometheusDebugState.DamageState)
+            ? (context.InCombat ? "Idle" : "Out of combat") : _prometheusDebugState.DamageState;
 
-        // Party/player info
+        if (!string.IsNullOrEmpty(_prometheusDebugState.BuffState))
+            _debugState.PlanningState = _prometheusDebugState.BuffState;
+        else if (!string.IsNullOrEmpty(_prometheusDebugState.DamageState))
+            _debugState.PlanningState = _prometheusDebugState.DamageState;
+        else
+            _debugState.PlanningState = context.InCombat ? "Active" : "Idle";
+
+        _debugState.AoEDpsEnemyCount = _prometheusDebugState.NearbyEnemies;
+        var aoeMin = context.Configuration.Machinist.AoEMinTargets;
+        _debugState.AoEDpsState = _prometheusDebugState.NearbyEnemies >= aoeMin
+            ? $"AoE ({_prometheusDebugState.NearbyEnemies} enemies)"
+            : _prometheusDebugState.NearbyEnemies > 0
+                ? $"ST ({_prometheusDebugState.NearbyEnemies} nearby)"
+                : "No enemies";
+
+        var target = TargetingService.FindEnemy(
+            context.Configuration.Targeting.EnemyStrategy,
+            FFXIVConstants.RangedTargetingRange,
+            context.Player)
+            ?? TargetingService.FindNearbyEnemy(FFXIVConstants.RangedTargetingRange, context.Player)
+               as IBattleChara;
+        _debugState.TargetInfo = target != null
+            ? $"{target.Name} ({(float)target.CurrentHp / target.MaxHp:P0})"
+            : "None";
+
         _debugState.PlayerHpPercent = (float)context.Player.CurrentHp / context.Player.MaxHp;
         _debugState.PartyListCount = context.PartyList.Length;
-        _debugState.TargetInfo = TargetingDebugHelper.FormatTargetInfo(null, context.TargetingService);
     }
 
     /// <inheritdoc />
@@ -287,6 +310,8 @@ public sealed class Prometheus : BaseRangedDpsRotation<IPrometheusContext, IProm
 
         if (ActionService.CanExecuteGcd)
             _scheduler.DispatchGcd(context);
+
+        SyncDebugState(context);
     }
 
     #endregion
