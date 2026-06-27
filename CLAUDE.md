@@ -8,7 +8,10 @@ Daedalus is a Dalamud plugin for Final Fantasy XIV providing automated rotation 
 **Solution:** `Daedalus.sln`
 **Test project:** `Daedalus.Tests`
 **Plugin entry:** `Daedalus/Plugin.cs`
-**Burn reference docs:** `.cursor/rules/burn-reference/` (current patch rotation references per job — always check before implementing rotation logic)
+**Burn reference docs — TWO folders, both matter:**
+- `.cursor/rules/burn-reference/` — per-job `{job}-rotation.md` (current-patch ground truth; always check before implementing rotation logic) plus cross-cutting docs for later milestones: `general-burn-flow.md`, `ipc-burn-protocol.md` (8-toon IPC/LAN burst sync), `bossmod-integration.md`, `vnav-integration.md` (movement/positionals). Consult the relevant cross-cutting doc before IPC/BossMod/nav work, not just the per-job file.
+- `/burn-reference/` (repo root) — forward-looking / special-content references needed for later: `tank-rotation.md` (cross-tank backlog/TODO for all four tanks — PLD/WAR/DRK/GNB; check before any shared tank-feature work), `blu-rotation.md` (Proteus/BLU design), and the duty-action layers `bozja-lost-actions.md`, `occult-crescent-phantom-jobs.md`, `variant-dungeon-actions.md` (reference only, no code yet — these sit on top of the main job, not part of per-job modules).
+**RSR source (upstream):** `.cursor/rsr/` — checkout of the forked RotationSolverReborn branch. Consult it directly when burn-reference docs lack detail or when you need the exact RSR logic a `*-rotation.md` diff cites (e.g. `RebornRotations/Tank/PLD_Reborn.cs`).
 
 ## Versioning
 - Current: `0.x.x` during implementation

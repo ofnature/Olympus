@@ -1,3 +1,4 @@
+using Dalamud.Game.ClientState.Objects.SubKinds;
 using Daedalus.Data;
 using Daedalus.Models.Action;
 using Daedalus.Rotation.Common;
@@ -78,7 +79,11 @@ public sealed class DamageModule : IThemisModule
         if (target == null)
         {
             // Ranged-pull: when enabled, stay put and pull with Shield Lob instead of dashing in.
-            if (!context.Configuration.Tank.PullRangedMobsWithRangedAttack)
+            // Lost-mob: when the mob slipped to another player, don't dash after it — Provoke (25y,
+            // auto-fired by EnmityModule) + Shield Lob reclaim it in place.
+            var lostToOther = context.Configuration.Tank.SuppressGapCloserOnLostMob
+                              && context.EnmityService?.HasLostAggroToOther(engageTarget, player.EntityId) == true;
+            if (!context.Configuration.Tank.PullRangedMobsWithRangedAttack && !lostToOther)
             {
                 var gapCloseBlocked = context.TargetingService.GapCloserSafety.ShouldBlockGapCloser(engageTarget, player);
                 if (gapCloseBlocked)
@@ -90,9 +95,11 @@ public sealed class DamageModule : IThemisModule
             return;
         }
 
-        var enemyCount = target != null
-            ? context.TargetingService.CountEnemiesInRangeOfTarget(5f, target, player)
-            : context.TargetingService.CountEnemiesInRange(5f, player);
+        // PLD's AoE (Total Eclipse / Prominence / Holy Circle) is a player-centered PBAoE, so count
+        // enemies around the PLAYER, not the hard target. Counting around the target undercounts when
+        // the pack is spread around the player (e.g. a third mob behind you), which made the rotation
+        // stay single-target with adds clearly in PBAoE range.
+        var enemyCount = context.TargetingService.CountEnemiesInRange(5f, player);
 
         // oGCD pushes
         TryPushCircleOfScorn(context, scheduler, player.GameObjectId, target.GameObjectId);
@@ -107,6 +114,7 @@ public sealed class DamageModule : IThemisModule
         TryPushDivineMightSpenders(context, scheduler, target.GameObjectId, player.GameObjectId, enemyCount);
         TryPushAtonementChain(context, scheduler, target.GameObjectId);
         TryPushGoringBlade(context, scheduler, target.GameObjectId);
+        TryPushMovingAddTag(context, scheduler, isMoving, player);
         TryPushBasicCombo(context, scheduler, target.GameObjectId, player.GameObjectId, enemyCount);
     }
 
@@ -141,6 +149,46 @@ public sealed class DamageModule : IThemisModule
                     .Concept(PldConcepts.Intervene)
                     .Record();
                 context.TrainingService?.RecordConceptApplication(PldConcepts.Intervene, wasSuccessful: true);
+            });
+    }
+
+    /// <summary>
+    /// Wall-to-wall add tag: while moving, fire the ranged GCD at a stray enemy that isn't on us yet so
+    /// nothing is left behind. Gated to not break an in-progress combo (only fires between combos) and to
+    /// only act while moving — when parked on a target the normal rotation owns the GCD.
+    /// </summary>
+    private void TryPushMovingAddTag(IThemisContext context, RotationScheduler scheduler, bool isMoving, IPlayerCharacter player)
+    {
+        if (!isMoving) return;
+        if (!context.Configuration.Tank.TagAddsWhileMovingWithRangedAttack) return;
+        if (player.Level < PLDActions.ShieldLob.MinLevel) return;
+        if (!context.ActionService.IsActionReady(PLDActions.ShieldLob.ActionId)) return;
+
+        // Never interrupt a combo in progress — let it finish, then tag.
+        if (ThemisRotation.IsInAoECombo(context.ActionService, context.LastComboAction, context.ComboTimeRemaining)
+            || ThemisRotation.IsInSingleTargetCombo(context.LastComboAction, context.ComboTimeRemaining))
+            return;
+
+        var stray = context.TargetingService.FindEnemyNotTargetingPlayer(20f, player);
+        if (stray == null) return;
+
+        scheduler.PushGcd(ThemisAbilities.ShieldLob, stray.GameObjectId, priority: 6,
+            onDispatched: _ =>
+            {
+                context.Debug.PlannedAction = PLDActions.ShieldLob.Name;
+                context.Debug.DamageState = "Shield Lob (tag add — moving)";
+                TrainingHelper.Decision(context.TrainingService)
+                    .Action(PLDActions.ShieldLob.ActionId, PLDActions.ShieldLob.Name)
+                    .AsTankDamage()
+                    .Reason(
+                        "Tagging a stray add with Shield Lob while moving.",
+                        "During a wall-to-wall pull, ranged-tag adds that aren't on you yet so none are left behind.")
+                    .Factors("Moving", "Add not aggroed to us", "Not mid-combo")
+                    .Alternatives("Ignore the add (it gets left behind)")
+                    .Tip("Shield Lob stray adds while running between packs.")
+                    .Concept(PldConcepts.BurstWindow)
+                    .Record();
+                context.TrainingService?.RecordConceptApplication(PldConcepts.BurstWindow, wasSuccessful: true);
             });
     }
 
@@ -610,16 +658,20 @@ public sealed class DamageModule : IThemisModule
         var prominenceAvailable = ThemisRotation.IsProminenceAvailable(context.ActionService, level);
         var inAoECombo = prominenceAvailable
             && ThemisRotation.IsInAoECombo(context.ActionService, context.LastComboAction, context.ComboTimeRemaining);
-        var inSingleTargetCombo = ThemisRotation.IsInSingleTargetCombo(context.LastComboAction, context.ComboTimeRemaining);
 
         var stuckTeWithoutProminence = context.LastComboAction == PLDActions.TotalEclipse.ActionId
             && context.ComboTimeRemaining > 0
             && !prominenceAvailable;
 
+        // A real pack (>= minAoE in PBAoE range) breaks an in-progress single-target combo to AoE
+        // immediately. The old !inSingleTargetCombo guard delayed AoE by up to 2 GCDs while finishing the
+        // 1-2-3 — fine normally, but in wall-to-wall pulls AutoDuty only parks on each pack for ~2 GCDs,
+        // so that delay meant the pack was never tagged before it moved on. At 2+ targets AoE is the
+        // breakeven gain anyway (RSR parity), so interrupting ST is correct, not just convenient.
         var useFullAoECombo = context.Configuration.Tank.EnableAoEDamage
                               && level >= PLDActions.TotalEclipse.MinLevel
                               && prominenceAvailable
-                              && (inAoECombo || (enemyCount >= minAoE && !inSingleTargetCombo && !stuckTeWithoutProminence));
+                              && (inAoECombo || (enemyCount >= minAoE && !stuckTeWithoutProminence));
 
         if (useFullAoECombo)
         {
@@ -631,7 +683,6 @@ public sealed class DamageModule : IThemisModule
                           && level >= PLDActions.TotalEclipse.MinLevel
                           && !prominenceAvailable
                           && enemyCount >= minAoE
-                          && !inSingleTargetCombo
                           && !stuckTeWithoutProminence;
 
         if (useTeFiller)

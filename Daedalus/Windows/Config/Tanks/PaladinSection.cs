@@ -53,6 +53,30 @@ public sealed class PaladinSection
                 save,
                 actionId: PLDActions.Sheltron.ActionId);
 
+            if (config.Tank.EnableSheltron)
+            {
+                ConfigUIHelpers.BeginIndent();
+
+                ConfigUIHelpers.Toggle(
+                    "Dump at Oath cap (free mitigation uptime)",
+                    () => config.Tank.SheltronOathOvercapDump,
+                    v => config.Tank.SheltronOathOvercapDump = v,
+                    "Weave Sheltron in combat when the Oath Gauge reaches the threshold below, so passively-regenerated gauge isn't wasted.",
+                    save);
+
+                if (config.Tank.SheltronOathOvercapDump)
+                {
+                    config.Tank.SheltronOvercapThreshold = ConfigUIHelpers.IntSlider(
+                        "Oath dump threshold",
+                        config.Tank.SheltronOvercapThreshold,
+                        50, 100,
+                        "100 = only at hard cap; lower spends sooner for more buff uptime.",
+                        save);
+                }
+
+                ConfigUIHelpers.EndIndent();
+            }
+
             ConfigUIHelpers.Toggle(
                 "Sentinel / Guardian",
                 () => config.Tank.EnableSentinel,

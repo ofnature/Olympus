@@ -177,20 +177,18 @@ public sealed class Themis : BaseTankRotation<IThemisContext, IThemisModule>
 
     /// <summary>
     /// True while the AoE combo is unfinished (Total Eclipse cast, Prominence pending).
-    /// Requires the hotbar to show Prominence and that Prominence was not the last GCD —
-    /// casting via the Total Eclipse base id leaves Combo.Action on Total Eclipse, which
-    /// otherwise causes infinite Prominence spam.
+    /// PLD's AoE 1-2 is a combo-gated pair of SEPARATE actions (NOT a button-replacement combo —
+    /// confirmed against RSR, which uses ProminencePvE / TotalEclipsePvE as distinct actions), so
+    /// GetAdjustedActionId(TotalEclipse) never resolves to Prominence in-game. Detect via combo state:
+    /// the last combo move was Total Eclipse and the window is still open. The WasLastGcd(Prominence)
+    /// guard closes the combo the instant Prominence fires, preventing infinite Prominence re-selection.
     /// </summary>
     internal static bool IsInAoECombo(IActionService actionService, uint lastComboAction, float comboTimeRemaining)
     {
         if (comboTimeRemaining <= 0 || lastComboAction != PLDActions.TotalEclipse.ActionId)
             return false;
 
-        if (actionService.WasLastGcd(PLDActions.Prominence.ActionId))
-            return false;
-
-        return actionService.GetAdjustedActionId(PLDActions.TotalEclipse.ActionId)
-               == PLDActions.Prominence.ActionId;
+        return !actionService.WasLastGcd(PLDActions.Prominence.ActionId);
     }
 
     /// <summary>
@@ -314,16 +312,29 @@ public sealed class Themis : BaseTankRotation<IThemisContext, IThemisModule>
     /// <inheritdoc />
     protected override void ExecuteModules(IThemisContext context, bool isMoving, bool inCombat)
     {
+        // Capture WHY the whole rotation stops, so a stall is self-diagnosing in the Why Stuck panel
+        // instead of just looking idle. Cleared each frame the rotation actually runs.
+        context.Debug.PauseReason = "";
+
         // Preserve BaseRotation's safety pauses.
         if (Configuration.Targeting.PauseAllOnStandStillPunisher
             && PlayerSafetyHelper.IsStandStillPunisherActive(context.Player))
         {
+            context.Debug.PauseReason = "Stand-still punisher (Pyretic) — all actions paused";
             return;
         }
         if (Configuration.Targeting.PauseOnPlayerChannel
             && PlayerSafetyHelper.IsPlayerIntentChannelActive(context.Player))
         {
+            context.Debug.PauseReason = "Player channel/stance active — all actions paused";
             return;
+        }
+
+        if (!inCombat)
+        {
+            context.Debug.PauseReason = "Not in combat (rotation idle)";
+            // Not an early return on its own — modules already self-gate on InCombat — but record it so a
+            // combat-detection drop while enemies are engaged is visible as the stall cause.
         }
 
         if (TryDispatchTincture(context, inCombat)) return;

@@ -54,8 +54,9 @@ public static class ThemisAbilities
     {
         Action = PLDActions.Prominence,
         Toggle = cfg => cfg.Tank.EnableAoEDamage,
-        // Prominence replaces Total Eclipse on the hotbar; UseAction needs the base id.
-        ReplacementBaseId = PLDActions.TotalEclipse.ActionId,
+        // NOTE: Prominence is NOT a button-replacement of Total Eclipse — it is a separate, combo-gated
+        // action (RSR uses ProminencePvE directly). It must dispatch by its own id; routing through a
+        // Total Eclipse ReplacementBaseId would re-cast Total Eclipse and the AoE combo never finishes.
     };
 
     // --- Atonement chain (Sword Oath) ---

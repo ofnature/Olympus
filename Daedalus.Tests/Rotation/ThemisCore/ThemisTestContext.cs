@@ -26,6 +26,7 @@ public static class ThemisTestContext
         Configuration? config = null,
         Mock<IActionService>? actionService = null,
         Mock<ITargetingService>? targetingService = null,
+        Mock<IEnmityService>? enmityService = null,
         byte level = 100,
         uint currentHp = 50000,
         uint maxHp = 50000,
@@ -72,7 +73,7 @@ public static class ThemisTestContext
         var actionTracker = MockBuilders.CreateMockActionTracker(config);
         var statusHelper = new ThemisStatusHelper();
 
-        var enmityService = new Mock<IEnmityService>();
+        enmityService ??= new Mock<IEnmityService>();
         enmityService.Setup(x => x.IsMainTankOn(It.IsAny<Dalamud.Game.ClientState.Objects.Types.IBattleChara>(), It.IsAny<uint>())).Returns(false);
         enmityService.Setup(x => x.IsLosingAggro(It.IsAny<Dalamud.Game.ClientState.Objects.Types.IBattleChara>(), It.IsAny<uint>(), It.IsAny<float>())).Returns(false);
         enmityService.Setup(x => x.GetEnmityPosition(It.IsAny<Dalamud.Game.ClientState.Objects.Types.IBattleChara>(), It.IsAny<uint>())).Returns(1);

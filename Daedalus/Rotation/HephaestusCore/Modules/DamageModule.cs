@@ -71,7 +71,11 @@ public sealed class DamageModule : IHephaestusModule
         if (target == null)
         {
             // Ranged-pull: when enabled, stay put and pull with Lightning Shot instead of dashing in.
-            if (!context.Configuration.Tank.PullRangedMobsWithRangedAttack)
+            // Lost-mob: when the mob slipped to another player, don't dash after it — Provoke (25y,
+            // auto-fired by EnmityModule) + Lightning Shot reclaim it in place.
+            var lostToOther = context.Configuration.Tank.SuppressGapCloserOnLostMob
+                              && context.EnmityService?.HasLostAggroToOther(engageTarget, player.EntityId) == true;
+            if (!context.Configuration.Tank.PullRangedMobsWithRangedAttack && !lostToOther)
             {
                 var gapCloseBlocked = context.TargetingService.GapCloserSafety.ShouldBlockGapCloser(engageTarget, player);
                 if (gapCloseBlocked)

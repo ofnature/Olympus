@@ -42,7 +42,11 @@ public sealed class DamageModule : INyxModule
         if (target == null)
         {
             // Ranged-pull: when enabled, stay put and pull with Unmend instead of dashing in.
-            if (!context.Configuration.Tank.PullRangedMobsWithRangedAttack)
+            // Lost-mob: when the mob slipped to another player, don't dash after it — Provoke (25y,
+            // auto-fired by EnmityModule) + Unmend reclaim it in place.
+            var lostToOther = context.Configuration.Tank.SuppressGapCloserOnLostMob
+                              && context.EnmityService?.HasLostAggroToOther(engageTarget, player.EntityId) == true;
+            if (!context.Configuration.Tank.PullRangedMobsWithRangedAttack && !lostToOther)
                 TryPushShadowstrideGapClose(context, scheduler, engageTarget.GameObjectId, engageTarget);
             TryPushUnmend(context, scheduler, engageTarget.GameObjectId);
             return;

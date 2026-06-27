@@ -16,6 +16,9 @@ public sealed class ThemisDebugState : IEnemyPackDebug
     public float GcdRemaining { get; set; }
     public string ExecutionFlow { get; set; } = "";
 
+    /// <summary>Non-empty when the whole rotation is globally paused this frame; explains why it's idle.</summary>
+    public string PauseReason { get; set; } = "";
+
     // Module states
     public string DamageState { get; set; } = "";
     public string MitigationState { get; set; } = "";

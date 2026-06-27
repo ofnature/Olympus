@@ -226,6 +226,34 @@ public sealed class TankConfig
     public bool EnableSheltron { get; set; } = true;
 
     /// <summary>
+    /// Weave Sheltron / Holy Sheltron in combat whenever the Oath Gauge reaches
+    /// <see cref="SheltronOvercapThreshold"/>, independent of incoming-damage gating. Oath regenerates
+    /// passively (~50 per ~20s of combat), so dumping at cap keeps the physical-damage-reduction buff up
+    /// at high uptime instead of wasting overcapped gauge. RSR parity: WhenToSheltron oath-overcap dump.
+    /// </summary>
+    public bool SheltronOathOvercapDump { get; set; } = true;
+
+    /// <summary>
+    /// Oath Gauge at or above which <see cref="SheltronOathOvercapDump"/> fires Sheltron in combat.
+    /// 100 = only at hard cap; lower trades a little mitigation uptime for not sitting near cap.
+    /// Range: 50 (Sheltron cost) to 100.
+    /// </summary>
+    private int _sheltronOvercapThreshold = 100;
+    public int SheltronOvercapThreshold
+    {
+        get => _sheltronOvercapThreshold;
+        set => _sheltronOvercapThreshold = Math.Clamp(value, 50, 100);
+    }
+
+    /// <summary>
+    /// While moving in combat, tag stray adds that aren't on you yet with the job's ranged GCD
+    /// (Shield Lob / Tomahawk / Unmend / Lightning Shot) so a wall-to-wall pull leaves nothing behind.
+    /// Only fires while moving and only when not mid-combo (so it never breaks a 1-2-3 / AoE combo).
+    /// Default true.
+    /// </summary>
+    public bool TagAddsWhileMovingWithRangedAttack { get; set; } = true;
+
+    /// <summary>
     /// Use Hallowed Ground (invulnerability).
     /// </summary>
     public bool EnableHallowedGround { get; set; } = true;
@@ -539,6 +567,15 @@ public sealed class TankConfig
     /// Default false (preserve dash-to-engage behavior).
     /// </summary>
     public bool PullRangedMobsWithRangedAttack { get; set; } = false;
+
+    /// <summary>
+    /// When a mob has slipped to another player (we lost aggro, it's now out of melee and targeting
+    /// someone else), don't dash after it with the gap-closer. Provoke (25y, auto-fired by the
+    /// EnmityModule) plus the ranged GCD reclaim it in place, so the tank stays on the pack and resumes
+    /// AoE/ST instead of running across the room. Gap-closers still weave as damage once in melee, and
+    /// initial dash-to-engage on un-aggroed pulls is unaffected. Default true.
+    /// </summary>
+    public bool SuppressGapCloserOnLostMob { get; set; } = true;
 
     /// <summary>
     /// When a co-tank is present (party has another tank), do not auto-acquire loose adds — stick to

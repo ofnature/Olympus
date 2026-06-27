@@ -105,14 +105,45 @@ public sealed class ThemisComboFallbackTests
     }
 
     [Fact]
-    public void Dispatch_AoEComboStep2_ProminenceActionStatusBlocked_DispatchesViaTotalEclipseBaseId()
+    public void CollectCandidates_AoEStep2_PushesProminence_WithoutHotbarSubstitution()
     {
+        // In-game regression: PLD AoE is not a button-replacement combo, so GetAdjustedActionId never
+        // resolves Total Eclipse -> Prominence. Detection must work off pure combo state. Without this,
+        // the rotation spammed Total Eclipse forever and never fired the second AoE (Prominence).
         var targeting = BuildMeleeTargeting(enemyCount: 3);
         var actionService = MockBuilders.CreateMockActionService();
-        SetupProminenceComboReplacement(actionService);
-        actionService.Setup(x => x.CanExecuteActionId(It.IsAny<uint>())).Returns(false);
-        actionService.Setup(x => x.ExecuteGcdRaw(
-                It.IsAny<ActionDefinition>(), PLDActions.TotalEclipse.ActionId, It.IsAny<ulong>()))
+        // Deliberately do NOT mock any Total Eclipse -> Prominence adjustment: GetAdjustedActionId returns
+        // the input unchanged (mirrors the real game for this non-replacement combo).
+        var enemy = CreateMockEnemy(12345UL);
+        var objectTable = BuildObjectTableForMelee(targeting, enemyId: 12345UL);
+        var scheduler = SchedulerFactory.CreateForTest(actionService: actionService);
+        var context = ThemisTestContext.Create(
+            actionService: actionService,
+            targetingService: targeting,
+            objectTable: objectTable,
+            level: 100,
+            comboStep: 2,
+            lastComboAction: PLDActions.TotalEclipse.ActionId,
+            comboTimeRemaining: 30f);
+
+        _module.CollectCandidates(context, scheduler, isMoving: false);
+
+        var gcd = scheduler.InspectGcdQueue();
+        Assert.Contains(gcd, c => c.Behavior == ThemisAbilities.Prominence);
+        Assert.DoesNotContain(gcd, c => c.Behavior == ThemisAbilities.TotalEclipse);
+    }
+
+    [Fact]
+    public void Dispatch_AoEComboStep2_ProminenceDispatchesByOwnId_NotViaTotalEclipseBaseId()
+    {
+        // PLD AoE is NOT a button-replacement combo: Prominence is a separate, combo-gated action and
+        // must dispatch by its own id. Routing through a Total Eclipse ReplacementBaseId would re-cast
+        // Total Eclipse and the AoE combo would never finish (observed in-game as endless Total Eclipse).
+        var targeting = BuildMeleeTargeting(enemyCount: 3);
+        var actionService = MockBuilders.CreateMockActionService();
+        actionService.Setup(x => x.CanExecuteActionId(It.IsAny<uint>())).Returns(true);
+        actionService.Setup(x => x.ExecuteGcd(
+                It.Is<ActionDefinition>(a => a.ActionId == PLDActions.Prominence.ActionId), It.IsAny<ulong>()))
             .Returns(true);
 
         var scheduler = SchedulerFactory.CreateForTest(actionService: actionService);
@@ -123,15 +154,14 @@ public sealed class ThemisComboFallbackTests
 
         Assert.True(result.Dispatched);
         actionService.Verify(
-            x => x.ExecuteGcdRaw(
+            x => x.ExecuteGcd(
                 It.Is<ActionDefinition>(a => a.ActionId == PLDActions.Prominence.ActionId),
-                PLDActions.TotalEclipse.ActionId,
                 It.IsAny<ulong>()),
             Times.Once);
+        // Never routed through the Total Eclipse base id (no ReplacementBaseId).
         actionService.Verify(
-            x => x.ExecuteGcd(
-                It.Is<ActionDefinition>(a => a.ActionId == PLDActions.TotalEclipse.ActionId),
-                It.IsAny<ulong>()),
+            x => x.ExecuteGcdRaw(
+                It.IsAny<ActionDefinition>(), PLDActions.TotalEclipse.ActionId, It.IsAny<ulong>()),
             Times.Never);
     }
 
@@ -170,6 +200,30 @@ public sealed class ThemisComboFallbackTests
         Assert.Contains(gcd, c => c.Behavior == ThemisAbilities.Prominence);
         Assert.DoesNotContain(gcd, c => c.Behavior == ThemisAbilities.Atonement);
         Assert.DoesNotContain(gcd, c => c.Behavior == ThemisAbilities.GoringBlade);
+    }
+
+    [Fact]
+    public void CollectCandidates_MidSingleTargetCombo_WithPack_BreaksToAoE()
+    {
+        // w2w: arriving on a fresh pack while mid 1-2-3 (last GCD Fast Blade) must break the ST combo and
+        // AoE immediately, not finish the combo — AutoDuty only parks ~2 GCDs per pack.
+        var targeting = BuildMeleeTargeting(enemyCount: 3);
+        var actionService = MockBuilders.CreateMockActionService();
+        var scheduler = SchedulerFactory.CreateForTest(actionService: actionService);
+        var context = ThemisTestContext.Create(
+            actionService: actionService,
+            targetingService: targeting,
+            objectTable: BuildObjectTableForMelee(targeting, enemyId: 12345UL),
+            level: 100,
+            comboStep: 2,
+            lastComboAction: PLDActions.FastBlade.ActionId, // mid single-target combo
+            comboTimeRemaining: 30f);
+
+        _module.CollectCandidates(context, scheduler, isMoving: false);
+
+        var gcd = scheduler.InspectGcdQueue();
+        Assert.Contains(gcd, c => c.Behavior == ThemisAbilities.TotalEclipse);
+        Assert.DoesNotContain(gcd, c => c.Behavior == ThemisAbilities.RiotBlade);
     }
 
     [Fact]

@@ -293,6 +293,27 @@ public sealed class TargetingService : ITargetingService
         return nearest;
     }
 
+    public IBattleNpc? FindEnemyNotTargetingPlayer(float maxRange, IPlayerCharacter player)
+    {
+        IBattleNpc? nearest = null;
+        var nearestDist = float.MaxValue;
+        foreach (var enemy in GetValidEnemies(maxRange, player))
+        {
+            // Part of the pull (engaged/hostile) but not yet on us — a tag candidate.
+            if (!IsEngagedOrHostile(enemy, player))
+                continue;
+            if (enemy.TargetObjectId == player.GameObjectId)
+                continue;
+            var dist = Vector3.DistanceSquared(player.Position, enemy.Position);
+            if (dist < nearestDist)
+            {
+                nearest = enemy;
+                nearestDist = dist;
+            }
+        }
+        return nearest;
+    }
+
     private bool IsEngagedOrHostile(IBattleNpc enemy, IPlayerCharacter player)
     {
         if ((enemy.StatusFlags & StatusFlags.InCombat) != 0)

@@ -72,6 +72,12 @@ public static class WhyStuckTab
         ImGui.Text(Loc.T(LocalizedStrings.Debug.CurrentState, "Current State"));
         ImGui.Separator();
 
+        // Loud banner when the whole rotation is globally paused — turns a mystery stall into a stated cause.
+        if (tank != null && !string.IsNullOrEmpty(tank.PauseReason))
+        {
+            ImGui.TextColored(DebugColors.Failure, $"PAUSED: {tank.PauseReason}");
+        }
+
         var gcdReady = gcd.CanExecuteGcd;
         var gcdColor = gcdReady ? DebugColors.Success : DebugColors.Warning;
         var gcdText = gcdReady
@@ -307,6 +313,17 @@ public static class WhyStuckTab
                 ? $"{tank.ComboStep} ({tank.ComboTimeRemaining:F1}s)"
                 : "—";
             ImGui.Text(comboText);
+
+            // Enemy counts that drive the AoE-vs-ST decision: aggroed pull size (25y) and how many the
+            // self-centered PBAoE (5y) actually hits. AoE triggers when the 5y count meets the threshold.
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
+            ImGui.Text("Enemies");
+            ImGui.TableNextColumn();
+            var pbaoeColor = tank.InAoERange >= 2 ? DebugColors.Success : DebugColors.Warning;
+            ImGui.TextColored(pbaoeColor, $"{tank.InAoERange} in 5y");
+            ImGui.SameLine();
+            ImGui.TextColored(DebugColors.Dim, $" / {tank.AggroedInRange} aggroed in 25y");
 
             ImGui.TableNextRow();
             ImGui.TableNextColumn();

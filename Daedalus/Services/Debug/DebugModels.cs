@@ -125,6 +125,12 @@ public sealed class DebugTankState
     public int GaugeMax { get; init; } = 100;
     public int ComboStep { get; init; }
     public float ComboTimeRemaining { get; init; }
+    /// <summary>Non-empty when the rotation is globally paused this frame (explains a full stall).</summary>
+    public string PauseReason { get; init; } = "";
+    /// <summary>Aggroed/engaged enemies within 25y (pull size).</summary>
+    public int AggroedInRange { get; init; }
+    /// <summary>Enemies within the job's self-centered AoE radius (5y for tanks) — what a PBAoE hits.</summary>
+    public int InAoERange { get; init; }
     public IReadOnlyList<(string Label, string Value)> ResourceLines { get; init; } = [];
 }
 

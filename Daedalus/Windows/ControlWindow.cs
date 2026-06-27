@@ -124,6 +124,29 @@ public sealed class ControlWindow : Window
             configuration.Tank.IgnoreAddsWithCoTank = ignoreAdds;
         }
 
+        var noChaseLost = configuration.Tank.SuppressGapCloserOnLostMob;
+        if (ConfigUIHelpers.ToggleCheckbox(
+                "Don't Chase Lost Mobs",
+                ref noChaseLost,
+                "When a mob slips to another player, don't dash after it. Provoke (auto-fired) plus the "
+                + "ranged GCD reclaim it in place so you stay on the pack. Initial dash-to-engage and "
+                + "in-melee gap-closer weaving are unaffected.",
+                saveConfiguration))
+        {
+            configuration.Tank.SuppressGapCloserOnLostMob = noChaseLost;
+        }
+
+        var tagAdds = configuration.Tank.TagAddsWhileMovingWithRangedAttack;
+        if (ConfigUIHelpers.ToggleCheckbox(
+                "Tag Adds While Moving",
+                ref tagAdds,
+                "While moving in a wall-to-wall pull, ranged-tag stray adds that aren't on you yet so none "
+                + "are left behind. Only fires while moving and never interrupts a combo.",
+                saveConfiguration))
+        {
+            configuration.Tank.TagAddsWhileMovingWithRangedAttack = tagAdds;
+        }
+
         ImGui.Separator();
     }
 

@@ -80,4 +80,13 @@ public sealed class EnmityService : IEnmityService
         // For now, return false (player is assumed stable if they have aggro)
         return !IsMainTankOn(target, playerEntityId);
     }
+
+    /// <inheritdoc />
+    public bool HasLostAggroToOther(IBattleChara target, uint playerEntityId)
+    {
+        // Targeting a real other entity (not us, not nobody) — we lost it. An idle/un-aggroed mob has
+        // TargetObjectId == 0 and is NOT treated as lost, so initial dash-to-engage still works.
+        var focus = target.TargetObjectId;
+        return focus != 0 && focus != playerEntityId;
+    }
 }

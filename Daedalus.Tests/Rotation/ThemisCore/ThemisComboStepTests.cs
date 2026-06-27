@@ -64,13 +64,17 @@ public class ThemisComboStepTests
     }
 
     [Fact]
-    public void IsInAoECombo_WhenHotbarNotProminence_ReturnsFalse()
+    public void IsInAoECombo_DoesNotRequireHotbarSubstitution()
     {
+        // PLD AoE is NOT a button-replacement combo, so GetAdjustedActionId(TotalEclipse) stays Total
+        // Eclipse in-game. Detection must rely on combo state alone — requiring the substitution was the
+        // bug that made the rotation spam Total Eclipse and never fire Prominence.
         var actionService = MockBuilders.CreateMockActionService();
         actionService.Setup(x => x.GetAdjustedActionId(PLDActions.TotalEclipse.ActionId))
-            .Returns(PLDActions.TotalEclipse.ActionId);
+            .Returns(PLDActions.TotalEclipse.ActionId); // no substitution (mirrors the real game)
+        actionService.Setup(x => x.WasLastGcd(PLDActions.Prominence.ActionId)).Returns(false);
 
-        Assert.False(Themis.IsInAoECombo(
+        Assert.True(Themis.IsInAoECombo(
             actionService.Object,
             PLDActions.TotalEclipse.ActionId,
             comboTimeRemaining: 30f));

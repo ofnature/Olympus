@@ -35,4 +35,12 @@ public interface IEnmityService
     /// Used for preemptive Provoke suggestions.
     /// </summary>
     bool IsLosingAggro(IBattleChara target, uint playerEntityId, float threshold = 0.9f);
+
+    /// <summary>
+    /// Returns true when the target is actively focused on another entity (not the player and not
+    /// nobody) — i.e. we have genuinely lost it to someone else, as opposed to an un-aggroed idle mob.
+    /// Used to decide not to chase a slipped mob (Provoke reclaims it instead). Distinct from a fresh
+    /// pull where the target has no current focus.
+    /// </summary>
+    bool HasLostAggroToOther(IBattleChara target, uint playerEntityId);
 }

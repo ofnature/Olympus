@@ -35,6 +35,13 @@ public interface ITargetingService
     IBattleNpc? FindNearbyEnemy(float maxRange, IPlayerCharacter player);
 
     /// <summary>
+    /// Finds the nearest in-range enemy that is part of the pull but is NOT currently focused on the
+    /// player (no aggro on us yet). Used by tanks to tag stray adds with a ranged GCD during wall-to-wall
+    /// movement so nothing is left behind. Returns null when every nearby enemy is already on the player.
+    /// </summary>
+    IBattleNpc? FindEnemyNotTargetingPlayer(float maxRange, IPlayerCharacter player);
+
+    /// <summary>
     /// Counts the number of valid enemies within the specified radius of the player.
     /// </summary>
     int CountEnemiesInRange(float radius, IPlayerCharacter player);

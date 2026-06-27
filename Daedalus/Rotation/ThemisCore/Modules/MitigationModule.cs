@@ -459,25 +459,42 @@ public sealed class MitigationModule : IThemisModule
         var player = context.Player;
         var level = player.Level;
         if (level < PLDActions.Sheltron.MinLevel) return;
-        if (!context.TankCooldownService.ShouldUseShortCooldown(hpPercent, context.OathGauge, context.Configuration.Tank.SheltronMinGauge)) return;
         if (context.StatusHelper.HasSheltron(player)) return;
         if (context.HasHallowedGround) return;
+
+        // Two reasons to fire: (1) damage-reactive use via TankCooldownService, or (2) oath-overcap dump —
+        // in combat with the gauge at/over the configured threshold, spend it so passively-regenerated Oath
+        // isn't wasted and the physical-damage-reduction buff stays up at high uptime (RSR WhenToSheltron).
+        var damageReactive = context.TankCooldownService.ShouldUseShortCooldown(
+            hpPercent, context.OathGauge, context.Configuration.Tank.SheltronMinGauge);
+        var overcapDump = context.Configuration.Tank.SheltronOathOvercapDump
+                          && context.OathGauge >= context.Configuration.Tank.SheltronOvercapThreshold;
+        if (!damageReactive && !overcapDump) return;
 
         var sheltronAction = PLDActions.GetSheltronAction(level, context.ActionService);
         if (!context.ActionService.IsActionReady(sheltronAction.ActionId)) return;
 
         var hp = hpPercent;
         var gauge = context.OathGauge;
-        scheduler.PushOgcd(ThemisAbilities.Sheltron, player.GameObjectId, priority: 3,
+        // Overcap dumps are lower priority than damage-reactive use so they never steal a weave slot from a
+        // genuine mitigation need in the same window.
+        var priority = damageReactive ? 3 : 5;
+        scheduler.PushOgcd(ThemisAbilities.Sheltron, player.GameObjectId, priority: priority,
             onDispatched: _ =>
             {
                 context.Debug.PlannedAction = sheltronAction.Name;
-                context.Debug.MitigationState = $"Sheltron ({gauge} gauge)";
+                context.Debug.MitigationState = damageReactive
+                    ? $"Sheltron ({gauge} gauge)"
+                    : $"Sheltron (oath dump, {gauge} gauge)";
                 TrainingHelper.Decision(context.TrainingService)
                     .Action(sheltronAction.ActionId, sheltronAction.Name)
                     .AsTankResource(gauge)
-                    .Reason($"Spent 50 Oath Gauge at {hp:P0} HP", $"{sheltronAction.Name} powerful short defensive.")
-                    .Factors($"Oath Gauge: {gauge}", $"HP at {hp:P0}")
+                    .Reason(
+                        damageReactive
+                            ? $"Spent 50 Oath Gauge at {hp:P0} HP"
+                            : $"Dumped {gauge} Oath Gauge at cap for free mitigation uptime",
+                        $"{sheltronAction.Name} powerful short defensive.")
+                    .Factors($"Oath Gauge: {gauge}", $"HP at {hp:P0}", damageReactive ? "Damage-reactive" : "Oath overcap")
                     .Alternatives("Save gauge", "Wait for bigger hit")
                     .Tip("Oath Gauge regenerates passively. Spend Sheltron frequently.")
                     .Concept("pld_sheltron")
