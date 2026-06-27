@@ -20,6 +20,15 @@ public static class PlayerSafetyHelper
         FFXIVConstants.ForcedMovementStatusIds.Contains(statusId);
 
     /// <summary>
+    /// True while bound by an instanced duty (dungeon/trial/raid) — the scope for wall-to-wall
+    /// ranged-pull tagging so it never fires in the open world. Returns true when the Condition
+    /// service is unavailable (e.g. unit tests) so the gated logic remains testable.
+    /// </summary>
+    public static bool IsInInstancedDuty() =>
+        Daedalus.Rotation.Base.RotationServices.Condition?[
+            Dalamud.Game.ClientState.Conditions.ConditionFlag.BoundByDuty] ?? true;
+
+    /// <summary>
     /// Returns true if the player has any forced-movement debuff active.
     /// Guards against null player and null StatusList — IBattleChara.StatusList
     /// can be null mid-frame for despawning actors and in unit-test mocks.

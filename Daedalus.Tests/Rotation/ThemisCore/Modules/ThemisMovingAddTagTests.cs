@@ -43,7 +43,7 @@ public sealed class ThemisMovingAddTagTests
         targeting.Setup(x => x.CountEnemiesInRangeOfTarget(
                 It.IsAny<float>(), It.IsAny<IBattleNpc>(), It.IsAny<IPlayerCharacter>()))
             .Returns(1);
-        targeting.Setup(x => x.FindEnemyNotTargetingPlayer(It.IsAny<float>(), It.IsAny<IPlayerCharacter>()))
+        targeting.Setup(x => x.FindNearestTaggableEnemy(It.IsAny<float>(), It.IsAny<IPlayerCharacter>()))
             .Returns(stray);
         return targeting;
     }

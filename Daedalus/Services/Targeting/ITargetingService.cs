@@ -42,6 +42,14 @@ public interface ITargetingService
     IBattleNpc? FindEnemyNotTargetingPlayer(float maxRange, IPlayerCharacter player);
 
     /// <summary>
+    /// Finds the nearest valid hostile in range that is not already focused on the player, INCLUDING
+    /// not-yet-aggroed idle mobs. Used by tanks to ranged-pull/gather the next pack while moving toward it
+    /// (wall-to-wall). Broader than <see cref="FindEnemyNotTargetingPlayer"/>, which requires the mob to
+    /// already be engaged.
+    /// </summary>
+    IBattleNpc? FindNearestTaggableEnemy(float maxRange, IPlayerCharacter player);
+
+    /// <summary>
     /// Counts the number of valid enemies within the specified radius of the player.
     /// </summary>
     int CountEnemiesInRange(float radius, IPlayerCharacter player);

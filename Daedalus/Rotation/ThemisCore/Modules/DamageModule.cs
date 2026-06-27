@@ -153,23 +153,23 @@ public sealed class DamageModule : IThemisModule
     }
 
     /// <summary>
-    /// Wall-to-wall add tag: while moving, fire the ranged GCD at a stray enemy that isn't on us yet so
-    /// nothing is left behind. Gated to not break an in-progress combo (only fires between combos) and to
-    /// only act while moving — when parked on a target the normal rotation owns the GCD.
+    /// Wall-to-wall add tag: while moving in a duty, ranged-pull the nearest mob within 25y that isn't on
+    /// us yet (including not-yet-aggroed packs we're walking toward) so the pull gathers and nothing is
+    /// left behind. Only fires while moving, in an instanced duty, and between combos (never breaks one).
     /// </summary>
     private void TryPushMovingAddTag(IThemisContext context, RotationScheduler scheduler, bool isMoving, IPlayerCharacter player)
     {
         if (!isMoving) return;
         if (!context.Configuration.Tank.TagAddsWhileMovingWithRangedAttack) return;
+        if (!PlayerSafetyHelper.IsInInstancedDuty()) return;
         if (player.Level < PLDActions.ShieldLob.MinLevel) return;
         if (!context.ActionService.IsActionReady(PLDActions.ShieldLob.ActionId)) return;
 
-        // Never interrupt a combo in progress — let it finish, then tag.
-        if (ThemisRotation.IsInAoECombo(context.ActionService, context.LastComboAction, context.ComboTimeRemaining)
-            || ThemisRotation.IsInSingleTargetCombo(context.LastComboAction, context.ComboTimeRemaining))
+        // Never interrupt a combo in progress — only tag between combos (no active combo timer).
+        if (context.ComboTimeRemaining > 0f)
             return;
 
-        var stray = context.TargetingService.FindEnemyNotTargetingPlayer(20f, player);
+        var stray = context.TargetingService.FindNearestTaggableEnemy(25f, player);
         if (stray == null) return;
 
         scheduler.PushGcd(ThemisAbilities.ShieldLob, stray.GameObjectId, priority: 6,

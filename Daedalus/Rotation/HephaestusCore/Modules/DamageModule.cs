@@ -110,7 +110,34 @@ public sealed class DamageModule : IHephaestusModule
             TryPushStartGnashingFang(context, scheduler, target.GameObjectId);
 
         TryPushCartridgeSpender(context, scheduler, target.GameObjectId, enemyCount);
+        TryPushMovingAddTag(context, scheduler, isMoving);
         TryPushBasicCombo(context, scheduler, target.GameObjectId, enemyCount);
+    }
+
+    /// <summary>
+    /// Wall-to-wall add tag: while moving in a duty, ranged-pull (Lightning Shot) the nearest mob within
+    /// 25y that isn't on us yet — including idle packs we're walking toward — so the pull gathers. Only
+    /// fires while moving, in an instanced duty, and between combos (never breaks one).
+    /// </summary>
+    private void TryPushMovingAddTag(IHephaestusContext context, RotationScheduler scheduler, bool isMoving)
+    {
+        if (!isMoving) return;
+        if (!context.Configuration.Tank.TagAddsWhileMovingWithRangedAttack) return;
+        if (!PlayerSafetyHelper.IsInInstancedDuty()) return;
+        var player = context.Player;
+        if (player.Level < GNBActions.LightningShot.MinLevel) return;
+        if (!context.ActionService.IsActionReady(GNBActions.LightningShot.ActionId)) return;
+        if (context.ComboTimeRemaining > 0f) return;
+
+        var stray = context.TargetingService.FindNearestTaggableEnemy(25f, player);
+        if (stray == null) return;
+
+        scheduler.PushGcd(GnbAbilities.LightningShot, stray.GameObjectId, priority: 6,
+            onDispatched: _ =>
+            {
+                context.Debug.PlannedAction = GNBActions.LightningShot.Name;
+                context.Debug.DamageState = "Lightning Shot (tag add — moving)";
+            });
     }
 
     // Push all 5 continuation procs at priority 1; scheduler's ProcBuff gate picks the active one.

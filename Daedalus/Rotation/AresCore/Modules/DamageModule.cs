@@ -92,7 +92,34 @@ public sealed class DamageModule : IAresModule
         TryPushGaugeSpender(context, scheduler, target.GameObjectId, enemyCount);
         TryPushPrimalRend(context, scheduler, target.GameObjectId);
         TryPushPrimalRuination(context, scheduler, target.GameObjectId);
+        TryPushMovingAddTag(context, scheduler, isMoving);
         TryPushCombo(context, scheduler, target.GameObjectId, enemyCount);
+    }
+
+    /// <summary>
+    /// Wall-to-wall add tag: while moving in a duty, ranged-pull (Tomahawk) the nearest mob within 25y
+    /// that isn't on us yet — including idle packs we're walking toward — so the pull gathers. Only fires
+    /// while moving, in an instanced duty, and between combos (never breaks one).
+    /// </summary>
+    private void TryPushMovingAddTag(IAresContext context, RotationScheduler scheduler, bool isMoving)
+    {
+        if (!isMoving) return;
+        if (!context.Configuration.Tank.TagAddsWhileMovingWithRangedAttack) return;
+        if (!PlayerSafetyHelper.IsInInstancedDuty()) return;
+        var player = context.Player;
+        if (player.Level < WARActions.Tomahawk.MinLevel) return;
+        if (!context.ActionService.IsActionReady(WARActions.Tomahawk.ActionId)) return;
+        if (context.ComboTimeRemaining > 0f) return;
+
+        var stray = context.TargetingService.FindNearestTaggableEnemy(25f, player);
+        if (stray == null) return;
+
+        scheduler.PushGcd(AresAbilities.Tomahawk, stray.GameObjectId, priority: 6,
+            onDispatched: _ =>
+            {
+                context.Debug.PlannedAction = WARActions.Tomahawk.Name;
+                context.Debug.DamageState = "Tomahawk (tag add — moving)";
+            });
     }
 
     #region Out-of-melee

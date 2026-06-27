@@ -293,6 +293,27 @@ public sealed class TargetingService : ITargetingService
         return nearest;
     }
 
+    public IBattleNpc? FindNearestTaggableEnemy(float maxRange, IPlayerCharacter player)
+    {
+        // Nearest valid hostile in range that is NOT already focused on us — a pull/gather candidate.
+        // Unlike FindEnemyNotTargetingPlayer this does NOT require the mob to be engaged yet, so it also
+        // grabs idle packs the tank is moving toward (wall-to-wall gathering).
+        IBattleNpc? nearest = null;
+        var nearestDist = float.MaxValue;
+        foreach (var enemy in GetValidEnemies(maxRange, player))
+        {
+            if (enemy.TargetObjectId == player.GameObjectId)
+                continue;
+            var dist = Vector3.DistanceSquared(player.Position, enemy.Position);
+            if (dist < nearestDist)
+            {
+                nearest = enemy;
+                nearestDist = dist;
+            }
+        }
+        return nearest;
+    }
+
     public IBattleNpc? FindEnemyNotTargetingPlayer(float maxRange, IPlayerCharacter player)
     {
         IBattleNpc? nearest = null;

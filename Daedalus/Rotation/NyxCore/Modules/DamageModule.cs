@@ -68,7 +68,34 @@ public sealed class DamageModule : INyxModule
         TryPushDeliriumCombo(context, scheduler, target.GameObjectId, enemyCount);
         TryPushDisesteem(context, scheduler, target.GameObjectId);
         TryPushBloodSpender(context, scheduler, target.GameObjectId, enemyCount);
+        TryPushMovingAddTag(context, scheduler, isMoving);
         TryPushCombo(context, scheduler, target.GameObjectId, enemyCount);
+    }
+
+    /// <summary>
+    /// Wall-to-wall add tag: while moving in a duty, ranged-pull (Unmend) the nearest mob within 25y that
+    /// isn't on us yet — including idle packs we're walking toward — so the pull gathers. Only fires while
+    /// moving, in an instanced duty, and between combos (never breaks one).
+    /// </summary>
+    private void TryPushMovingAddTag(INyxContext context, RotationScheduler scheduler, bool isMoving)
+    {
+        if (!isMoving) return;
+        if (!context.Configuration.Tank.TagAddsWhileMovingWithRangedAttack) return;
+        if (!PlayerSafetyHelper.IsInInstancedDuty()) return;
+        var player = context.Player;
+        if (player.Level < DRKActions.Unmend.MinLevel) return;
+        if (!context.ActionService.IsActionReady(DRKActions.Unmend.ActionId)) return;
+        if (context.ComboTimeRemaining > 0f) return;
+
+        var stray = context.TargetingService.FindNearestTaggableEnemy(25f, player);
+        if (stray == null) return;
+
+        scheduler.PushGcd(NyxAbilities.Unmend, stray.GameObjectId, priority: 6,
+            onDispatched: _ =>
+            {
+                context.Debug.PlannedAction = DRKActions.Unmend.Name;
+                context.Debug.DamageState = "Unmend (tag add — moving)";
+            });
     }
 
     // --- Out-of-melee ---
