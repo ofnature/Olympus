@@ -22,8 +22,19 @@ All notable changes to Daedalus will be documented in this file.
 - Fixed stalls that dropped you into auto-attacks after Fuko/Gyofu and after weaving Kenki spenders
 - Kaeshi: Namikiri and Tsubame-gaeshi follow-ups no longer get skipped after their Iaijutsu, and double Ogi Namikiri is prevented
 
-### Improved — "Why Stuck" diagnostics
-- The tank Why Stuck tab now shows live enemy counts (how many are in PBAoE range vs aggroed within 25y) and a clear banner naming the reason whenever the whole rotation is paused
+### New — Auto-face target
+- Daedalus now keeps the game's "Auto-face Target when using an action" setting on while it's running, so facing-required weaponskills no longer get refused while you're moving (e.g. AutoDuty running you around). Your original setting is restored when you disable or unload the plugin
+
+### New — Auto-Peloton for ranged DPS
+- Bard/Machinist/Dancer auto-cast Peloton while out of combat and moving (travel speed between pulls). Toggle under Shared Ranged Settings → Utility (on by default)
+
+### Improved — Warrior
+- Surging Tempest no longer drops during long Fell Cleave stretches — the rotation refreshes it (Storm's Eye) before it falls off
+- Onslaught now weaves in burst (Inner Release) instead of on cooldown, and won't dash you while moving
+- New "Pre-pull Tomahawk" toggle (off by default): with an enemy targeted out of combat, opens the pull with Tomahawk
+
+### Improved — "Why Stuck" diagnostics (all jobs)
+- Live "Last action: Ns ago" idle timer, a PAUSED banner that names why the whole rotation is idle (including "no action in combat"), and per-ability reasons for why a GCD won't fire (cooldown, proc, combo, out of range, line-of-sight/facing). The tank tab also shows enemy counts (in PBAoE range vs aggroed within 25y)
 <!-- LATEST-END -->
 
 ## v0.0.3 — 2026-06-26

@@ -81,6 +81,9 @@ Modules implement `IAstraeaModule` (healers) or `IThemisModule` (tanks) or equiv
 
 Never commit with failing tests. Never commit with warnings above baseline.
 
+### Commit / Changelog workflow
+Every commit that changes user-facing behavior MUST also update `Daedalus/CHANGELOG.md` — this is the embedded source for the in-plugin **Changelog** tab (parsed by `ChangelogParser`, format: `## v{ver} — {date}`, `### Category — title`, `- bullets`). Add the change under the current version's `<!-- LATEST-START -->…<!-- LATEST-END -->` block (the markers wrap only the newest version and feed the GitHub release notes). Keep entries player-facing and concise. Pure-internal changes (refactors, tests, docs) don't need an entry. Update the changelog in the same commit as the change, then push.
+
 ## Rotation Implementation Workflow
 For every new job, follow this exact sequence:
 
