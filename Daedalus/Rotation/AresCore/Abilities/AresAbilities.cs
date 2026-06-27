@@ -171,12 +171,17 @@ public static class AresAbilities
     {
         Action = WARActions.Vengeance,
         Toggle = cfg => cfg.Tank.EnableVengeance,
+        // Upgrades to Damnation at 92. Without this the scheduler dispatches/gates the base id (44),
+        // whose quest-unlock link rejects it at L92+ — Vengeance would queue but never fire.
+        LevelReplacements = new[] { ((byte)92, WARActions.Damnation) },
     };
 
     public static readonly AbilityBehavior RawIntuition = new()
     {
         Action = WARActions.RawIntuition,
         Toggle = cfg => cfg.Tank.EnableBloodWhetting,
+        // Raw Intuition -> Bloodwhetting at 82. Dispatch/gate the level-appropriate id directly.
+        LevelReplacements = new[] { ((byte)82, WARActions.Bloodwhetting) },
     };
 
     public static readonly AbilityBehavior ThrillOfBattle = new()

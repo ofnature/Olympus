@@ -200,6 +200,12 @@ public static class AresTab
 
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
+            ImGui.Text("Vengeance:");
+            ImGui.TableNextColumn();
+            ImGui.TextDisabled(string.IsNullOrEmpty(state.VengeanceState) ? "—" : state.VengeanceState);
+
+            ImGui.TableNextRow();
+            ImGui.TableNextColumn();
             ImGui.Text(Loc.T(LocalizedStrings.Debug.BuffStateLabel, "Buff:"));
             ImGui.TableNextColumn();
             ImGui.TextDisabled(string.IsNullOrEmpty(state.BuffState) ? "—" : state.BuffState);

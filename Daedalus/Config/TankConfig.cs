@@ -332,9 +332,38 @@ public sealed class TankConfig
     public bool EnableVengeance { get; set; } = true;
 
     /// <summary>
+    /// Engaged pull size at or above which Vengeance / Damnation is used on cooldown as proactive
+    /// mitigation for wall-to-wall pulls (sustained AoE damage), in addition to the reactive HP /
+    /// damage-rate gate. Counts engaged enemies (pull size), not self-centered AoE hit count.
+    /// Recommended default is 3 (a real pack). Range: 2 to 8.
+    /// </summary>
+    private int _vengeanceMinTargets = 3;
+    public int VengeanceMinTargets
+    {
+        get => _vengeanceMinTargets;
+        set => _vengeanceMinTargets = Math.Clamp(value, 2, 8);
+    }
+
+    /// <summary>
     /// Use Raw Intuition / Blood Whetting (short mitigation + heal).
     /// </summary>
     public bool EnableBloodWhetting { get; set; } = true;
+
+    /// <summary>
+    /// HP percentage at or below which Bloodwhetting / Raw Intuition is used as reactive sustain
+    /// (10% mitigation + heal-on-weaponskill). Kept independent of the shared
+    /// <see cref="MitigationThreshold"/> so the short-cooldown self-heal can be tuned separately from
+    /// the major-cooldown gate. Raw Intuition / Bloodwhetting no longer costs Beast Gauge, so there is
+    /// no gauge gate. At or below this value the weave is escalated above damage oGCDs so it actually
+    /// fires in a busy burst window instead of being starved out of the single oGCD slot.
+    /// Set to 1.0 (100%) to use it on cooldown as pure sustain. Range: 0.0 to 1.0 (0% to 100%).
+    /// </summary>
+    private float _bloodwhettingThreshold = 0.70f;
+    public float BloodwhettingThreshold
+    {
+        get => _bloodwhettingThreshold;
+        set => _bloodwhettingThreshold = Math.Clamp(value, 0f, 1f);
+    }
 
     /// <summary>
     /// Use Thrill of Battle (HP boost + heal).

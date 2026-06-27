@@ -254,13 +254,31 @@ public sealed class MitigationModule : IAresModule
 
     private void TryPushMajorCooldown(IAresContext context, RotationScheduler scheduler, float hpPercent, float damageRate)
     {
-        if (!context.Configuration.Tank.EnableVengeance) return;
+        var debug = context.Debug;
+        if (!context.Configuration.Tank.EnableVengeance) { debug.VengeanceState = "Disabled"; return; }
         var player = context.Player;
         var level = player.Level;
-        if (level < WARActions.Vengeance.MinLevel) return;
-        if (!context.TankCooldownService.ShouldUseMajorCooldown(hpPercent, damageRate)) return;
-        if (context.HasHolmgang) return;
-        if (context.HasVengeance) return;
+        if (level < WARActions.Vengeance.MinLevel) { debug.VengeanceState = $"Level < {WARActions.Vengeance.MinLevel}"; return; }
+        if (context.HasHolmgang) { debug.VengeanceState = "Holmgang active"; return; }
+        if (context.HasVengeance) { debug.VengeanceState = "Already active"; return; }
+
+        // Trigger A: reactive HP / sustained-damage-rate gate.
+        var useByDamage = context.TankCooldownService.ShouldUseMajorCooldown(hpPercent, damageRate);
+
+        // Trigger B: holding a pack — pop the 120s major mit on cooldown during multi-target (wall-to-wall)
+        // pulls where you take constant AoE damage. Take the larger of engaged pull size and self-centered
+        // AoE count so a stacked camp reliably trips it regardless of which scan sees the mobs.
+        var pack = EnemyPackDebugHelper.Count(context.TargetingService, JobAoERadiusYalms.Tank, player);
+        EnemyPackDebugHelper.Apply(debug, pack);
+        var packCount = System.Math.Max(pack.Engaged, pack.AoeRange);
+        var minTargets = context.Configuration.Tank.VengeanceMinTargets;
+        var useByPack = packCount >= minTargets;
+
+        if (!useByDamage && !useByPack)
+        {
+            debug.VengeanceState = $"Waiting (pull {packCount} < {minTargets}, HP {hpPercent:P0})";
+            return;
+        }
 
         var action = WARActions.GetVengeanceAction(level, context.ActionService);
         var partyCoord = context.PartyCoordinationService;
@@ -268,26 +286,45 @@ public sealed class MitigationModule : IAresModule
         if (tankConfig.EnableDefensiveCoordination &&
             partyCoord?.WasPersonalDefensiveUsedRecently(tankConfig.DefensiveStaggerWindowSeconds) == true)
         {
+            debug.VengeanceState = "Delayed (remote tank mit)";
             context.Debug.MitigationState = "Vengeance delayed (remote tank mit)";
             return;
         }
-        if (!context.ActionService.IsActionReady(action.ActionId)) return;
+        // Readiness on the level-appropriate id (Damnation at 92+), matching what the scheduler now
+        // resolves and dispatches via AresAbilities.Vengeance.LevelReplacements.
+        if (!context.ActionService.IsActionReady(action.ActionId))
+        {
+            var cd = context.ActionService.GetCooldownRemaining(action.ActionId);
+            debug.VengeanceState = $"On cooldown ({cd:F0}s)";
+            return;
+        }
+        debug.VengeanceState = useByPack && !useByDamage
+            ? $"Queued (pull {packCount} ≥ {minTargets})"
+            : $"Queued ({hpPercent:P0} HP)";
 
         var hp = hpPercent;
         var dr = damageRate;
+        var enemies = packCount;
+        var packTriggered = useByPack && !useByDamage;
         scheduler.PushOgcd(AresAbilities.Vengeance, player.GameObjectId, priority: 2,
             onDispatched: _ =>
             {
                 context.Debug.PlannedAction = action.Name;
-                context.Debug.MitigationState = $"Major CD ({hp:P0} HP)";
+                context.Debug.MitigationState = packTriggered
+                    ? $"Major CD ({enemies} enemies)"
+                    : $"Major CD ({hp:P0} HP)";
                 partyCoord?.OnCooldownUsed(action.ActionId, 120_000);
                 TrainingHelper.Decision(context.TrainingService)
                     .Action(action.ActionId, action.Name)
                     .AsMitigation(hp)
-                    .Reason($"{action.Name} at {hp:P0} HP.", "30% damage reduction + counter-attack damage.")
-                    .Factors($"HP at {hp:P0}", $"Damage rate: {dr:F1}/s")
+                    .Reason(
+                        packTriggered
+                            ? $"{action.Name} on cooldown for a {enemies}-enemy pull."
+                            : $"{action.Name} at {hp:P0} HP.",
+                        "30% damage reduction + counter-attack damage.")
+                    .Factors($"HP at {hp:P0}", $"Damage rate: {dr:F1}/s", $"Pull size: {enemies}")
                     .Alternatives("Rampart", "Wait for tankbuster")
-                    .Tip("Vengeance for sustained heavy damage.")
+                    .Tip("Vengeance for sustained heavy damage and big pulls.")
                     .Concept("war_vengeance")
                     .Record();
                 context.TrainingService?.RecordConceptApplication("war_vengeance", true, "Major cooldown usage");
@@ -328,7 +365,9 @@ public sealed class MitigationModule : IAresModule
         var player = context.Player;
         var level = player.Level;
         if (level < WARActions.RawIntuition.MinLevel) return;
-        if (hpPercent > context.Configuration.Tank.MitigationThreshold) return;
+        // Dedicated HP gate, decoupled from the shared MitigationThreshold (major-cooldown gate) so the
+        // short-cooldown self-heal can be tuned on its own slider.
+        if (hpPercent > context.Configuration.Tank.BloodwhettingThreshold) return;
         if (context.HasBloodwhetting) return;
         if (context.HasHolmgang) return;
 
@@ -344,7 +383,11 @@ public sealed class MitigationModule : IAresModule
         if (!context.ActionService.IsActionReady(action.ActionId)) return;
 
         var hp = hpPercent;
-        scheduler.PushOgcd(AresAbilities.RawIntuition, player.GameObjectId, priority: 3,
+        // Once HP is at/below the chosen trigger this is a deliberate sustain, so weave it above damage
+        // oGCDs (Upheaval/Orogeny pri 2, Onslaught pri 4) — otherwise the single oGCD weave slot is
+        // perpetually claimed by damage during burst and Bloodwhetting never fires even at critical HP.
+        // Stays below invuln/interrupt (pri 1); ties Vengeance (pri 2) which is pushed first.
+        scheduler.PushOgcd(AresAbilities.RawIntuition, player.GameObjectId, priority: 2,
             onDispatched: _ =>
             {
                 context.Debug.PlannedAction = action.Name;

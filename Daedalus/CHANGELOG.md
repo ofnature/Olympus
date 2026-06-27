@@ -35,6 +35,9 @@ All notable changes to Daedalus will be documented in this file.
 ### Improved — Warrior
 - Surging Tempest no longer drops during long Fell Cleave stretches — the rotation refreshes it (Storm's Eye) before it falls off
 - Onslaught now weaves in burst (Inner Release) instead of on cooldown, and won't dash you while moving
+- Bloodwhetting / Raw Intuition now reliably fires when you take damage: it has its own "Bloodwhetting HP Threshold" slider (default 70%) and, at or below that HP, weaves ahead of damage oGCDs so it's no longer starved out of the weave slot during burst (previously it could be skipped even down at ~17% HP). Set the slider to 100% to use it on cooldown as sustain
+- Fixed Vengeance / Damnation never firing: at level 92+ the cooldown was queued but silently rejected by the dispatcher (it targeted the un-upgraded action id), so it sat unused all fight. Damnation now actually goes off
+- Vengeance / Damnation now also fires on cooldown for big pulls: new "Vengeance Pull Size" slider (default 3) pops it when you're tanking that many or more engaged enemies (wall-to-wall), on top of the existing HP-based trigger
 - New "Pre-pull Tomahawk" toggle (off by default): with an enemy targeted out of combat, opens the pull with Tomahawk
 
 ### Improved — "Why Stuck" diagnostics (all jobs)

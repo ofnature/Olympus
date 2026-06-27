@@ -52,6 +52,14 @@ public sealed class WarriorSection
                 save,
                 actionId: WARActions.Vengeance.ActionId);
 
+            ConfigUIHelpers.BeginDisabledGroup(!config.Tank.EnableVengeance);
+            config.Tank.VengeanceMinTargets = ConfigUIHelpers.IntSlider(
+                "Vengeance Pull Size",
+                config.Tank.VengeanceMinTargets, 2, 8,
+                "Use Vengeance / Damnation on cooldown when tanking this many or more engaged enemies (wall-to-wall pulls), on top of the reactive HP-based trigger. Recommended: 3.",
+                save, v => config.Tank.VengeanceMinTargets = v);
+            ConfigUIHelpers.EndDisabledGroup();
+
             ConfigUIHelpers.Toggle(
                 Loc.T(LocalizedStrings.Warrior.EnableBloodWhetting, "Bloodwhetting / Raw Intuition"),
                 () => config.Tank.EnableBloodWhetting,
@@ -59,6 +67,14 @@ public sealed class WarriorSection
                 null,
                 save,
                 actionId: WARActions.Bloodwhetting.ActionId);
+
+            ConfigUIHelpers.BeginDisabledGroup(!config.Tank.EnableBloodWhetting);
+            config.Tank.BloodwhettingThreshold = ConfigUIHelpers.ThresholdSlider(
+                "Bloodwhetting HP Threshold",
+                config.Tank.BloodwhettingThreshold, 20f, 100f,
+                "Use Bloodwhetting / Raw Intuition when HP is at or below this %. Separate from the general mitigation threshold; at or below this value it weaves ahead of damage oGCDs so it actually fires in a busy burst. Set to 100% to use it on cooldown as sustain. (No longer costs Beast Gauge.)",
+                save, v => config.Tank.BloodwhettingThreshold = v);
+            ConfigUIHelpers.EndDisabledGroup();
 
             ConfigUIHelpers.Toggle(
                 Loc.T(LocalizedStrings.Warrior.EnableThrillOfBattle, "Thrill of Battle"),

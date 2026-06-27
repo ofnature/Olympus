@@ -44,6 +44,10 @@ public sealed class AresDebugState : IEnemyPackDebug
     public bool HasActiveMitigation { get; set; }
     public string ActiveMitigations { get; set; } = "";
 
+    /// <summary>Live Vengeance / Damnation decision: why it did or didn't fire this frame
+    /// (Disabled / Already active / Waiting pull N &lt; min / On cooldown Ns / Queued).</summary>
+    public string VengeanceState { get; set; } = "";
+
     // Enmity tracking
     public bool IsMainTank { get; set; }
     public string CurrentTarget { get; set; } = "";
