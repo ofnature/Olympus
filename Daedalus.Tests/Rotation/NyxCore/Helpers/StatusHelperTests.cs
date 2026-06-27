@@ -21,13 +21,14 @@ public class StatusHelperTests
     [Fact]
     public void StatusIds_CoreBuffs_AreDistinct()
     {
-        // DarkArts intentionally omitted: deprecated post-Shadowbringers, set to 0 to
-        // disable HasDarkArts checks. TBN refunds MP rather than granting a proc status.
+        // DarkArts omitted: it's a job-gauge flag (read via SafeGameAccess.GetDrkHasDarkArts), not a
+        // status, so its status constant is 0.
         var ids = new uint[]
         {
             DRKActions.StatusIds.Grit,
             DRKActions.StatusIds.BloodWeapon,
             DRKActions.StatusIds.Delirium,
+            DRKActions.StatusIds.Delirium96,
         };
 
         Assert.Equal(ids.Length, ids.Distinct().Count());
@@ -80,11 +81,18 @@ public class StatusHelperTests
     }
 
     [Fact]
-    public void StatusId_DarkArts_Disabled()
+    public void StatusId_Delirium96_MatchesGameData()
     {
-        // Dark Arts was removed from DRK in Shadowbringers. The legacy constant is
-        // kept at 0 so HasDarkArts checks safely return false; the rotation relies on
-        // MP tracking for TBN-refund gameplay instead.
+        // Lv.96+ Delirium (enables the Scarlet Delirium combo) — RSR StatusID.Delirium_3836.
+        Assert.Equal(3836u, DRKActions.StatusIds.Delirium96);
+    }
+
+    [Fact]
+    public void StatusId_DarkArts_IsGaugeFlagNotStatus()
+    {
+        // Dark Arts is a job-gauge flag in modern FFXIV (TBN shield-break → free Edge/Flood), not a
+        // status effect, so the status constant stays 0 and HasDarkArts is read from the gauge
+        // (SafeGameAccess.GetDrkHasDarkArts). The earlier "removed in Shadowbringers" note was wrong.
         Assert.Equal(0u, DRKActions.StatusIds.DarkArts);
     }
 

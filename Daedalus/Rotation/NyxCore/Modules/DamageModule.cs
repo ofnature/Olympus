@@ -306,6 +306,9 @@ public sealed class DamageModule : INyxModule
                                           Dalamud.Game.ClientState.Objects.Types.IBattleChara target)
     {
         if (!context.Configuration.Tank.EnableShadowstride) return;
+        // Opt-in: don't weave Shadowstride as filler damage in melee (darts around the pack, eats weave
+        // slots). The gap-close use (out of melee) is unaffected — handled by TryPushShadowstrideGapClose.
+        if (!context.Configuration.Tank.AutoShadowstride) return;
         var player = context.Player;
         if (player.Level < DRKActions.Shadowstride.MinLevel) return;
         if (!context.ActionService.IsActionReady(DRKActions.Shadowstride.ActionId)) return;

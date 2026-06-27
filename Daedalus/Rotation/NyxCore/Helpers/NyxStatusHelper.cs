@@ -56,15 +56,19 @@ public sealed class NyxStatusHelper : BaseStatusHelper
     /// </summary>
     public bool HasDelirium(IBattleChara player)
     {
-        return HasStatus(player, DRKActions.StatusIds.Delirium);
+        // Lv.96+ Delirium applies status 3836 (enables the Scarlet Delirium combo); pre-96 applies 1972.
+        // Checking only one ID is the known single-status bug — at 96+ the combo never triggered.
+        return HasStatus(player, DRKActions.StatusIds.Delirium)
+            || HasStatus(player, DRKActions.StatusIds.Delirium96);
     }
 
     /// <summary>
-    /// Gets the number of Delirium stacks remaining (pre-Lv.96).
+    /// Gets the number of Delirium stacks remaining (3836 at Lv.96+, 1972 pre-96).
     /// </summary>
     public int GetDeliriumStacks(IBattleChara player)
     {
-        return GetStatusStacks(player, DRKActions.StatusIds.Delirium);
+        var stacks96 = GetStatusStacks(player, DRKActions.StatusIds.Delirium96);
+        return stacks96 > 0 ? stacks96 : GetStatusStacks(player, DRKActions.StatusIds.Delirium);
     }
 
     /// <summary>

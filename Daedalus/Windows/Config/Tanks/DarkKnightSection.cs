@@ -243,6 +243,15 @@ public sealed class DarkKnightSection
                 save,
                 actionId: DRKActions.Shadowstride.ActionId);
 
+            ConfigUIHelpers.BeginDisabledGroup(!config.Tank.EnableShadowstride);
+            ConfigUIHelpers.Toggle(
+                "Auto-weave Shadowstride",
+                () => config.Tank.AutoShadowstride,
+                v => config.Tank.AutoShadowstride = v,
+                "Off by default. When on, weaves Shadowstride as filler damage in melee. When off, Shadowstride is only used to close the gap to an out-of-range target (keeps you from darting around the pack and frees weave slots for other oGCDs).",
+                save);
+            ConfigUIHelpers.EndDisabledGroup();
+
             ConfigUIHelpers.Spacing();
             TankAoEConfigHelper.DrawAoESettings(
                 config,

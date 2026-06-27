@@ -149,6 +149,7 @@ public sealed class NyxContext : INyxContext
         int comboStep,
         uint lastComboAction,
         float comboTimeRemaining,
+        bool hasDarkArts = false,
         ITimelineService? timelineService = null,
         IPartyCoordinationService? partyCoordinationService = null,
         ITrainingService? trainingService = null,
@@ -224,7 +225,7 @@ public sealed class NyxContext : INyxContext
         BloodWeaponRemaining = statusHelper.GetBloodWeaponRemaining(player);
         HasDelirium = statusHelper.HasDelirium(player);
         DeliriumStacks = statusHelper.GetDeliriumStacks(player);
-        HasDarkArts = statusHelper.HasDarkArts(player);
+        HasDarkArts = hasDarkArts; // job-gauge flag (read in Nyx.ReadGaugeValue), not a status effect
         HasScornfulEdge = statusHelper.HasScornfulEdge(player);
 
         // Defensive checks

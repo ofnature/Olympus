@@ -484,6 +484,14 @@ public sealed class TankConfig
     public bool EnableShadowstride { get; set; } = true;
 
     /// <summary>
+    /// Auto-weave Shadowstride as filler damage. Off by default — when off, Shadowstride is only used to
+    /// close the gap to an out-of-range target, not woven in melee. Weaving it in melee darts you around
+    /// the pack and eats weave slots other oGCDs (e.g. Salted Earth) need. Opt-in. Ignored when
+    /// EnableShadowstride is off.
+    /// </summary>
+    public bool AutoShadowstride { get; set; } = false;
+
+    /// <summary>
     /// Use Living Dead as an invulnerability cooldown.
     /// </summary>
     public bool EnableLivingDead { get; set; } = true;

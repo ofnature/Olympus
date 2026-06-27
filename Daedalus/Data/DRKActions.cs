@@ -768,7 +768,8 @@ public static class DRKActions
 
         // Buff statuses
         public const uint BloodWeapon = 742;
-        public const uint Delirium = 1972;
+        public const uint Delirium = 1972;     // Delirium buff, levels 68-95 (free Bloodspillers)
+        public const uint Delirium96 = 3836;   // Delirium buff, levels 96+ (enables Scarlet Delirium combo). RSR StatusID.Delirium_3836
         public const uint ScornfulEdge = 3837; // From Torcleaver at Lv.96+
 
         // Defensive buffs

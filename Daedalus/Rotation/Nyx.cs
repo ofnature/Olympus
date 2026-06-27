@@ -48,6 +48,7 @@ public sealed class Nyx : BaseTankRotation<INyxContext, INyxModule>
     private readonly IBurstWindowService? _burstWindowService;
     private readonly RotationScheduler _scheduler;
     private float _darksideTimer;
+    private bool _hasDarkArts;
 
     public Nyx(
         IPluginLog log,
@@ -102,6 +103,7 @@ public sealed class Nyx : BaseTankRotation<INyxContext, INyxModule>
     {
         var bloodGauge = SafeGameAccess.GetDrkBloodGauge(ErrorMetrics);
         _darksideTimer = SafeGameAccess.GetDrkDarksideTimer(ErrorMetrics);
+        _hasDarkArts = SafeGameAccess.GetDrkHasDarkArts(ErrorMetrics);
         return bloodGauge;
     }
 
@@ -151,6 +153,7 @@ public sealed class Nyx : BaseTankRotation<INyxContext, INyxModule>
             debugState: _nyxDebugState,
             bloodGauge: GaugeValue,
             darksideTimer: _darksideTimer,
+            hasDarkArts: _hasDarkArts,
             comboStep: ComboStep,
             lastComboAction: LastComboAction,
             comboTimeRemaining: ComboTimeRemaining,

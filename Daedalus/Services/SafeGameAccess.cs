@@ -197,6 +197,28 @@ public static class SafeGameAccess
     }
 
     /// <summary>
+    /// Safely reads the Dark Knight Dark Arts gauge state (TBN shield-break grants Dark Arts, which makes
+    /// the next Edge/Flood of Shadow free). This is a job-gauge flag in modern FFXIV, not a status effect.
+    /// </summary>
+    /// <returns>True if Dark Arts is active, false otherwise (or if unavailable).</returns>
+    public static unsafe bool GetDrkHasDarkArts(IErrorMetricsService? errorMetrics = null)
+    {
+        var jobGauge = GetJobGaugeManager(errorMetrics);
+        if (jobGauge == null)
+            return false;
+
+        try
+        {
+            return jobGauge->DarkKnight.DarkArtsState != 0;
+        }
+        catch
+        {
+            errorMetrics?.RecordError("SafeGameAccess", "Failed to read DRK Dark Arts state");
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Safely gets the Gunbreaker Cartridge count.
     /// </summary>
     /// <param name="errorMetrics">Optional error metrics service for tracking failures.</param>
