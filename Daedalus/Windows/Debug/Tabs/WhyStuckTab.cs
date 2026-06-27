@@ -107,6 +107,17 @@ public static class WhyStuckTab
         ImGui.TextColored(
             distanceColor,
             Loc.TFormat(LocalizedStrings.Debug.TargetDistanceFormat, "Distance: {0}", rotation.TargetDistanceInfo));
+
+        // Live idle timer — how long since anything was cast. Watch this climb to catch a stall the
+        // instant it starts, without waiting for the PAUSED threshold.
+        var idle = rotation.SecondsSinceLastAction;
+        if (idle < 1e5)
+        {
+            var idleColor = idle >= 5.0 ? DebugColors.Failure
+                : idle >= 2.5 ? DebugColors.Warning
+                : DebugColors.Dim;
+            ImGui.TextColored(idleColor, $"Last action: {idle:F1}s ago");
+        }
     }
 
     private static void DrawTankGcdPriorityChain(DebugTankState tank)

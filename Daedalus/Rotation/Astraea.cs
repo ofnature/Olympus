@@ -271,7 +271,11 @@ public sealed class Astraea : BaseHealerRotation<IAstraeaContext, IAstraeaModule
             _scheduler.DispatchOgcd(context);
 
         if (ActionService.CanExecuteGcd)
-            _scheduler.DispatchGcd(context);
+        {
+            var gcd = _scheduler.DispatchGcd(context);
+            if (StuckReasonHelper.Describe(gcd.Dispatched, gcd.GateFailReasons) is { } stuck)
+                context.Debug.DpsState = stuck;
+        }
     }
 
     #endregion

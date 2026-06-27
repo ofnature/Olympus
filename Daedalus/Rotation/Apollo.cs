@@ -178,9 +178,13 @@ public sealed class Apollo : BaseHealerRotation<IApolloContext, IApolloModule>
 
         if (ActionService.CanExecuteGcd)
         {
-            if (_scheduler.DispatchGcd(context).Dispatched) return;
+            var gcd = _scheduler.DispatchGcd(context);
+            if (gcd.Dispatched) return;
             foreach (var module in _modules)
                 if (module.TryExecute(context, isMoving)) return;
+            // Nothing fired (scheduler + legacy fallback) — surface why the queued GCDs were rejected.
+            if (StuckReasonHelper.Describe(gcd.Dispatched, gcd.GateFailReasons) is { } stuck)
+                context.Debug.DpsState = stuck;
         }
     }
 }

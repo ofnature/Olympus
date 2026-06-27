@@ -237,6 +237,7 @@ public sealed class DebugService
             TargetInfo = debug.TargetInfo,
             TargetDistanceInfo = TargetingDebugHelper.FormatTargetDistance(player, combatTarget),
             PauseReason = ComputeGlobalPauseReason(player),
+            SecondsSinceLastAction = _actionService.SecondsSinceLastAction,
 
             // Resurrection
             RaiseState = debug.RaiseState,
