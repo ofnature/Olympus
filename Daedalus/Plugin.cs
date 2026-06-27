@@ -55,8 +55,12 @@ public sealed class Plugin : IDalamudPlugin
     private readonly IChatGui chatGui;
     private readonly IDataManager dataManager;
     private readonly ICondition condition;
+    private readonly IGameConfig gameConfig;
     private readonly IJobGauges jobGauges;
     private readonly ITargetManager targetManager;
+
+    // Auto-face: original AutoFaceTargetOnAction value captured before we override it (restored on unload).
+    private bool? _originalAutoFaceTarget;
 
     private readonly Configuration configuration;
     private readonly ActionTracker actionTracker;
@@ -176,6 +180,7 @@ public sealed class Plugin : IDalamudPlugin
         IChatGui chatGui,
         IDataManager dataManager,
         ICondition condition,
+        IGameConfig gameConfig,
         IGameInteropProvider gameInteropProvider,
         ITargetManager targetManager,
         IJobGauges jobGauges,
@@ -194,6 +199,7 @@ public sealed class Plugin : IDalamudPlugin
         this.chatGui = chatGui;
         this.dataManager = dataManager;
         this.condition = condition;
+        this.gameConfig = gameConfig;
         Rotation.Base.RotationServices.Condition = condition;
         this.jobGauges = jobGauges;
         this.targetManager = targetManager;
@@ -693,10 +699,49 @@ public sealed class Plugin : IDalamudPlugin
         log.Info($"Hardcast raise {state}");
     }
 
+    private const string AutoFaceTargetConfig = "AutoFaceTargetOnAction";
+
+    /// <summary>
+    /// Forces the game's "Auto-face Target when using an action" setting on while the rotation is enabled,
+    /// and restores the player's original value when disabled/unloaded. Without this, facing-required
+    /// weaponskills get refused by UseAction whenever the character isn't facing the target (e.g. AutoDuty
+    /// running it around), which surfaces in Why Stuck as "rejected (line-of-sight / facing / moving?)".
+    /// NOTE: look-away/gaze mechanics — gaze safety still relies on dropping target (PauseWhenNoTarget);
+    /// a dedicated look-away action list is a follow-up.
+    /// </summary>
+    private void EnsureAutoFaceTarget()
+    {
+        try
+        {
+            if (configuration.Enabled)
+            {
+                var current = gameConfig.UiControl.GetBool(AutoFaceTargetConfig);
+                if (!current)
+                {
+                    _originalAutoFaceTarget ??= false;
+                    gameConfig.UiControl.Set(AutoFaceTargetConfig, true);
+                }
+            }
+            else if (_originalAutoFaceTarget.HasValue)
+            {
+                gameConfig.UiControl.Set(AutoFaceTargetConfig, _originalAutoFaceTarget.Value);
+                _originalAutoFaceTarget = null;
+            }
+        }
+        catch
+        {
+            // GameConfig can throw during zone transitions / before login — ignore and retry next frame.
+        }
+    }
+
     private void OnFrameworkUpdate(IFramework framework)
     {
         try
         {
+            // Keep "Auto-face Target on action" enabled while the rotation is active (RSR parity) so
+            // facing-required weaponskills aren't rejected while AutoDuty moves the character.
+            EnsureAutoFaceTarget();
+
             // Always update debug service frame counter
             debugService.Update();
 
@@ -830,6 +875,14 @@ public sealed class Plugin : IDalamudPlugin
         // Save calibration data before shutdown
         HealingCalculator.SaveCalibration(configuration.Calibration);
         pluginInterface.SavePluginConfig(configuration);
+
+        // Restore the player's original Auto-face setting if we overrode it.
+        if (_originalAutoFaceTarget.HasValue)
+        {
+            try { gameConfig.UiControl.Set(AutoFaceTargetConfig, _originalAutoFaceTarget.Value); }
+            catch { /* game shutting down — ignore */ }
+            _originalAutoFaceTarget = null;
+        }
 
         framework.Update -= OnFrameworkUpdate;
         clientState.TerritoryChanged -= OnTerritoryChanged;
