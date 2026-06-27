@@ -22,6 +22,9 @@ All notable changes to Daedalus will be documented in this file.
 - Fixed stalls that dropped you into auto-attacks after Fuko/Gyofu and after weaving Kenki spenders
 - Kaeshi: Namikiri and Tsubame-gaeshi follow-ups no longer get skipped after their Iaijutsu, and double Ogi Namikiri is prevented
 
+### Fix — Rotation deadlock (all jobs)
+- Fixed a stall where the rotation could sit idle for 10+ seconds doing nothing (e.g. Machinist after a combo GCD, or any job during AutoDuty). The internal "don't double-cast the same GCD" guard could get stuck and never release if nothing fired to reset it; it now clears as soon as the GCD recast finishes
+
 ### New — Auto-face target
 - Daedalus now keeps the game's "Auto-face Target when using an action" setting on while it's running, so facing-required weaponskills no longer get refused while you're moving (e.g. AutoDuty running you around). Your original setting is restored when you disable or unload the plugin
 - Look-away safety: while a gaze mechanic is being cast, auto-face is automatically suppressed so the bot's casts don't turn you into the boss (gaze action list is curated as mechanics are encountered)

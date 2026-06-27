@@ -324,6 +324,12 @@ public sealed unsafe class ActionService : IActionService
             CurrentGcdState = GcdState.Ready;
             _ogcdsUsedThisCycle = 0;
             _gcdSubmittedThisCycle = false;
+            // Recast is fully done — a new GCD cycle. Release the repeat-GCD block here too, not only on
+            // the single recast roll-over frame: if that frame's clear was missed (e.g. _gcdSubmittedThisCycle
+            // was still latched) AND no further GCD fires, the roll-over never recurs and the block would
+            // deadlock the rotation (observed: "Slug Shot: repeat-GCD guard" stuck for 12s). Re-submitting
+            // the same GCD once the recast is complete is legitimate.
+            _blockedRepeatGcdDispatchId = 0;
         }
         else if (GcdRemaining <= FFXIVTimings.QueueWindow)
         {
