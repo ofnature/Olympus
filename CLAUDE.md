@@ -157,6 +157,16 @@ Nav settings are global, not per-job. Located in Nav Control window:
 - **Message types:** role assignment, enmity sharing, tank swap, add spawning, burn signal
 - **Status:** LAN layer not yet implemented. Do not enable IPC in Trust validation runs.
 
+### BossMod (BMR) IPC endpoints — for future hooks
+BossMod Reborn exposes these IPC endpoints (prefix `BossMod.`, as RSR subscribes to them in `BMRTimeline_IPCSubscriber.cs`). Get via `pluginInterface.GetIpcSubscriber<...>("BossMod.<name>")`; fail-open if unavailable. Daedalus already consumes the starred ones in `BossModSafetyService` (`Hints.IsPositionSafe`*, `Hints.IsDashSafe`*, `Hints.NextDamageIn`*, `Hints.ForbiddenZonesNextActivation`*).
+- `HasActiveModule`, `ActiveModuleName`
+- `Timeline.NextRaidwideIn`, `Timeline.NextTankbusterIn`, `Timeline.NextKnockbackIn`, `Timeline.NextDowntimeIn`, `Timeline.NextDowntimeEndIn`, `Timeline.NextVulnerableIn`, `Timeline.NextVulnerableEndIn`
+- `Hints.NextDamageIn`*, `Hints.NextDamageType`, `Hints.NextRaidwideDamageIn`, `Hints.NextTankbusterDamageIn`
+- `Hints.SpecialModeIn`, `Hints.SpecialModeType` (Pyretic/Freezing/etc. — NOT gaze)
+- `Hints.IsPositionSafe`*, `Hints.IsDashSafe`*, `Hints.IsFixedDashSafe`
+- `Debug.TimelineWalk`
+- **No gaze / forbidden-direction / facing hint exists** — gaze/look-away safety must use the curated `FFXIVConstants.GazeCastActionIds` list (see `Plugin.EnsureAutoFaceTarget`), not BMR.
+
 ## Pending Plugin: Caduceus
 Standalone mouseover healing plugin — separate from Daedalus rotation. Scoped but not started.
 - TargetSwapExecutor pattern (store hard target → write heal target → fire → restore within 1-2 frames)
