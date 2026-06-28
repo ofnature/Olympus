@@ -122,7 +122,13 @@ public sealed class BuffModule : IThanatosModule
             context.Debug.BuffState = "In Soul Reaver state";
             return;
         }
-        if (context.Shroud < context.Configuration.Reaper.ShroudMinGauge)
+        if (context.HasExecutioner)
+        {
+            context.Debug.BuffState = "Spending Executioner stacks";
+            return;
+        }
+        // Ideal Host grants a FREE Enshroud (no Shroud cost) — bypass the gauge requirement when it's up.
+        if (!context.HasIdealHost && context.Shroud < context.Configuration.Reaper.ShroudMinGauge)
         {
             context.Debug.BuffState = $"Need {context.Configuration.Reaper.ShroudMinGauge} Shroud ({context.Shroud}/{context.Configuration.Reaper.ShroudMinGauge})";
             return;
@@ -138,7 +144,8 @@ public sealed class BuffModule : IThanatosModule
             return;
         }
 
-        bool shouldEnshroud = (context.Configuration.Reaper.UseEnshroudDuringArcaneCircle && context.HasArcaneCircle)
+        bool shouldEnshroud = context.HasIdealHost
+                              || (context.Configuration.Reaper.UseEnshroudDuringArcaneCircle && context.HasArcaneCircle)
                               || context.Shroud >= 90
                               || (context.HasDeathsDesign && context.DeathsDesignRemaining > 15f);
         if (!shouldEnshroud)

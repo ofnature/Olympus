@@ -27,6 +27,23 @@ public sealed class ThanatosStatusHelper : BaseStatusHelper
         return GetStatusStacks(player, RPRActions.StatusIds.SoulReaver);
     }
 
+    /// <summary>
+    /// Checks if Executioner is active (Lv.96+ Gluttony grants this instead of Soul Reaver — it enables
+    /// the higher-potency Executioner's Gibbet/Gallows/Guillotine).
+    /// </summary>
+    public bool HasExecutioner(IBattleChara player)
+    {
+        return HasStatus(player, RPRActions.StatusIds.Executioner);
+    }
+
+    /// <summary>
+    /// Gets the number of Executioner stacks (Gluttony grants 2).
+    /// </summary>
+    public int GetExecutionerStacks(IBattleChara player)
+    {
+        return GetStatusStacks(player, RPRActions.StatusIds.Executioner);
+    }
+
     #endregion
 
     #region Enhanced Buff Detection

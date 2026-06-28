@@ -86,7 +86,7 @@ public sealed class DamageModule : IThanatosModule
             TryPushLemuresSlice(context, scheduler, target, enemyCount);
             TryPushSacrificium(context, scheduler, target);
         }
-        if (!context.IsEnshrouded && !context.HasSoulReaver)
+        if (!context.IsEnshrouded && !context.HasSoulReaver && !context.HasExecutioner)
             TryPushSoulSpender(context, scheduler, target, enemyCount);
 
         // GCDs (priority order matters)
@@ -100,6 +100,7 @@ public sealed class DamageModule : IThanatosModule
         // Outside Enshroud (or fallback if IsEnshrouded paths fail)
         TryPushPerfectio(context, scheduler, target); // Perfectio Parata can carry outside
         TryPushPlentifulHarvest(context, scheduler, target);
+        TryPushExecutionerGcd(context, scheduler, target, enemyCount);
         TryPushSoulReaverGcd(context, scheduler, target, enemyCount);
         TryPushHarvestMoon(context, scheduler, target);
         TryPushDeathsDesign(context, scheduler, target, enemyCount);
@@ -375,6 +376,25 @@ public sealed class DamageModule : IThanatosModule
         var player = context.Player;
         if (player.Level < RPRActions.Communio.MinLevel) return;
         if (context.LemureShroud > 1 && context.EnshroudTimer > 5f) return;
+
+        // Communio has a cast time — it can't fire while moving. Fall back to instant Shadow of Death as the
+        // moving filler: it keeps GCDs rolling and does NOT consume a Lemure, so Communio still lands once
+        // you stop (instead of wasting the GCD on a cast that gets cancelled).
+        if (context.IsMoving)
+        {
+            if (player.Level >= RPRActions.ShadowOfDeath.MinLevel
+                && context.ActionService.IsActionReady(RPRActions.ShadowOfDeath.ActionId))
+            {
+                scheduler.PushGcd(ThanatosAbilities.ShadowOfDeath, target.GameObjectId, priority: 2,
+                    onDispatched: _ =>
+                    {
+                        context.Debug.PlannedAction = RPRActions.ShadowOfDeath.Name;
+                        context.Debug.DamageState = "Shadow of Death (moving — holding Communio)";
+                    });
+            }
+            return;
+        }
+
         if (!context.ActionService.IsActionReady(RPRActions.Communio.ActionId)) return;
 
         scheduler.PushGcd(ThanatosAbilities.Communio, target.GameObjectId, priority: 2,
@@ -404,6 +424,28 @@ public sealed class DamageModule : IThanatosModule
         if (!context.Configuration.Reaper.EnableEnshroud) return;
         var player = context.Player;
         if (context.LemureShroud <= 0) return;
+
+        // Death's Design refresh mid-Enshroud (RSR parity): a full Enshroud is ~5 GCDs, long enough for DD
+        // to lapse before the post-burst Shadow of Death. When Arcane Circle is about to come up and DD
+        // won't survive the burst, spend an early Reaping GCD on Shadow of Death instead. Reserve the last
+        // Lemure (handled by Communio), so only refresh at Lemure 3/4.
+        if (player.Level >= RPRActions.ShadowOfDeath.MinLevel
+            && (context.LemureShroud == 4 || context.LemureShroud == 3)
+            && context.ActionService.GetCooldownRemaining(RPRActions.ArcaneCircle.ActionId) <= 9f
+            && context.ActionService.IsActionReady(RPRActions.ShadowOfDeath.ActionId))
+        {
+            var ddFloor = context.LemureShroud == 4 ? 30f : 50f;
+            if (context.HasDeathsDesign && context.DeathsDesignRemaining < ddFloor)
+            {
+                scheduler.PushGcd(ThanatosAbilities.ShadowOfDeath, target.GameObjectId, priority: 3,
+                    onDispatched: _ =>
+                    {
+                        context.Debug.PlannedAction = RPRActions.ShadowOfDeath.Name;
+                        context.Debug.DamageState = $"Shadow of Death (DD refresh in Enshroud, L:{context.LemureShroud})";
+                    });
+                return;
+            }
+        }
 
         var aoeThreshold = context.Configuration.Reaper.AoEMinTargets;
         var useAoe = enemyCount >= aoeThreshold;
@@ -454,6 +496,84 @@ public sealed class DamageModule : IThanatosModule
                     .Concept("rpr_reaping")
                     .Record();
                 context.TrainingService?.RecordConceptApplication("rpr_reaping", true, "Enshroud GCD rotation");
+            });
+    }
+
+    /// <summary>
+    /// Executioner's Gibbet/Gallows/Guillotine (Lv.96+). Gluttony grants the Executioner buff (2 stacks)
+    /// instead of Soul Reaver at this level — without this the stacks go unspent (wasted Gluttony + burst
+    /// hole). Same flank/rear positionals and Enhanced-buff following as the Soul Reaver finishers.
+    /// </summary>
+    private void TryPushExecutionerGcd(IThanatosContext context, RotationScheduler scheduler, IBattleChara target, int enemyCount)
+    {
+        if (!context.Configuration.Reaper.EnableSoulReaver) return;
+        if (!context.HasExecutioner) return;
+        var player = context.Player;
+        if (player.Level < RPRActions.ExecutionersGibbet.MinLevel) return;
+
+        var aoeThreshold = context.Configuration.Reaper.AoEMinTargets;
+        var useAoe = enemyCount >= aoeThreshold;
+        ActionDefinition action;
+        AbilityBehavior ability;
+
+        if (useAoe)
+        {
+            action = RPRActions.ExecutionersGuillotine;
+            ability = ThanatosAbilities.ExecutionersGuillotine;
+        }
+        else if (context.Configuration.Reaper.AlternateGibbetGallows && context.HasEnhancedGibbet)
+        {
+            action = RPRActions.ExecutionersGibbet;
+            ability = ThanatosAbilities.ExecutionersGibbet;
+        }
+        else if (context.Configuration.Reaper.AlternateGibbetGallows && context.HasEnhancedGallows)
+        {
+            action = RPRActions.ExecutionersGallows;
+            ability = ThanatosAbilities.ExecutionersGallows;
+        }
+        else if (context.IsAtRear)
+        {
+            action = RPRActions.ExecutionersGallows;
+            ability = ThanatosAbilities.ExecutionersGallows;
+        }
+        else
+        {
+            action = RPRActions.ExecutionersGibbet;
+            ability = ThanatosAbilities.ExecutionersGibbet;
+        }
+
+        if (!context.ActionService.IsActionReady(action.ActionId)) return;
+
+        if (PositionalRequirementHelper.ShouldApply(context.Debug.EngagedEnemies) && !useAoe)
+        {
+            var isGibbetPositional = action == RPRActions.ExecutionersGibbet;
+            bool positionalOk = isGibbetPositional
+                ? (context.IsAtFlank || context.HasTrueNorth || context.TargetHasPositionalImmunity)
+                : (context.IsAtRear || context.HasTrueNorth || context.TargetHasPositionalImmunity);
+            if (context.Configuration.Reaper.EnforcePositionals && !positionalOk && !context.Configuration.Reaper.AllowPositionalLoss) return;
+        }
+
+        var positional = useAoe ? "" : (action == RPRActions.ExecutionersGibbet ? " (flank)" : " (rear)");
+
+        scheduler.PushGcd(ability, target.GameObjectId, priority: 4,
+            onDispatched: _ =>
+            {
+                context.Debug.PlannedAction = action.Name;
+                context.Debug.DamageState = $"{action.Name}{positional} [Exec:{context.ExecutionerStacks}]";
+
+                TrainingHelper.Decision(context.TrainingService)
+                    .Action(action.ActionId, action.Name)
+                    .AsMeleeDamage()
+                    .Target(target.Name?.TextValue ?? "Target")
+                    .Reason($"Using {action.Name} (Executioner spender)",
+                        "Executioner's Gibbet/Gallows/Guillotine are the Lv.96+ high-potency finishers granted by " +
+                        "Gluttony's Executioner buff. Spend both stacks before they expire; same positionals as Gibbet/Gallows.")
+                    .Factors(new[] { $"Executioner stacks: {context.ExecutionerStacks}", useAoe ? $"AoE ({context.Debug.AoeRangeEnemies})" : positional.Trim() })
+                    .Alternatives(new[] { "Follow Enhanced buffs to alternate" })
+                    .Tip("Executioner's finishers are stronger than regular Gibbet/Gallows — always spend the Gluttony stacks.")
+                    .Concept("rpr_executioner")
+                    .Record();
+                context.TrainingService?.RecordConceptApplication("rpr_executioner", true, "Executioner finisher");
             });
     }
 
@@ -738,11 +858,19 @@ public sealed class DamageModule : IThanatosModule
 
         if (!context.ActionService.IsActionReady(action.ActionId)) return;
 
-        scheduler.PushGcd(ability, target.GameObjectId, priority: 9,
+        // Combo-timeout recovery (RSR parity): if we're mid-combo and the window is about to lapse (~2 GCDs),
+        // rush the continuation above the Soul builders/spenders so the combo doesn't drop and waste progress.
+        var midComboExpiring = context.ComboStep > 0
+            && context.ComboTimeRemaining > 0f
+            && context.ComboTimeRemaining < 5f;
+        var comboPriority = midComboExpiring ? 6 : 9;
+
+        scheduler.PushGcd(ability, target.GameObjectId, priority: comboPriority,
             onDispatched: _ =>
             {
                 context.Debug.PlannedAction = action.Name;
-                context.Debug.DamageState = $"{action.Name} (combo {context.ComboStep + 1})";
+                context.Debug.DamageState = $"{action.Name} (combo {context.ComboStep + 1})"
+                    + (midComboExpiring ? " [rescue]" : "");
 
                 var comboType = useAoe ? "AoE" : "Single Target";
                 var comboSequence = useAoe

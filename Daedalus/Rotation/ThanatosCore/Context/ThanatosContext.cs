@@ -82,6 +82,8 @@ public sealed class ThanatosContext : IThanatosContext
     // Soul Reaver state
     public bool HasSoulReaver { get; }
     public int SoulReaverStacks { get; }
+    public bool HasExecutioner { get; }
+    public int ExecutionerStacks { get; }
     public bool HasEnhancedGibbet { get; }
     public bool HasEnhancedGallows { get; }
     public bool HasEnhancedVoidReaping { get; }
@@ -209,6 +211,8 @@ public sealed class ThanatosContext : IThanatosContext
         // Soul Reaver state
         HasSoulReaver = statusHelper.HasSoulReaver(player);
         SoulReaverStacks = statusHelper.GetSoulReaverStacks(player);
+        HasExecutioner = statusHelper.HasExecutioner(player);
+        ExecutionerStacks = statusHelper.GetExecutionerStacks(player);
         HasEnhancedGibbet = statusHelper.HasEnhancedGibbet(player);
         HasEnhancedGallows = statusHelper.HasEnhancedGallows(player);
         HasEnhancedVoidReaping = statusHelper.HasEnhancedVoidReaping(player);

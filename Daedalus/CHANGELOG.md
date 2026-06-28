@@ -5,6 +5,11 @@ All notable changes to Daedalus will be documented in this file.
 <!-- LATEST-START -->
 ## v0.1.0 — 2026-06-27
 
+### Fix — Reaper Executioner finishers + Enshroud polish
+- Fixed Executioner's Gibbet/Gallows/Guillotine (the Lv.96+ Gluttony upgrade) never being used — at 96+ Gluttony grants the Executioner buff, but the rotation only handled Soul Reaver, so the two high-potency stacks were wasted every Gluttony. They now fire with the correct flank/rear positionals, and a fresh Gluttony/Blood Stalk/Enshroud won't override pending Executioner stacks
+- Ideal Host (free Enshroud) now triggers Enshroud even at low Shroud instead of being ignored
+- Death's Design is now refreshed during a long Enshroud (so it doesn't drop mid-burst), Communio falls back to an instant Shadow of Death while moving (holding the last orb for Communio when you stop), and the basic combo is rushed to its finisher if the combo timer is about to lapse
+
 ### New — Tank wall-to-wall pulling
 - While moving in a dungeon/trial, tanks now ranged-pull the nearest mob within 25y that isn't on them yet — including packs you're walking toward — so wall-to-wall pulls gather for AoE and nothing gets left behind. Works on all four tanks (PLD Shield Lob, WAR Tomahawk, DRK Unmend, GNB Lightning Shot)
 - New "Tag Adds While Moving" toggle in the Control window (on by default). Only fires while moving, in an instanced duty, and never interrupts a combo

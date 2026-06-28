@@ -26,6 +26,11 @@ public static class ThanatosAbilities
     public static readonly AbilityBehavior Gallows = new() { Action = RPRActions.Gallows, Toggle = cfg => cfg.Reaper.EnableSoulReaver };
     public static readonly AbilityBehavior Guillotine = new() { Action = RPRActions.Guillotine, Toggle = cfg => cfg.Reaper.EnableSoulReaver };
 
+    // --- Executioner finishers (Lv.96+ Gluttony upgrade; morph from Gibbet/Gallows/Guillotine) ---
+    public static readonly AbilityBehavior ExecutionersGibbet = new() { Action = RPRActions.ExecutionersGibbet, Toggle = cfg => cfg.Reaper.EnableSoulReaver };
+    public static readonly AbilityBehavior ExecutionersGallows = new() { Action = RPRActions.ExecutionersGallows, Toggle = cfg => cfg.Reaper.EnableSoulReaver };
+    public static readonly AbilityBehavior ExecutionersGuillotine = new() { Action = RPRActions.ExecutionersGuillotine, Toggle = cfg => cfg.Reaper.EnableSoulReaver };
+
     // --- Enshroud GCDs ---
     public static readonly AbilityBehavior VoidReaping = new() { Action = RPRActions.VoidReaping, Toggle = cfg => cfg.Reaper.EnableEnshroud };
     public static readonly AbilityBehavior CrossReaping = new() { Action = RPRActions.CrossReaping, Toggle = cfg => cfg.Reaper.EnableEnshroud };

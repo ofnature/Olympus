@@ -62,6 +62,17 @@ public interface IThanatosContext : IMeleeDpsRotationContext
     int SoulReaverStacks { get; }
 
     /// <summary>
+    /// Whether Executioner is active (Lv.96+ Gluttony grants this instead of Soul Reaver — enables
+    /// the higher-potency Executioner's Gibbet/Gallows/Guillotine, same positionals as Gibbet/Gallows).
+    /// </summary>
+    bool HasExecutioner { get; }
+
+    /// <summary>
+    /// Number of Executioner stacks (Gluttony grants 2).
+    /// </summary>
+    int ExecutionerStacks { get; }
+
+    /// <summary>
     /// Whether Enhanced Gibbet is active (use Gibbet for bonus).
     /// </summary>
     bool HasEnhancedGibbet { get; }

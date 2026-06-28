@@ -47,6 +47,8 @@ public static class ThanatosTestContext
         // Soul Reaver
         bool hasSoulReaver = false,
         int soulReaverStacks = 0,
+        bool hasExecutioner = false,
+        int executionerStacks = 0,
         bool hasEnhancedGibbet = false,
         bool hasEnhancedGallows = false,
         bool hasEnhancedVoidReaping = false,
@@ -122,6 +124,8 @@ public static class ThanatosTestContext
 
         // Soul Reaver state
         mock.Setup(x => x.HasSoulReaver).Returns(hasSoulReaver);
+        mock.Setup(x => x.HasExecutioner).Returns(hasExecutioner);
+        mock.Setup(x => x.ExecutionerStacks).Returns(executionerStacks);
         mock.Setup(x => x.SoulReaverStacks).Returns(soulReaverStacks);
         mock.Setup(x => x.HasEnhancedGibbet).Returns(hasEnhancedGibbet);
         mock.Setup(x => x.HasEnhancedGallows).Returns(hasEnhancedGallows);
