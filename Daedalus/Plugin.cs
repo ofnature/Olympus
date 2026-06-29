@@ -136,6 +136,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly MainWindow mainWindow;
     private readonly ControlWindow controlWindow;
     private readonly NavControlWindow navControlWindow;
+    private readonly RaidWindow raidWindow;
+    private readonly MissingWindow missingWindow;
     private readonly DebugWindow debugWindow;
     private readonly WelcomeWindow welcomeWindow;
     private readonly AnalyticsWindow analyticsWindow;
@@ -221,7 +223,23 @@ public sealed class Plugin : IDalamudPlugin
         this.damageTrendService = new DamageTrendService(damageIntakeService, healingIntakeService);
         this.cooldownPlanner = new CooldownPlanner(damageIntakeService, damageTrendService, configuration);
         this.gapCloserSafetyService = new GapCloserSafetyService(configuration, targetManager);
-        this.targetingService = new TargetingService(objectTable, partyList, targetManager, configuration, gapCloserSafetyService);
+
+        // Content classifiers + the non-destructive runtime config overlay must be built before any
+        // service that reads the effective (overlaid) config — TargetingService reads it so per-fight
+        // strategy overrides (Raid window) and the auto-duty profile take effect. Primed for the
+        // current zone in case the plugin loads while already in a duty, then refreshed once so the
+        // overlay reflects that zone immediately.
+        this.highEndContentService = new Daedalus.Services.Content.HighEndContentService(dataManager);
+        this.highEndContentService.OnTerritoryChanged((ushort)clientState.TerritoryType);
+        this.dutyContentService = new Daedalus.Services.Content.DutyContentService(dataManager);
+        this.dutyConfigurationService = new Daedalus.Services.Content.DutyConfigurationService(configuration, dutyContentService);
+        this.dutyContentService.OnTerritoryChanged(
+            (ushort)clientState.TerritoryType,
+            highEndContentService.IsHighEndZone,
+            partyList.Length);
+        this.dutyConfigurationService.Refresh();
+
+        this.targetingService = new TargetingService(objectTable, partyList, targetManager, dutyConfigurationService.RotationConfiguration, gapCloserSafetyService);
         this.timeToKillService = new TimeToKillService();
         this.shieldTrackingService = new ShieldTrackingService(objectTable, partyList, log);
 
@@ -348,18 +366,6 @@ public sealed class Plugin : IDalamudPlugin
         // LocalPlayer.IsCasting + ActionManager.QueuedActionId + InCombat.
         this.pullIntentService = new Daedalus.Services.Pull.PullIntentService();
 
-        // High-end content classifier. Hooked to TerritoryChanged and primed for
-        // current zone in case the plugin loads while already in a duty.
-        this.highEndContentService = new Daedalus.Services.Content.HighEndContentService(dataManager);
-        this.highEndContentService.OnTerritoryChanged((ushort)clientState.TerritoryType);
-
-        this.dutyContentService = new Daedalus.Services.Content.DutyContentService(dataManager);
-        this.dutyConfigurationService = new Daedalus.Services.Content.DutyConfigurationService(configuration, dutyContentService);
-        this.dutyContentService.OnTerritoryChanged(
-            (ushort)clientState.TerritoryType,
-            highEndContentService.IsHighEndZone,
-            partyList.Length);
-
         // Inventory and tincture-cooldown probes (production-side wrappers).
         this.inventoryProbe = new Daedalus.Services.Consumables.DalamudInventoryProbe(errorMetricsService);
         this.tinctureCooldownProbe = new Daedalus.Services.Consumables.DalamudTinctureCooldownProbe(errorMetricsService);
@@ -418,7 +424,9 @@ public sealed class Plugin : IDalamudPlugin
         this.configWindow = new ConfigWindow(configuration, SaveConfiguration, updateCheckerService, textureProvider, dutyContentService);
         this.controlWindow = new ControlWindow(configuration, SaveConfiguration, rotationManager, textureProvider);
         this.navControlWindow = new NavControlWindow(configuration, SaveConfiguration);
-        this.mainWindow = new MainWindow(configuration, SaveConfiguration, OpenConfigUI, OpenDebugUI, OpenAnalyticsUI, OpenTrainingUI, OpenChangelogUI, OpenOverlayUI, OpenControlUI, OpenNavControlUI, PluginVersion, rotationManager, textureProvider);
+        this.raidWindow = new RaidWindow(configuration, SaveConfiguration, dutyContentService);
+        this.missingWindow = new MissingWindow(debugService);
+        this.mainWindow = new MainWindow(configuration, SaveConfiguration, OpenConfigUI, OpenDebugUI, OpenAnalyticsUI, OpenTrainingUI, OpenChangelogUI, OpenOverlayUI, OpenControlUI, OpenNavControlUI, OpenRaidUI, OpenMissingUI, PluginVersion, rotationManager, textureProvider);
         var smartAoETab = new SmartAoETab(aoeTracker, drawCanvas, objectTable);
         this.debugWindow = new DebugWindow(debugService, configuration, timelineService, smartAoETab);
         this.welcomeWindow = new WelcomeWindow(configuration, SaveConfiguration, OpenConfigUI);
@@ -453,6 +461,8 @@ public sealed class Plugin : IDalamudPlugin
         windowSystem.AddWindow(mainWindow);
         windowSystem.AddWindow(controlWindow);
         windowSystem.AddWindow(navControlWindow);
+        windowSystem.AddWindow(raidWindow);
+        windowSystem.AddWindow(missingWindow);
         windowSystem.AddWindow(debugWindow);
         windowSystem.AddWindow(welcomeWindow);
         windowSystem.AddWindow(analyticsWindow);
@@ -633,6 +643,10 @@ public sealed class Plugin : IDalamudPlugin
     private void OpenControlUI() => controlWindow.Toggle();
 
     private void OpenNavControlUI() => navControlWindow.Toggle();
+
+    private void OpenRaidUI() => raidWindow.Toggle();
+
+    private void OpenMissingUI() => missingWindow.Toggle();
 
     private void OnCommand(string command, string args)
     {

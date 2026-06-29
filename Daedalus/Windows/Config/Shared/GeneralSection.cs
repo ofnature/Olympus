@@ -176,6 +176,15 @@ public sealed class GeneralSection
                 "In alliance raids, mobs tagged by other parties often lack your personal in-combat flag until you hit them. Enable to keep attacking valid contribution targets. Also activates automatically while group-combat assist is enabled and allies are fighting."),
             this.save);
 
+        ConfigUIHelpers.Toggle(
+            Loc.T(LocalizedStrings.Targeting.RetargetUnreachableTarget,
+                "Switch off unreachable targets"),
+            () => this.config.Targeting.RetargetUnreachableTarget,
+            v => this.config.Targeting.RetargetUnreachableTarget = v,
+            Loc.T(LocalizedStrings.Targeting.RetargetUnreachableTargetDesc,
+                "If your followed target is alive but out of reach — e.g. a boss split into an elevated 'upper' part melee can't hit and a grounded 'lower' part — and another enemy is in range, switch to the reachable one instead of standing idle. Only fires when a reachable enemy actually exists, so chasing a single far target is never interrupted."),
+            this.save);
+
         ConfigUIHelpers.Spacing();
 
         // Movement tolerance

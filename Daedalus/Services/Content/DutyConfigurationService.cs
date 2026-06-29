@@ -26,13 +26,16 @@ public sealed class DutyConfigurationService : IDutyConfigurationService
     {
         ConfigurationCopier.CopyOnto(RotationConfiguration, _savedConfiguration);
 
-        if (!_savedConfiguration.EnableAutoDutyConfig)
-            return;
+        if (_savedConfiguration.EnableAutoDutyConfig)
+        {
+            var profile = _dutyContentService.EffectiveProfile;
+            if (profile != EffectiveDutyProfile.None)
+                ConfigurationPresets.ApplyDutyProfile(RotationConfiguration, profile);
+        }
 
-        var profile = _dutyContentService.EffectiveProfile;
-        if (profile == EffectiveDutyProfile.None)
-            return;
-
-        ConfigurationPresets.ApplyDutyProfile(RotationConfiguration, profile);
+        // Per-fight strategy override (MVP: targeting). Applied last so it wins over the duty profile
+        // for the specific fight, and only while in that duty. Never mutates the saved config.
+        var raidStrategy = _savedConfiguration.Raid.GetActiveTargeting(_dutyContentService.CurrentTerritoryType);
+        raidStrategy?.ApplyOnto(RotationConfiguration.Targeting);
     }
 }

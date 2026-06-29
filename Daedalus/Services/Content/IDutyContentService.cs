@@ -14,6 +14,12 @@ public interface IDutyContentService
     /// <summary>Human-readable duty label for UI/debug.</summary>
     string DutyLabel { get; }
 
+    /// <summary>Current zone's TerritoryType row id (0 = open world). Key for per-fight strategies.</summary>
+    uint CurrentTerritoryType { get; }
+
+    /// <summary>Current duty's display name (from ContentFinderCondition), or empty in open world.</summary>
+    string CurrentDutyName { get; }
+
     /// <summary>Re-evaluates duty classification when the territory changes.</summary>
     void OnTerritoryChanged(ushort territoryType, bool isHighEndZone, int partyMemberCount);
 }

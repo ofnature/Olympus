@@ -1,6 +1,7 @@
 using Moq;
 using Daedalus.Config;
 using Daedalus.Services.Content;
+using Daedalus.Services.Targeting;
 using Xunit;
 
 namespace Daedalus.Tests.Services.Content;
@@ -95,5 +96,103 @@ public sealed class DutyConfigurationServiceTests
         Assert.True(config.Healing.EnableCoHealerAwareness);
         Assert.True(config.Healing.EnablePreemptiveHealing);
         Assert.Equal(3, config.Damage.AoEDamageMinTargets);
+    }
+
+    [Fact]
+    public void Refresh_AppliesPerFightTargetingOverride_WhenInKeyedTerritory()
+    {
+        const uint territory = 1234;
+        var saved = new Configuration
+        {
+            Targeting = { EnemyStrategy = EnemyTargetingStrategy.LowestHp, RetargetUnreachableTarget = true },
+        };
+        saved.Raid.TargetingByTerritory[territory] = new RaidTargetingStrategy
+        {
+            Enabled = true,
+            EnemyStrategy = EnemyTargetingStrategy.CurrentTarget,
+            RetargetUnreachableTarget = false,
+        };
+
+        var dutyContent = new Mock<IDutyContentService>();
+        dutyContent.Setup(x => x.EffectiveProfile).Returns(EffectiveDutyProfile.None);
+        dutyContent.Setup(x => x.CurrentTerritoryType).Returns(territory);
+
+        var service = new DutyConfigurationService(saved, dutyContent.Object);
+        service.Refresh();
+
+        // Effective config reflects the per-fight override...
+        Assert.Equal(EnemyTargetingStrategy.CurrentTarget, service.RotationConfiguration.Targeting.EnemyStrategy);
+        Assert.False(service.RotationConfiguration.Targeting.RetargetUnreachableTarget);
+        // ...but the saved global config is untouched.
+        Assert.Equal(EnemyTargetingStrategy.LowestHp, saved.Targeting.EnemyStrategy);
+        Assert.True(saved.Targeting.RetargetUnreachableTarget);
+    }
+
+    [Fact]
+    public void Refresh_IgnoresOverride_WhenInDifferentTerritory()
+    {
+        var saved = new Configuration
+        {
+            Targeting = { EnemyStrategy = EnemyTargetingStrategy.LowestHp },
+        };
+        saved.Raid.TargetingByTerritory[1234] = new RaidTargetingStrategy
+        {
+            Enabled = true,
+            EnemyStrategy = EnemyTargetingStrategy.CurrentTarget,
+        };
+
+        var dutyContent = new Mock<IDutyContentService>();
+        dutyContent.Setup(x => x.EffectiveProfile).Returns(EffectiveDutyProfile.None);
+        dutyContent.Setup(x => x.CurrentTerritoryType).Returns(5678u);
+
+        var service = new DutyConfigurationService(saved, dutyContent.Object);
+        service.Refresh();
+
+        Assert.Equal(EnemyTargetingStrategy.LowestHp, service.RotationConfiguration.Targeting.EnemyStrategy);
+    }
+
+    [Fact]
+    public void Refresh_IgnoresOverride_WhenDisabled()
+    {
+        const uint territory = 1234;
+        var saved = new Configuration
+        {
+            Targeting = { EnemyStrategy = EnemyTargetingStrategy.LowestHp },
+        };
+        saved.Raid.TargetingByTerritory[territory] = new RaidTargetingStrategy
+        {
+            Enabled = false,
+            EnemyStrategy = EnemyTargetingStrategy.CurrentTarget,
+        };
+
+        var dutyContent = new Mock<IDutyContentService>();
+        dutyContent.Setup(x => x.EffectiveProfile).Returns(EffectiveDutyProfile.None);
+        dutyContent.Setup(x => x.CurrentTerritoryType).Returns(territory);
+
+        var service = new DutyConfigurationService(saved, dutyContent.Object);
+        service.Refresh();
+
+        Assert.Equal(EnemyTargetingStrategy.LowestHp, service.RotationConfiguration.Targeting.EnemyStrategy);
+    }
+
+    [Fact]
+    public void Refresh_PerFightOverrideWinsOverDutyProfile()
+    {
+        const uint territory = 1234;
+        var saved = new Configuration { EnableAutoDutyConfig = true };
+        saved.Raid.TargetingByTerritory[territory] = new RaidTargetingStrategy
+        {
+            Enabled = true,
+            EnemyStrategy = EnemyTargetingStrategy.FocusTarget,
+        };
+
+        var dutyContent = new Mock<IDutyContentService>();
+        dutyContent.Setup(x => x.EffectiveProfile).Returns(EffectiveDutyProfile.Raid);
+        dutyContent.Setup(x => x.CurrentTerritoryType).Returns(territory);
+
+        var service = new DutyConfigurationService(saved, dutyContent.Object);
+        service.Refresh();
+
+        Assert.Equal(EnemyTargetingStrategy.FocusTarget, service.RotationConfiguration.Targeting.EnemyStrategy);
     }
 }

@@ -17,6 +17,8 @@ public sealed class DutyContentService : IDutyContentService
 
     public DutyContentType CurrentDuty { get; private set; } = DutyContentType.Unknown;
     public EffectiveDutyProfile EffectiveProfile { get; private set; } = EffectiveDutyProfile.None;
+    public uint CurrentTerritoryType { get; private set; }
+    public string CurrentDutyName { get; private set; } = string.Empty;
 
     public string DutyLabel => EffectiveProfile switch
     {
@@ -34,13 +36,28 @@ public sealed class DutyContentService : IDutyContentService
 
     public void OnTerritoryChanged(ushort territoryType, bool isHighEndZone, int partyMemberCount)
     {
+        CurrentTerritoryType = territoryType;
         CurrentDuty = ResolveDutyType(territoryType);
+        CurrentDutyName = ResolveDutyName(territoryType);
         var trustOrEmptyParty = partyMemberCount == 0;
         EffectiveProfile = DutyContentClassifier.Resolve(
             CurrentDuty,
             isHighEndZone,
             partyMemberCount,
             trustOrEmptyParty);
+    }
+
+    private string ResolveDutyName(ushort territoryType)
+    {
+        if (territoryType == 0)
+            return string.Empty;
+
+        var row = _dataManager.GetExcelSheet<TerritoryType>()?.GetRowOrDefault(territoryType);
+        var cfc = row?.ContentFinderCondition.ValueNullable;
+        if (cfc is null)
+            return string.Empty;
+
+        return cfc.Value.Name.ExtractText();
     }
 
     private DutyContentType ResolveDutyType(ushort territoryType)

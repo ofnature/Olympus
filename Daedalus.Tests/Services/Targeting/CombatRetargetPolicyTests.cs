@@ -88,4 +88,89 @@ public sealed class CombatRetargetPolicyTests
         EnemyTargetingStrategy configured,
         EnemyTargetingStrategy expected) =>
         Assert.Equal(expected, CombatRetargetPolicy.ResolveAutoRetargetStrategy(configured));
+
+    [Fact]
+    public void ShouldRetargetUnreachable_WhenHeldTargetOutOfReachAndAlternativeExists_ReturnsTrue()
+    {
+        var retarget = CombatRetargetPolicy.ShouldRetargetUnreachable(
+            featureEnabled: true,
+            playerInCombat: true,
+            heldTargetIsLivingEnemy: true,
+            heldTargetInRange: false,
+            gracePassed: true,
+            hasReachableAlternative: true);
+
+        Assert.True(retarget);
+    }
+
+    [Fact]
+    public void ShouldRetargetUnreachable_WhenDisabled_ReturnsFalse()
+    {
+        var retarget = CombatRetargetPolicy.ShouldRetargetUnreachable(
+            featureEnabled: false,
+            playerInCombat: true,
+            heldTargetIsLivingEnemy: true,
+            heldTargetInRange: false,
+            gracePassed: true,
+            hasReachableAlternative: true);
+
+        Assert.False(retarget);
+    }
+
+    [Fact]
+    public void ShouldRetargetUnreachable_WhenTargetInRange_ReturnsFalse()
+    {
+        var retarget = CombatRetargetPolicy.ShouldRetargetUnreachable(
+            featureEnabled: true,
+            playerInCombat: true,
+            heldTargetIsLivingEnemy: true,
+            heldTargetInRange: true,
+            gracePassed: true,
+            hasReachableAlternative: true);
+
+        Assert.False(retarget);
+    }
+
+    [Fact]
+    public void ShouldRetargetUnreachable_BeforeGraceElapses_ReturnsFalse()
+    {
+        var retarget = CombatRetargetPolicy.ShouldRetargetUnreachable(
+            featureEnabled: true,
+            playerInCombat: true,
+            heldTargetIsLivingEnemy: true,
+            heldTargetInRange: false,
+            gracePassed: false,
+            hasReachableAlternative: true);
+
+        Assert.False(retarget);
+    }
+
+    [Fact]
+    public void ShouldRetargetUnreachable_WhenNoReachableAlternative_ReturnsFalse()
+    {
+        // The single-far-target case: chasing one out-of-range boss must NOT thrash-retarget.
+        var retarget = CombatRetargetPolicy.ShouldRetargetUnreachable(
+            featureEnabled: true,
+            playerInCombat: true,
+            heldTargetIsLivingEnemy: true,
+            heldTargetInRange: false,
+            gracePassed: true,
+            hasReachableAlternative: false);
+
+        Assert.False(retarget);
+    }
+
+    [Fact]
+    public void ShouldRetargetUnreachable_WhenOutOfCombat_ReturnsFalse()
+    {
+        var retarget = CombatRetargetPolicy.ShouldRetargetUnreachable(
+            featureEnabled: true,
+            playerInCombat: false,
+            heldTargetIsLivingEnemy: true,
+            heldTargetInRange: false,
+            gracePassed: true,
+            hasReachableAlternative: true);
+
+        Assert.False(retarget);
+    }
 }

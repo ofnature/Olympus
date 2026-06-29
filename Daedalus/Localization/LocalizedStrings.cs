@@ -28,6 +28,8 @@ public static class LocalizedStrings
         public const string Changelog = "ui.main.changelog";
         public const string Control = "ui.main.control";
         public const string NavControl = "ui.main.nav_control";
+        public const string Raid = "ui.main.raid";
+        public const string Missing = "ui.main.missing";
         public const string Positional = "ui.main.positional";
         public const string PositionalRequired = "ui.main.positional_required";
         public const string PositionalRear = "ui.main.positional_rear";
@@ -240,6 +242,8 @@ public static class LocalizedStrings
         public const string InvulnerabilityFilteringDesc = "config.targeting.invulnerability_filtering_desc";
         public const string IncludeHostilesWithoutPersonalCombatFlag = "config.targeting.include_hostiles_without_personal_combat_flag";
         public const string IncludeHostilesWithoutPersonalCombatFlagDesc = "config.targeting.include_hostiles_without_personal_combat_flag_desc";
+        public const string RetargetUnreachableTarget = "config.targeting.retarget_unreachable_target";
+        public const string RetargetUnreachableTargetDesc = "config.targeting.retarget_unreachable_target_desc";
     }
 
     /// <summary>Keys for consumables config section.</summary>

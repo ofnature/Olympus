@@ -44,6 +44,13 @@ public sealed class TargetingService : ITargetingService
     private long _userStickyTargetLastValidMs;
     private readonly Stopwatch _stickyClock = new();
 
+    // Unreachable-target retarget (split-boss recovery): how long the followed target must stay
+    // continuously out of effective range before we switch to a reachable hostile. Short enough to
+    // recover quickly, long enough to ignore knockbacks / mid-approach blips.
+    private const long UnreachableRetargetGraceMs = 1000;
+    private ulong _unreachableTargetId;
+    private long _unreachableSinceMs;
+
     // Tank job IDs: PLD=19, WAR=21, DRK=32, GNB=37
     private static readonly HashSet<uint> TankJobIds = [19, 21, 32, 37];
 
@@ -140,6 +147,21 @@ public sealed class TargetingService : ITargetingService
                 || ShouldRelaxStrictOnCombatDeath(player)))
         {
             target = FindEnemyByStrategy(EnemyTargetingStrategy.LowestHp, maxRange, player);
+        }
+
+        // Split-boss / unreachable-target recovery: any strategy can leave us with no target when
+        // the followed enemy is a valid living hostile that is merely OUT OF REACH (e.g. an elevated
+        // boss part melee can't hit) while a reachable attackable hostile exists. Don't idle —
+        // switch to the reachable one and write it as the hard target so auto-face turns to it.
+        if (target == null && IsHeldTargetUnreachableWithReachableAlternative(maxRange, player))
+        {
+            var reachable = FindEnemyByStrategy(
+                CombatRetargetPolicy.ResolveAutoRetargetStrategy(strategy), maxRange, player);
+            if (reachable != null)
+            {
+                SetGameHardTarget(reachable);
+                return reachable;
+            }
         }
 
         return ApplyStickyFallback(target);
@@ -599,6 +621,68 @@ public sealed class TargetingService : ITargetingService
         foreach (var enemy in GetValidEnemies(CombatRetargetMaxRangeY, player))
         {
             if (ShouldIncludeEnemyForTargeting(enemy, engagedTargetId, player))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True when the followed target is a valid living enemy that is simply out of effective range
+    /// (e.g. an elevated boss part melee can't reach) and another attackable hostile IS in range,
+    /// sustained past the grace window. Drives the split-boss / unreachable-target retarget in
+    /// <see cref="FindEnemy"/>. Resets its grace timer whenever the held target is missing, invalid,
+    /// or actually reachable — so normal gap-closing to a single far target never trips it.
+    /// </summary>
+    private bool IsHeldTargetUnreachableWithReachableAlternative(float maxRange, IPlayerCharacter player)
+    {
+        if (!_configuration.Targeting.RetargetUnreachableTarget
+            || !IsPlayerEffectivelyInCombat(player)
+            || _targetManager.Target is not IBattleNpc raw)
+        {
+            _unreachableTargetId = 0;
+            return false;
+        }
+
+        // Must be a valid living, attackable enemy (the gone/dead/immune case is handled by the
+        // combat-death retarget path) that fails ONLY the range check in IsValidEnemy.
+        var held = ResolveEnemyById(raw.GameObjectId);
+        if (held == null || IsValidEnemy(held, maxRange, player))
+        {
+            _unreachableTargetId = 0;
+            return false;
+        }
+
+        // Start / continue the continuous-out-of-range timer for this specific target.
+        if (_unreachableTargetId != held.GameObjectId)
+        {
+            _unreachableTargetId = held.GameObjectId;
+            _unreachableSinceMs = _stickyClock.ElapsedMilliseconds;
+        }
+
+        var gracePassed = _stickyClock.ElapsedMilliseconds - _unreachableSinceMs >= UnreachableRetargetGraceMs;
+
+        return CombatRetargetPolicy.ShouldRetargetUnreachable(
+            featureEnabled: true,
+            playerInCombat: true,
+            heldTargetIsLivingEnemy: true,
+            heldTargetInRange: false,
+            gracePassed: gracePassed,
+            hasReachableAlternative: HasReachableAlternativeEnemy(held.GameObjectId, maxRange, player));
+    }
+
+    /// <summary>
+    /// True when at least one valid, attackable, in-range hostile other than <paramref name="excludeId"/>
+    /// is available to retarget to.
+    /// </summary>
+    private bool HasReachableAlternativeEnemy(ulong excludeId, float maxRange, IPlayerCharacter player)
+    {
+        var currentTargetId = _targetManager.Target is IBattleNpc ? _targetManager.Target.GameObjectId : 0UL;
+        foreach (var enemy in GetValidEnemies(maxRange, player))
+        {
+            if (enemy.GameObjectId == excludeId)
+                continue;
+            if (ShouldIncludeEnemyForTargeting(enemy, currentTargetId, player))
                 return true;
         }
 
@@ -1252,7 +1336,16 @@ public sealed class TargetingService : ITargetingService
 
     private static bool IsStillValid(IBattleNpc enemy)
     {
-        return enemy.IsTargetable && !enemy.IsDead;
+        if (!enemy.IsTargetable || enemy.IsDead)
+            return false;
+
+        // Safeguard: never resolve/keep a friendly NPC (Trust allies, escort/protect
+        // objectives, pets, chocobos, party-member NPCs). Mirrors IsValidEnemy so the
+        // sticky/current-target paths and EnsureHardTarget can't hard-target a friendly.
+        if ((byte)enemy.BattleNpcKind != Daedalus.Compat.BattleNpcKinds.Combatant && enemy.SubKind != 0)
+            return false;
+
+        return EnemyAttackability.IsPlayerAttackable(enemy);
     }
 
     /// <summary>

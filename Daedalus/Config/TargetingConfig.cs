@@ -114,4 +114,15 @@ public sealed class TargetingConfig
     /// Only applies while you (or your group, with party-combat assist) are effectively fighting.
     /// </summary>
     public bool IncludeHostilesWithoutPersonalCombatFlag { get; set; } = false;
+
+    /// <summary>
+    /// When true, if the followed target (strict Current/Focus Target, or Tank Assist without
+    /// fallback) is a valid living enemy that is simply OUT OF REACH — e.g. a boss split into an
+    /// elevated "upper" part melee cannot hit and a grounded "lower" part — and another attackable
+    /// hostile IS in range, Daedalus switches to the reachable enemy (and makes it the hard target
+    /// so auto-face turns to it) instead of standing idle. Only triggers after the held target has
+    /// been unreachable for a short grace and only when a reachable alternative actually exists, so
+    /// normal gap-closing to a single far target is never interrupted. Default ON.
+    /// </summary>
+    public bool RetargetUnreachableTarget { get; set; } = true;
 }

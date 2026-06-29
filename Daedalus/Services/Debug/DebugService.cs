@@ -719,6 +719,31 @@ public sealed class DebugService
     public uint GetJobId()
         => _objectTable.LocalPlayer?.ClassJob.RowId ?? 0;
 
+    /// <summary>
+    /// Reports unlock status for every ability the current job's checklist expects at the current
+    /// level. An entry with <see cref="AbilityUnlockStatus.Learned"/> == false is level-met but not
+    /// usable — almost always an uncompleted job quest. Empty for jobs with no checklist.
+    /// </summary>
+    public System.Collections.Generic.IReadOnlyList<AbilityUnlockStatus> GetAbilityUnlockStatus()
+    {
+        var level = GetPlayerLevel();
+        var groups = Data.SpellChecklistRegistry.GetChecklist(GetJobId());
+        var seen = new System.Collections.Generic.HashSet<uint>();
+        var result = new System.Collections.Generic.List<AbilityUnlockStatus>();
+        foreach (var group in groups)
+        {
+            foreach (var action in group.GetActions(level))
+            {
+                if (action.ActionId == 0 || !seen.Add(action.ActionId))
+                    continue;
+                result.Add(new AbilityUnlockStatus(
+                    action.Name, action.MinLevel, action.ActionId,
+                    _actionService.IsActionLearned(action.ActionId)));
+            }
+        }
+        return result;
+    }
+
     /// <summary>Resets spell usage counts without affecting history or GCD uptime data.</summary>
     public void ClearSpellUsageCounts()
         => _actionTracker.ClearSpellUsageCounts();

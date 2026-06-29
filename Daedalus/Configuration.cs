@@ -118,6 +118,7 @@ public sealed class Configuration : IPluginConfiguration
     public BuffConfig Buffs { get; set; } = new();
     public ResurrectionConfig Resurrection { get; set; } = new();
     public TargetingConfig Targeting { get; set; } = new();
+    public RaidConfig Raid { get; set; } = new();
     public RoleActionConfig RoleActions { get; set; } = new();
     public DebugConfig Debug { get; set; } = new();
     public CalibrationConfig Calibration { get; set; } = new();

@@ -5,6 +5,25 @@ All notable changes to Daedalus will be documented in this file.
 <!-- LATEST-START -->
 ## v0.1.0 — 2026-06-27
 
+### New — Missing window (unlocked-ability check)
+- Added a **Missing** window (button in the main window footer, next to Debug) that scans your current job's abilities and flags any that are high enough level but **not actually unlocked** — almost always an uncompleted job quest. Updates automatically for whatever job you're on. Handy when leveling via AutoDuty: if a key ability silently never fires (like Reaper's Enshroud before its Lv80 quest), this tells you exactly which quest you're missing. Expand "All expected abilities" to see the full unlocked/locked list
+
+### New — Raid window (per-fight strategies)
+- Added a **Raid** window (button on the main window) that shows the duty you're currently in and lets you set a per-fight targeting strategy for it. Turn on "Use a custom strategy for this fight" to override the enemy strategy, "switch off unreachable targets", strict explicit-target, and skip-invulnerable just for that duty — handy for split-boss fights where you want different targeting than your global default
+- Overrides are saved per fight and applied automatically when you zone into that duty. Your global targeting settings are never changed, and a saved-strategies list lets you review or remove them
+
+### New — Switch off unreachable targets (split bosses)
+- When the enemy you're following is alive but out of reach — e.g. a boss split into an elevated "upper" part melee can't hit and a grounded "lower" part — Daedalus now switches to the reachable enemy and keeps doing damage instead of standing idle. It only fires when another enemy is actually in range, so chasing a single far-away target is never interrupted. New "Switch off unreachable targets" toggle under General → Targeting (on by default)
+
+### Fix — No longer targets friendly NPCs
+- Hardened targeting so Daedalus never locks onto friendly NPCs (Trust allies, escort/protect objectives, pets, chocobos) — only attackable hostiles can be auto-targeted or auto-faced
+
+### Fix — Reaper Gluttony & Enshroud never firing
+- Gluttony was effectively never used — its gate checked Enshroud's cooldown, but Enshroud is gauge-gated (its cooldown is almost always up), so the check was permanently false. Gluttony now fires on cooldown as the premium Soul spender (and at Lv.96 actually grants the Executioner stacks the previous fix added)
+- Enshroud was being held in solo/AutoDuty: it required Arcane Circle active or Death's Design above 15s, so once the DoT ticked down with no party buff it never triggered. It now enters on cooldown once you have the Shroud gauge and Death's Design is up, which restores the whole Void/Cross Reaping → Communio burst
+- Enshroud no longer waits on Death's Design and now fires as soon as you have 50 Shroud (outside burst pooling). Tying Enshroud to the DoT meant it never fired in packs when the current target briefly lacked Death's Design after a target swap
+- Fixed slow Shroud generation: Death's Design was re-applying about twice as often as needed in packs (each target swap re-triggered it), stealing the Soul Reaver casts that build Shroud. It's now applied promptly when missing but no longer outranks your Shroud-building GCDs, so Shroud fills at full speed and Enshroud comes up on time
+
 ### Fix — Reaper Executioner finishers + Enshroud polish
 - Fixed Executioner's Gibbet/Gallows/Guillotine (the Lv.96+ Gluttony upgrade) never being used — at 96+ Gluttony grants the Executioner buff, but the rotation only handled Soul Reaver, so the two high-potency stacks were wasted every Gluttony. They now fire with the correct flank/rear positionals, and a fresh Gluttony/Blood Stalk/Enshroud won't override pending Executioner stacks
 - Ideal Host (free Enshroud) now triggers Enshroud even at low Shroud instead of being ignored

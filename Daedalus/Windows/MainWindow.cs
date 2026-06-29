@@ -27,6 +27,8 @@ public sealed class MainWindow : Window
     private readonly Action openOverlay;
     private readonly Action openControl;
     private readonly Action openNavControl;
+    private readonly Action openRaid;
+    private readonly Action openMissing;
     private readonly RotationManager rotationManager;
     private readonly ITextureProvider textureProvider;
 
@@ -41,6 +43,8 @@ public sealed class MainWindow : Window
         Action openOverlay,
         Action openControl,
         Action openNavControl,
+        Action openRaid,
+        Action openMissing,
         string version,
         RotationManager rotationManager,
         ITextureProvider textureProvider)
@@ -56,6 +60,8 @@ public sealed class MainWindow : Window
         this.openOverlay = openOverlay;
         this.openControl = openControl;
         this.openNavControl = openNavControl;
+        this.openRaid = openRaid;
+        this.openMissing = openMissing;
         this.rotationManager = rotationManager;
         this.textureProvider = textureProvider;
 
@@ -161,14 +167,19 @@ public sealed class MainWindow : Window
             openTraining();
         }
 
-        if (ImGui.Button(Loc.T(LocalizedStrings.Main.Control, "Control"), new Vector2(-1, 0)))
+        if (ImGui.Button(Loc.T(LocalizedStrings.Main.Control, "Control"), new Vector2(buttonWidth, 0)))
         {
             openControl();
         }
-
-        if (ImGui.Button(Loc.T(LocalizedStrings.Main.NavControl, "Nav Control"), new Vector2(-1, 0)))
+        ImGui.SameLine();
+        if (ImGui.Button(Loc.T(LocalizedStrings.Main.NavControl, "Nav Control"), new Vector2(buttonWidth, 0)))
         {
             openNavControl();
+        }
+
+        if (ImGui.Button(Loc.T(LocalizedStrings.Main.Raid, "Raid"), new Vector2(buttonWidth, 0)))
+        {
+            openRaid();
         }
 
         // Footer links
@@ -182,6 +193,13 @@ public sealed class MainWindow : Window
         if (ImGui.SmallButton(Loc.T(LocalizedStrings.Main.Debug, "Debug")))
         {
             openDebug();
+        }
+        ImGui.SameLine();
+        ImGui.Text("\u00B7");
+        ImGui.SameLine();
+        if (ImGui.SmallButton(Loc.T(LocalizedStrings.Main.Missing, "Missing")))
+        {
+            openMissing();
         }
     }
 }
