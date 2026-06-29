@@ -5,6 +5,16 @@ All notable changes to Daedalus will be documented in this file.
 <!-- LATEST-START -->
 ## v0.1.0 — 2026-06-27
 
+### Fix — Esuna now cleanses "esuna check" debuffs by default (all healers)
+- Unrecognized dispellable debuffs were treated as low priority and skipped at the default Esuna setting. Many dungeon/trial/raid "cleanse or wipe" mechanics use a unique debuff the bot doesn't have hardcoded, so they could be missed. These now default to medium priority and get cleansed at the default threshold. Known harmless movement debuffs (Bind/Heavy/Blind) are unaffected. Applies to all four healers
+
+### New — Auto-Manage BossMod AI by role (group content)
+- New opt-in option (Nav Control → "Auto-Manage BMR AI by role") for group content, where AutoDuty's BMR management isn't running. When on and BossMod Reborn is loaded, Daedalus feeds BMR a role-based stand distance (healers/ranged hold at range — default 15y, melee hug) plus the **live next-GCD positional** (so RPR/MNK/NIN get flank↔rear correctly, not a single static positional), in movement-only mode so BMR handles the pathfinding/safety while Daedalus keeps the rotation and targeting. You still enable BMR AI yourself (`/bmrai`). Off by default; does nothing if BMR isn't loaded
+
+### Improved — White Mage
+- Lily cap prevention is now proactive: it spends a Lily at 2/3 when the next one is about to tick (not only at 3/3), so a Lily regen is never wasted — which also feeds Blood Lily → Afflatus Misery faster
+- Co-healer GCD gating: with a co-healer present, a White Mage set to the **Co** role now leaves non-critical GCD heals to the Main healer and oGCDs to keep up DPS (parity with AST/SGE). Critical targets still get healed, and it has no effect when solo-healing. New "GCD Heals Only When Solo Healer" toggle under Co-Healer Coordination
+
 ### Improved — Reaper ranged filler & smarter Enshroud
 - Reaper now uses **Harpe** as a ranged filler when an AoE mechanic forces you out of melee range, so the GCD keeps rolling instead of dropping to auto-attacks (Harvest Moon is still preferred when Soulsow is up). Only used while standing at range — it won't waste a cast trying to fire while you're moving (unless Enhanced Harpe makes it instant)
 - Enshroud no longer gets blown on a dying target in dungeons: if every enemy in range is about to die, it holds the burst. Never applies in trials/raids (boss HP makes it pointless). Tunable via "Skip Enshroud on dying target" under the Reaper Enshroud settings (default 5%, 0 to disable)

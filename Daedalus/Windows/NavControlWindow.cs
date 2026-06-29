@@ -64,6 +64,36 @@ public sealed class NavControlWindow : Window
         }
 
         ImGui.Spacing();
+        ImGui.TextDisabled("Auto-Manage BossMod AI (groups — experimental)");
+        ImGui.Separator();
+
+        var autoBmr = nav.AutoManageBmrAi;
+        if (ConfigUIHelpers.ToggleCheckbox(
+                "Auto-Manage BMR AI by role",
+                ref autoBmr,
+                "For group content (not Trust): feeds BossMod Reborn's AI a role-based stand distance "
+                + "(healers/ranged hold at range, melee hug) and the live next-GCD positional, in movement-only "
+                + "mode so BMR positions while Daedalus keeps the rotation. You still enable BMR AI yourself "
+                + "(/bmrai). Does nothing if BossMod Reborn isn't loaded. Off by default.",
+                saveConfiguration))
+        {
+            nav.AutoManageBmrAi = autoBmr;
+        }
+
+        if (nav.AutoManageBmrAi)
+        {
+            nav.BmrRangedStandDistance = ConfigUIHelpers.FloatSlider(
+                "Ranged Stand Distance (yalms)",
+                nav.BmrRangedStandDistance,
+                8f,
+                24f,
+                "%.0f",
+                "How far healers/ranged/casters stand from the target. 15y is inside cast range but out of "
+                + "most melee/AoE. Melee always hug (2.6y).",
+                saveConfiguration);
+        }
+
+        ImGui.Spacing();
         ImGui.TextDisabled("Tank (experimental)");
         ImGui.Separator();
 

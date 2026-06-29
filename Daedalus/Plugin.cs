@@ -94,6 +94,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly VNavService vNavService;
     private readonly BossModSafetyService bossModSafetyService;
     private readonly PositionalMovementService positionalMovementService;
+    private readonly BmrAiConfigService bmrAiConfigService;
     private readonly SamuraiPositionalAnticipationProvider samuraiPositionalAnticipationProvider;
     private readonly NinjaPositionalAnticipationProvider ninjaPositionalAnticipationProvider;
     private readonly NinjaBurstApproachService ninjaBurstApproachService;
@@ -284,6 +285,7 @@ public sealed class Plugin : IDalamudPlugin
         this.vNavService = new VNavService(pluginInterface, log);
         this.bossModSafetyService = new BossModSafetyService(pluginInterface, log);
         this.positionalMovementService = new PositionalMovementService(vNavService, bossModSafetyService);
+        this.bmrAiConfigService = new BmrAiConfigService(pluginInterface, bossModSafetyService, log);
         this.samuraiPositionalAnticipationProvider = new SamuraiPositionalAnticipationProvider();
         this.ninjaPositionalAnticipationProvider = new NinjaPositionalAnticipationProvider();
         this.ninjaBurstApproachService = new NinjaBurstApproachService(vNavService, bossModSafetyService);
@@ -863,11 +865,31 @@ public sealed class Plugin : IDalamudPlugin
                 return;
 
             rotationManager.Execute(localPlayer);
+
+            UpdateBmrAiConfig(jobId);
         }
         catch (Exception ex)
         {
             log.Error(ex, "Error in OnFrameworkUpdate");
         }
+    }
+
+    /// <summary>
+    /// Auto-manages BossMod Reborn's AI movement config by role (distance + live positional, movement-only)
+    /// for group content. Feeds the active melee rotation's next required positional so BMR positions for
+    /// the exact GCD. No-ops (fail-open) when disabled or BMR isn't loaded.
+    /// </summary>
+    private void UpdateBmrAiConfig(uint jobId)
+    {
+        var requiredPositional = rotationManager.ActiveRotation is Daedalus.Rotation.Common.IHasPositionals hp
+            ? hp.Positionals.RequiredPositional
+            : null;
+
+        bmrAiConfigService.Update(new BmrAiConfigService.Request(
+            Enabled: configuration.Nav.AutoManageBmrAi,
+            JobId: jobId,
+            RequiredPositional: requiredPositional,
+            RangedStandDistance: configuration.Nav.BmrRangedStandDistance));
     }
 
     /// <summary>

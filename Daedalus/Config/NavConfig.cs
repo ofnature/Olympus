@@ -45,4 +45,24 @@ public sealed class NavConfig
     /// this only persists the toggle. Default false.
     /// </summary>
     public bool TankMode { get; set; } = false;
+
+    private float _bmrRangedStandDistance = 15f;
+
+    /// <summary>
+    /// Auto-manage BossMod Reborn's AI movement config by role (for group content, where AutoDuty isn't
+    /// running its own BMR management). When on and BMR is loaded, Daedalus feeds BMR a role-based stand
+    /// distance + the live next-GCD positional and puts BMR in movement-only mode so it positions while
+    /// Daedalus keeps the rotation. You still enable BMR AI yourself (<c>/bmrai</c>). Default OFF.
+    /// </summary>
+    public bool AutoManageBmrAi { get; set; } = false;
+
+    /// <summary>
+    /// Distance (yalms) backline jobs (healers/ranged/casters) stand from the target when auto-managing
+    /// BMR AI. 15y sits inside the 25y cast range but out of most melee/AoE. Range 8–24, default 15.
+    /// </summary>
+    public float BmrRangedStandDistance
+    {
+        get => _bmrRangedStandDistance;
+        set => _bmrRangedStandDistance = Math.Clamp(value, 8f, 24f);
+    }
 }
