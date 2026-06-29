@@ -108,6 +108,27 @@ public static class SafeGameAccess
     }
 
     /// <summary>
+    /// Safely gets the WHM Lily timer (milliseconds elapsed toward the next Lily; a Lily generates at
+    /// 20000ms). Returns 0 if unavailable.
+    /// </summary>
+    public static unsafe int GetWhmLilyTimer(IErrorMetricsService? errorMetrics = null)
+    {
+        var jobGauge = GetJobGaugeManager(errorMetrics);
+        if (jobGauge == null)
+            return 0;
+
+        try
+        {
+            return jobGauge->WhiteMage.LilyTimer;
+        }
+        catch
+        {
+            errorMetrics?.RecordError("SafeGameAccess", "Failed to read WHM Lily timer");
+            return 0;
+        }
+    }
+
+    /// <summary>
     /// Safely gets the Paladin Oath Gauge value.
     /// </summary>
     /// <param name="errorMetrics">Optional error metrics service for tracking failures.</param>

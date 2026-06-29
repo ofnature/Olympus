@@ -55,6 +55,17 @@ public sealed class SingleTargetHealingHandler : IHealingHandler
         if (action is null) return;
         if (isMoving && action.CastTime > 0) return;
 
+        // GCD-heal gating (RSR GCDHeal parity, healer-role aware): a Co healer leaves non-critical
+        // single-target GCD heals to the Main healer / oGCDs to keep DPS uptime. oGCD heals are
+        // unaffected, and critical targets (below the GCD-emergency threshold) still get healed.
+        if (action.Category == ActionCategory.GCD
+            && CoHealerAwarenessHelper.ShouldDeferGcdHeals(
+                config.Healing.HealerRole,
+                config.Healing.RestrictGcdHealsWithCoHealer,
+                context.CoHealerDetectionService?.HasCoHealer == true)
+            && context.PartyHelper.GetHpPercent(target) > config.Healing.GcdEmergencyThreshold)
+            return;
+
         var (mind, det, wd) = context.PlayerStatsService.GetHealingStats(player.Level);
         var healAmountRaw = action.EstimateHealAmountRaw(mind, det, wd, player.Level);
         context.Debug.LastHealAmount = healAmount;

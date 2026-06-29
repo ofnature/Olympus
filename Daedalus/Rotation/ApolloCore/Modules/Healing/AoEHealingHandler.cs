@@ -71,6 +71,21 @@ public sealed class AoEHealingHandler : IHealingHandler
         if (action is null) { context.Debug.AoEStatus = "No AoE heal available"; return; }
         if (isMoving && action.CastTime > 0) { context.Debug.AoEStatus = "Moving"; return; }
 
+        // GCD-heal gating (RSR GCDHeal parity, role-aware): a Co healer leaves non-critical AoE GCD heals
+        // to the Main healer to keep DPS uptime. Never deferred when a raidwide is imminent or party
+        // average HP is critical; oGCD heals are unaffected.
+        if (action.Category == ActionCategory.GCD
+            && !raidwideImminent
+            && CoHealerAwarenessHelper.ShouldDeferGcdHeals(
+                config.Healing.HealerRole,
+                config.Healing.RestrictGcdHealsWithCoHealer,
+                context.CoHealerDetectionService?.HasCoHealer == true)
+            && context.PartyHealthMetrics.avgHpPercent > config.Healing.GcdEmergencyThreshold)
+        {
+            context.Debug.AoEStatus = "Deferred to co-healer";
+            return;
+        }
+
         var castTimeMs = (int)(action.CastTime * 1000);
         if (!context.HealingCoordination.TryReserveAoEHeal(
             context.PartyCoordinationService, action.ActionId, healAmount, castTimeMs))

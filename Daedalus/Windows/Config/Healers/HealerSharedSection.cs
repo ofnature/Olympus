@@ -58,6 +58,15 @@ public sealed class HealerSharedSection
                 config.Healing.HealerRole = role;
             }
 
+            ConfigUIHelpers.Toggle(
+                "GCD Heals Only When Solo Healer",
+                () => config.Healing.RestrictGcdHealsWithCoHealer,
+                v => config.Healing.RestrictGcdHealsWithCoHealer = v,
+                "With a co-healer present, leave non-critical GCD heals to the Main healer (and oGCDs) to "
+                + "keep DPS uptime. Critical targets still get a GCD heal. Combines with your Healer Role. "
+                + "No effect when solo-healing. Used by White Mage; AST/SGE have their own copies.",
+                save);
+
             ConfigUIHelpers.EndIndent();
         }
     }

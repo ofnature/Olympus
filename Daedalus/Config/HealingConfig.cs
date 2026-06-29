@@ -754,6 +754,15 @@ public sealed class HealingConfig
     public HealerRoleAssignment HealerRole { get; set; } = HealerRoleAssignment.Auto;
 
     /// <summary>
+    /// Shared "GCD Heals Only When Solo Healer" gate (RSR GCDHeal parity). When on and a co-healer is
+    /// present, non-critical single-target / AoE GCD heals are left to the Main healer and oGCDs to keep
+    /// DPS uptime; critical targets (below the GCD-emergency threshold) still get a GCD heal. Combines
+    /// with <see cref="HealerRole"/>: Main never defers, Co defers, Auto follows detection. Used by WHM
+    /// (Apollo); AST/SGE have their own per-job copies. No effect when solo-healing. Default ON.
+    /// </summary>
+    public bool RestrictGcdHealsWithCoHealer { get; set; } = true;
+
+    /// <summary>
     /// Threshold multiplier for healing when co-healer is present.
     /// Reduces healing aggressiveness to let co-healer share the load.
     /// e.g., 0.85 means reduce healing thresholds by 15% when co-healer is active.

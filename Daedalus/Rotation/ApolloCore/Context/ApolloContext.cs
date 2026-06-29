@@ -40,12 +40,14 @@ public sealed class ApolloContext : BaseHealerContext, IApolloContext
     private int? _lilyCount;
     private int? _bloodLilyCount;
     private int? _sacredSightStacks;
+    private float? _secondsUntilNextLily;
 
     public bool HasThinAir => _hasThinAir ??= StatusHelper.HasThinAir(Player);
     public bool HasFreecure => _hasFreecure ??= StatusHelper.HasFreecure(Player);
     public int LilyCount => _lilyCount ??= StatusHelper.GetLilyCount();
     public int BloodLilyCount => _bloodLilyCount ??= StatusHelper.GetBloodLilyCount();
     public int SacredSightStacks => _sacredSightStacks ??= StatusHelper.GetSacredSightStacks(Player);
+    public float SecondsUntilNextLily => _secondsUntilNextLily ??= StatusHelper.GetSecondsUntilNextLily();
 
     #endregion
 

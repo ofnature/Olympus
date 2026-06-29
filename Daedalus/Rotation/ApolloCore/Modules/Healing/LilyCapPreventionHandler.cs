@@ -17,7 +17,7 @@ namespace Daedalus.Rotation.ApolloCore.Modules.Healing;
 /// </summary>
 public sealed class LilyCapPreventionHandler : IHealingHandler
 {
-    private const int MaxLilies = 3;
+    private const int MaxLilies = LilyOvercapPolicy.MaxLilies;
     private const int AfflatusSolaceMinLevel = 52;
     private const int AfflatusRaptureMinLevel = 76;
 
@@ -41,9 +41,12 @@ public sealed class LilyCapPreventionHandler : IHealingHandler
         var config = context.Configuration;
         var player = context.Player;
 
-        if (context.LilyCount < MaxLilies) return;
         if (!config.EnableHealing || !config.Healing.EnableLilyCapPrevention) return;
         if (player.Level < AfflatusSolaceMinLevel) return;
+
+        // Dump at 3/3 (capped — regen already wasting), or at 2/3 when the next Lily is about to tick, so
+        // a regen is never wasted while we sit full. The Lily heal also builds toward Afflatus Misery.
+        if (!LilyOvercapPolicy.ShouldDump(context.LilyCount, context.SecondsUntilNextLily)) return;
 
         if (player.Level >= AfflatusRaptureMinLevel)
         {

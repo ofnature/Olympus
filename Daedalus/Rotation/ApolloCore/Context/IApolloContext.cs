@@ -70,6 +70,11 @@ public interface IApolloContext : IHealerRotationContext
     int LilyCount { get; }
 
     /// <summary>
+    /// Seconds until the next Lily generates (ticks every 20s in combat).
+    /// </summary>
+    float SecondsUntilNextLily { get; }
+
+    /// <summary>
     /// Current Blood Lily count (0-3).
     /// </summary>
     int BloodLilyCount { get; }

@@ -1,3 +1,4 @@
+using System;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Objects.Types;
 using Daedalus.Rotation.Common.Helpers;
@@ -112,4 +113,15 @@ public sealed class StatusHelper : BaseStatusHelper
     /// Gets the current Lily count from the WHM job gauge (0-3).
     /// </summary>
     public static int GetLilyCount() => SafeGameAccess.GetWhmLilyCount();
+
+    /// <summary>
+    /// Seconds until the next Lily generates (a Lily ticks every 20s in combat). Returns 20 when the
+    /// timer reads 0/unavailable so callers never treat "unknown" as an imminent overcap.
+    /// </summary>
+    public static float GetSecondsUntilNextLily()
+    {
+        var elapsedMs = SafeGameAccess.GetWhmLilyTimer();
+        if (elapsedMs <= 0) return 20f;
+        return Math.Max(0f, (20000 - elapsedMs) / 1000f);
+    }
 }
