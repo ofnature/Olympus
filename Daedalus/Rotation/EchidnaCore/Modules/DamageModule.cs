@@ -8,6 +8,7 @@ using Daedalus.Rotation.Common.RoleActionHelpers;
 using Daedalus.Rotation.Common.Scheduling;
 using Daedalus.Rotation.EchidnaCore.Abilities;
 using Daedalus.Rotation.EchidnaCore.Context;
+using Daedalus.Rotation.EchidnaCore.Helpers;
 using Daedalus.Services;
 using Daedalus.Services.Positional;
 using Daedalus.Services.Targeting;
@@ -88,13 +89,17 @@ public sealed class DamageModule : IEchidnaModule
             TryPushReawakenGcd(context, scheduler, target);
         TryPushReawaken(context, scheduler, target);
         TryPushTwinbladeCombo(context, scheduler, target, enemyCount);
-        TryPushUncoiledFury(context, scheduler, target, false /* TODO isMoving */);
+        // isMoving is intentionally not forwarded as a filler trigger: VPR's kit is all-instant, so moving
+        // while in melee range should keep casting the higher-potency instant combo. The ranged fillers
+        // (Uncoiled Fury / Writhing Snap) gate on actual out-of-melee-range, which already covers movement
+        // that pulls you off the target.
+        TryPushUncoiledFury(context, scheduler, target, isMoving: false);
         TryPushVicewinder(context, scheduler, target, useAoe, forceUse: false);
         if (ShouldRefreshNoxiousGnash(context))
             TryPushVicewinder(context, scheduler, target, useAoe, forceUse: true);
         if (useAoe) TryPushAoeDualWieldCombo(context, scheduler, target, enemyCount);
         else TryPushSingleTargetDualWieldCombo(context, scheduler, target);
-        TryPushWrithingSnap(context, scheduler, target, false /* TODO isMoving */);
+        TryPushWrithingSnap(context, scheduler, target, isMoving: false);
     }
 
     #region oGCDs
@@ -324,9 +329,12 @@ public sealed class DamageModule : IEchidnaModule
         if (context.SerpentOffering < context.Configuration.Viper.AnguineMinStacks && !context.HasReadyToReawaken) return;
         if (!context.Configuration.Viper.UseReawakenDuringBurst && _burstWindowService?.IsInBurstWindow == true && !context.HasReadyToReawaken) return;
         if (context.Configuration.Viper.EnableBurstPooling && context.Configuration.Viper.SaveAnguineForBurst && ShouldHoldForBurst(8f) && !context.HasReadyToReawaken) return;
-        if (!context.HasHuntersInstinct || context.HuntersInstinctRemaining < 10f) return;
-        if (!context.HasSwiftscaled || context.SwiftscaledRemaining < 10f) return;
-        if (!context.HasNoxiousGnash || context.NoxiousGnashRemaining < 10f) return;
+        // Self-buffs must cover the burst, but do NOT gate on Noxious Gnash — it's a per-target debuff, so a
+        // pack target-swap would read 0 and block the whole Reawaken (overcapping Offering). Maintained
+        // separately by the Vicewinder/ShouldRefreshNoxiousGnash path. Matches RSR.
+        if (!EchidnaReawakenPolicy.BuffsReadyForReawaken(
+                context.HasHuntersInstinct, context.HuntersInstinctRemaining,
+                context.HasSwiftscaled, context.SwiftscaledRemaining)) return;
         if (!context.ActionService.IsActionReady(VPRActions.Reawaken.ActionId)) return;
 
         scheduler.PushGcd(EchidnaAbilities.Reawaken, target.GameObjectId, priority: 1,

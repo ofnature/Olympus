@@ -15,6 +15,9 @@ All notable changes to Daedalus will be documented in this file.
 - Lily cap prevention is now proactive: it spends a Lily at 2/3 when the next one is about to tick (not only at 3/3), so a Lily regen is never wasted — which also feeds Blood Lily → Afflatus Misery faster
 - Co-healer GCD gating: with a co-healer present, a White Mage set to the **Co** role now leaves non-critical GCD heals to the Main healer and oGCDs to keep up DPS (parity with AST/SGE). Critical targets still get healed, and it has no effect when solo-healing. New "GCD Heals Only When Solo Healer" toggle under Co-Healer Coordination
 
+### Fix — Viper Reawaken blocked in packs
+- Reawaken required Noxious Gnash to be active for 10+ seconds on the current target. Because Noxious Gnash is a per-target debuff, swapping targets in a pack reset it to zero and silently blocked the entire Reawaken burst — overcapping Serpent's Offering. Reawaken now only checks that Hunter's Instinct and Swiftscaled (the buffs that must last through the burst) have enough duration, and Noxious Gnash is kept up separately by the Vicewinder path (same fix pattern as Reaper's Enshroud)
+
 ### Improved — Reaper ranged filler & smarter Enshroud
 - Reaper now uses **Harpe** as a ranged filler when an AoE mechanic forces you out of melee range, so the GCD keeps rolling instead of dropping to auto-attacks (Harvest Moon is still preferred when Soulsow is up). Only used while standing at range — it won't waste a cast trying to fire while you're moving (unless Enhanced Harpe makes it instant)
 - Enshroud no longer gets blown on a dying target in dungeons: if every enemy in range is about to die, it holds the burst. Never applies in trials/raids (boss HP makes it pointless). Tunable via "Skip Enshroud on dying target" under the Reaper Enshroud settings (default 5%, 0 to disable)
