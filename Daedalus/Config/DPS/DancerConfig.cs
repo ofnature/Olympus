@@ -200,7 +200,8 @@ public sealed class DancerConfig
     public PartnerSelection PartnerSelectionMode { get; set; } = PartnerSelection.HighestDps;
 
     /// <summary>
-    /// Automatically re-partner if partner dies.
+    /// Automatically re-partner if the current partner dies, leaves, or a strictly higher-priority
+    /// partner becomes available.
     /// </summary>
     public bool AutoRepartner { get; set; } = true;
 

@@ -273,7 +273,8 @@ public sealed class BuffModule : ITerpsichoreModule
 
         var needsPartner = !context.HasDancePartner;
         if (!needsPartner && context.Configuration.Dancer.AutoRepartner)
-            needsPartner = context.PartyHelper.ShouldUpdatePartner(player, context.StatusHelper);
+            needsPartner = context.PartyHelper.ShouldUpdatePartner(
+                player, context.StatusHelper, context.Configuration.Dancer.PartnerSelectionMode);
         if (!needsPartner) return;
 
         var partner = context.PartyHelper.SelectDancePartner(player, context.Configuration.Dancer.PartnerSelectionMode);

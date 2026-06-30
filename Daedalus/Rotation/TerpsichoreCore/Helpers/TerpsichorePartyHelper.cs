@@ -5,6 +5,7 @@ using Dalamud.Game.ClientState.Party;
 using Dalamud.Plugin.Services;
 using Daedalus.Config.DPS;
 using Daedalus.Data;
+using Daedalus.Rotation.Common.Helpers;
 
 namespace Daedalus.Rotation.TerpsichoreCore.Helpers;
 
@@ -16,20 +17,23 @@ public sealed class TerpsichorePartyHelper
     private readonly IObjectTable _objectTable;
     private readonly IPartyList _partyList;
 
-    // Dance partner priority: higher potency gain jobs first
-    // Priority: SAM > NIN > VPR > RPR > MNK > DRG > BLM > SMN > RDM > PCT > MCH > BRD > DNC > Tank > Healer
+    // Dance partner priority: highest personal-DPS gain jobs first (they benefit most from the
+    // Standard/Technical Finish damage buff and feed back the most Esprit). Refreshed for current
+    // patch (Dawntrail 7.x): Pictomancer is now a top-tier partner and sits at the front, ahead of
+    // the melee. This is a static job-rank heuristic, not a live parse — adjust the order here when
+    // the meta shifts. Order: PCT > SAM > VPR > MNK > DRG > RPR > NIN > BLM > SMN > RDM > MCH > BRD > DNC > Tank > Healer.
     private static readonly uint[] PartnerPriority = new[]
     {
-        JobRegistry.Samurai,     // 1st priority - SAM
-        JobRegistry.Ninja,       // 2nd - NIN
+        JobRegistry.Pictomancer, // 1st priority - PCT (top partner in 7.x)
+        JobRegistry.Samurai,     // 2nd - SAM
         JobRegistry.Viper,       // 3rd - VPR
-        JobRegistry.Reaper,      // 4th - RPR
-        JobRegistry.Monk,        // 5th - MNK
-        JobRegistry.Dragoon,     // 6th - DRG
-        JobRegistry.BlackMage,   // 7th - BLM
-        JobRegistry.Summoner,    // 8th - SMN
-        JobRegistry.RedMage,     // 9th - RDM
-        JobRegistry.Pictomancer, // 10th - PCT
+        JobRegistry.Monk,        // 4th - MNK
+        JobRegistry.Dragoon,     // 5th - DRG
+        JobRegistry.Reaper,      // 6th - RPR
+        JobRegistry.Ninja,       // 7th - NIN
+        JobRegistry.BlackMage,   // 8th - BLM
+        JobRegistry.Summoner,    // 9th - SMN
+        JobRegistry.RedMage,     // 10th - RDM
         JobRegistry.Machinist,   // 11th - MCH
         JobRegistry.Bard,        // 12th - BRD
         JobRegistry.Dancer,      // 13th - DNC
@@ -244,9 +248,15 @@ public sealed class TerpsichorePartyHelper
     }
 
     /// <summary>
-    /// Checks if we need to update our dance partner (current one is dead or a better option is available).
+    /// Checks if we need to update our dance partner: we have none, the current one is dead/gone, or
+    /// the configured selection would now pick a strictly higher-priority partner (e.g. a better job
+    /// revived or joined). Upgrades are strict-better only, so we never thrash between equal-priority
+    /// members.
     /// </summary>
-    public bool ShouldUpdatePartner(IPlayerCharacter player, TerpsichoreStatusHelper statusHelper)
+    public bool ShouldUpdatePartner(
+        IPlayerCharacter player,
+        TerpsichoreStatusHelper statusHelper,
+        PartnerSelection mode = PartnerSelection.HighestDps)
     {
         var currentPartnerId = GetDancePartnerId(player, statusHelper);
 
@@ -254,21 +264,46 @@ public sealed class TerpsichorePartyHelper
         if (currentPartnerId == 0)
             return true;
 
-        // Check if current partner is dead
+        // Resolve the current partner: re-partner if dead or no longer present in the party.
+        var currentPriority = int.MaxValue;
+        var foundCurrent = false;
         foreach (var member in GetAllPartyMembers(player))
         {
-            if (member.EntityId == currentPartnerId)
-            {
-                if (member.CurrentHp == 0)
-                    return true;
-                break;
-            }
+            if (member.EntityId != currentPartnerId)
+                continue;
+            if (member.CurrentHp == 0)
+                return true; // partner died
+            // Resolve via the party-list entry: a Trust/Duty Support NPC's GameObject can report
+            // ClassJob 0, which would wrongly rank as lowest priority.
+            currentPriority = GetJobPriority(TrustPartyRoleHelper.ResolveJobId(member, _partyList));
+            foundCurrent = true;
+            break;
         }
+        if (!foundCurrent)
+            return true; // partner left the party / no longer in the object table
 
-        return false;
+        // Upgrade: switch only when the configured selection yields a strictly better partner.
+        var best = SelectDancePartner(player, mode);
+        if (best == null || best.EntityId == currentPartnerId)
+            return false;
+
+        var bestPriority = GetJobPriority(TrustPartyRoleHelper.ResolveJobId(best, _partyList));
+        return ShouldUpgradePartner(currentPriority, bestPriority);
     }
 
-    private static int GetJobPriority(uint jobId)
+    /// <summary>
+    /// Pure decision: should we re-partner to a candidate at <paramref name="candidatePriority"/> when
+    /// our current partner sits at <paramref name="currentPriority"/>? True only for a strict upgrade
+    /// (lower index = higher priority), so equal-priority candidates never trigger a swap.
+    /// </summary>
+    public static bool ShouldUpgradePartner(int currentPriority, int candidatePriority)
+        => candidatePriority < currentPriority;
+
+    /// <summary>
+    /// Rank of a job in the dance-partner priority list; lower is better. Unknown jobs return
+    /// <see cref="int.MaxValue"/> (lowest priority).
+    /// </summary>
+    public static int GetJobPriority(uint jobId)
     {
         for (int i = 0; i < PartnerPriority.Length; i++)
         {
