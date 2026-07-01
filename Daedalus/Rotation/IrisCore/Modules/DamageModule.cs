@@ -178,7 +178,8 @@ public sealed class DamageModule : IIrisModule
 
         if (CanPaintStarrySkyMotif(context) && context.NeedsLandscapeMotif
             && level >= PCTActions.StarrySkyMotif.MinLevel
-            && IrisActionProbes.IsStarrySkyMotifReady(context.ActionService))
+            && IrisActionProbes.IsStarrySkyMotifReady(context.ActionService)
+            && !context.ActionService.WasLastGcd(PCTActions.StarrySkyMotif.ActionId))
         {
             if (MechanicCastGate.ShouldBlock(context, PCTActions.StarrySkyMotif.CastTime))
             {
@@ -198,7 +199,7 @@ public sealed class DamageModule : IIrisModule
             && level >= PCTActions.CreatureMotif.MinLevel)
         {
             var motif = GetCreatureMotifOrdered(context, level);
-            if (IsCreatureMotifEnabled(context, motif))
+            if (IsCreatureMotifEnabled(context, motif) && !context.ActionService.WasLastGcd(motif.ActionId))
             {
                 if (MechanicCastGate.ShouldBlock(context, motif.CastTime))
                 {
@@ -218,7 +219,8 @@ public sealed class DamageModule : IIrisModule
 
         if (CanPaintHammerMotif(context) && context.NeedsWeaponMotif
             && level >= PCTActions.WeaponMotif.MinLevel
-            && IrisActionProbes.IsHammerMotifReady(context.ActionService))
+            && IrisActionProbes.IsHammerMotifReady(context.ActionService)
+            && !context.ActionService.WasLastGcd(PCTActions.HammerMotif.ActionId))
         {
             if (MechanicCastGate.ShouldBlock(context, PCTActions.HammerMotif.CastTime))
             {
@@ -244,7 +246,11 @@ public sealed class DamageModule : IIrisModule
 
         var player = context.Player;
         var level = player.Level;
-        if (context.IsCasting) return;
+        // Slidecast-aware (same idiom as the Inspiration path): a hard `IsCasting` return starved this
+        // path completely during continuous casting — the next GCD is queued while the current cast is
+        // still running, so repaint only ever fired after instants. Result in-game: the weapon canvas was
+        // NEVER painted mid-fight → Striking Muse never ready → the entire Hammer combo dormant.
+        if (context.IsCasting && !context.CanSlidecast) return;
 
         // Paint motifs IN COMBAT, timed to each muse's cooldown (RSR parity). Priority 6 puts these ABOVE
         // the color combo (7/8): a motif paint enables a Living/Steel/Scenic Muse (portrait + Hammer + the
@@ -256,10 +262,13 @@ public sealed class DamageModule : IIrisModule
         const int motifPriority = 6;
 
         // Landscape (Starry Sky Motif): paint ~15s before Scenic Muse so the canvas is ready for the burst.
+        // Each block skips a motif that was the last GCD — the canvas gauge only fills at cast END, so
+        // without this the just-cast motif reads "needed" during its own cast and gets queued twice.
         if (CanPaintStarrySkyMotif(context) && context.NeedsLandscapeMotif
             && level >= PCTActions.StarrySkyMotif.MinLevel
             && !context.HasStarryMuse && !context.HasHyperphantasia
             && IrisActionProbes.IsStarrySkyMotifReady(svc)
+            && !svc.WasLastGcd(PCTActions.StarrySkyMotif.ActionId)
             && svc.GetCooldownRemaining(PCTActions.ScenicMuse.ActionId) <= 15f)
         {
             if (MechanicCastGate.ShouldBlock(context, PCTActions.StarrySkyMotif.CastTime))
@@ -283,7 +292,7 @@ public sealed class DamageModule : IIrisModule
                 || svc.GetCooldownRemaining(PCTActions.LivingMuse.ActionId) <= PCTActions.CreatureMotif.CastTime * 1.7f))
         {
             var motif = GetCreatureMotifOrdered(context, level);
-            if (IsCreatureMotifEnabled(context, motif))
+            if (IsCreatureMotifEnabled(context, motif) && !svc.WasLastGcd(motif.ActionId))
             {
                 if (MechanicCastGate.ShouldBlock(context, motif.CastTime))
                 {
@@ -305,6 +314,7 @@ public sealed class DamageModule : IIrisModule
         if (CanPaintHammerMotif(context) && context.NeedsWeaponMotif
             && level >= PCTActions.WeaponMotif.MinLevel
             && IrisActionProbes.IsHammerMotifReady(svc)
+            && !svc.WasLastGcd(PCTActions.HammerMotif.ActionId)
             && (svc.IsActionReady(PCTActions.SteelMuse.ActionId)
                 || svc.GetCooldownRemaining(PCTActions.SteelMuse.ActionId) <= PCTActions.WeaponMotif.CastTime))
         {
@@ -364,8 +374,9 @@ public sealed class DamageModule : IIrisModule
         if (!context.Configuration.Pictomancer.EnableSubtractiveCombo)
             return false;
 
+        // Stacks only — Spectrum does NOT morph the combo buttons (it just makes the palette press
+        // free). Routing on Spectrum suppressed the base combo while pushing un-morphed Blizzard ids.
         return context.HasSubtractivePalette
-               || context.HasSubtractiveSpectrum
                || context.IsInSubtractiveCombo;
     }
 
@@ -529,6 +540,9 @@ public sealed class DamageModule : IIrisModule
         if (!context.Configuration.Pictomancer.EnableHolyInWhite) return;
         if (context.Player.Level < PCTActions.HolyInWhite.MinLevel) return;
         if (!context.HasWhitePaint) return;
+        // While Monochrome Tones is up the game morphs Holy -> Comet in Black; pushing the raw Holy id
+        // just gets rejected every GCD (RSR: Holy = Paint>0 && !Monochrome; Comet handles the rest).
+        if (context.HasMonochromeTones) return;
         if (!isMoving && context.WhitePaint < 4 && !context.IsInBurstWindow) return;
         if (!isMoving && context.PaletteGauge < context.Configuration.Pictomancer.HolyMinPalette && !context.IsInBurstWindow) return;
 
@@ -544,7 +558,8 @@ public sealed class DamageModule : IIrisModule
     {
         if (!context.Configuration.Pictomancer.EnableSubtractiveCombo) return;
         if (context.Player.Level < PCTActions.BlizzardInCyan.MinLevel) return;
-        if (!context.HasSubtractivePalette && !context.HasSubtractiveSpectrum) return;
+        // Stacks required — Spectrum alone doesn't morph the buttons (see ShouldUseSubtractiveRoute).
+        if (!context.HasSubtractivePalette) return;
 
         var comboAction = PCTActions.GetSubtractiveComboAction(context.BaseComboStep, context.ShouldUseAoe, context.Player.Level, context.ActionService);
         var ability = MapSubtractiveCombo(comboAction);

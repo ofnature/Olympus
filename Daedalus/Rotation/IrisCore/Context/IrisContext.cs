@@ -177,7 +177,6 @@ public sealed class IrisContext : IIrisContext
         IrisDebugState debugState,
         int paletteGauge,
         int whitePaint,
-        bool hasBlackPaint,
         byte creatureMotif,
         bool hasWeaponCanvas,
         bool hasLandscapeCanvas,
@@ -233,14 +232,18 @@ public sealed class IrisContext : IIrisContext
         HasTriplecast = false;
         TriplecastStacks = 0;
 
-        // Palette Gauge
+        // Palette Gauge. Subtractive Spectrum (Starry Muse proc) makes Subtractive Palette FREE —
+        // RSR parity: PaletteGauge >= 50 || HasSubtractiveSpectrum (never gauge-gate the free press).
         PaletteGauge = paletteGauge;
-        CanUseSubtractivePalette = paletteGauge >= 50;
+        CanUseSubtractivePalette = paletteGauge >= 50 || statusHelper.HasSubtractiveSpectrum(player);
 
-        // Paint stacks
+        // Paint stacks. There is NO black-paint gauge flag — black paint is paint stacks + the
+        // Monochrome Tones STATUS (RSR: Holy = Paint>0 && !Monochrome, Comet = Paint>0 && Monochrome).
+        // The old read probed CreatureFlags & 0x10 (a creature-canvas bit) → always false → Comet never
+        // fired → Monochrome never cleared → Holy morph-rejected + Subtractive locked for the whole run.
         WhitePaint = whitePaint;
         HasWhitePaint = whitePaint > 0;
-        HasBlackPaint = hasBlackPaint;
+        HasBlackPaint = whitePaint > 0 && statusHelper.HasMonochromeTones(player);
 
         // Canvas state
         CreatureMotifType = (CreatureMotifType)creatureMotif;
@@ -291,8 +294,12 @@ public sealed class IrisContext : IIrisContext
             configuration.Pictomancer.AoEMinTargets,
             configuration.Pictomancer.EnableAoERotation);
 
+        // Only the Subtractive Palette STACKS morph the combo buttons — Spectrum alone does NOT
+        // (it merely makes the Subtractive Palette press free; RSR gates all subtractive spells on
+        // HasSubtractivePalette). Routing on Spectrum pushed Blizzard ids the game rejects while
+        // suppressing the base combo — a stall window during Starry.
         var useSubtractiveRoute = configuration.Pictomancer.EnableSubtractiveCombo
-                                  && (HasSubtractivePalette || HasSubtractiveSpectrum);
+                                  && HasSubtractivePalette;
 
         DetermineComboState(
             actionService,

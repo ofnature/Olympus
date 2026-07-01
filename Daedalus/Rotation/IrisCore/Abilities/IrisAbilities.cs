@@ -100,7 +100,15 @@ public static class IrisAbilities
 
     // --- Paint spenders ---
     public static readonly AbilityBehavior HolyInWhite = new() { Action = PCTActions.HolyInWhite, Toggle = cfg => cfg.Pictomancer.EnableHolyInWhite };
-    public static readonly AbilityBehavior CometInBlack = new() { Action = PCTActions.CometInBlack, Toggle = cfg => cfg.Pictomancer.EnableCometInBlack };
+    // Comet is its OWN action (it shares a recast with Holy but does NOT replace its button) — dispatch
+    // its own id directly, RSR parity. Do NOT set ReplacementBaseId=Holy here: that dispatches Holy's id,
+    // which the game genuinely refuses (582) while Monochrome Tones is active — Comet then never lands,
+    // Monochrome never clears, and the whole Holy/weave loop deadlocks.
+    public static readonly AbilityBehavior CometInBlack = new()
+    {
+        Action = PCTActions.CometInBlack,
+        Toggle = cfg => cfg.Pictomancer.EnableCometInBlack,
+    };
 
     // --- Motifs ---
     public static readonly AbilityBehavior PomMotif = new()

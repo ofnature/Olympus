@@ -2001,29 +2001,9 @@ public static class SafeGameAccess
         }
     }
 
-    /// <summary>
-    /// Safely checks if the Pictomancer has Black Paint available.
-    /// Black Paint is derived from White Paint via Subtractive Palette.
-    /// </summary>
-    /// <param name="errorMetrics">Optional error metrics service for tracking failures.</param>
-    /// <returns>True if Black Paint is available, false otherwise.</returns>
-    public static unsafe bool GetPctHasBlackPaint(IErrorMetricsService? errorMetrics = null)
-    {
-        var jobGauge = GetJobGaugeManager(errorMetrics);
-        if (jobGauge == null)
-            return false;
-
-        try
-        {
-            // Check the CreatureFlags for Black Paint
-            return ((byte)jobGauge->Pictomancer.CreatureFlags & 0x10) != 0;
-        }
-        catch
-        {
-            errorMetrics?.RecordError("SafeGameAccess", "Failed to read PCT Black Paint");
-            return false;
-        }
-    }
+    // NOTE: there is no "black paint" gauge flag. Black paint = Paint > 0 + the Monochrome Tones STATUS
+    // (RSR parity); IrisContext derives it. A previous helper here probed CreatureFlags & 0x10 (a
+    // creature-canvas bit) — always false, which kept Comet in Black permanently dormant.
 
     /// <summary>
     /// Safely gets the Pictomancer Creature Canvas state.

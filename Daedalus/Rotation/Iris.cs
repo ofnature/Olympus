@@ -73,7 +73,6 @@ public sealed class Iris : BaseCasterDpsRotation<IIrisContext, IIrisModule>
     // Gauge values (read each frame)
     private int _paletteGauge;
     private int _whitePaint;
-    private bool _hasBlackPaint;
     private byte _creatureMotif;
     private bool _hasWeaponCanvas;
     private bool _hasLandscapeCanvas;
@@ -158,7 +157,6 @@ public sealed class Iris : BaseCasterDpsRotation<IIrisContext, IIrisModule>
     {
         _paletteGauge = SafeGameAccess.GetPctPaletteGauge(ErrorMetrics);
         _whitePaint = SafeGameAccess.GetPctWhitePaint(ErrorMetrics);
-        _hasBlackPaint = SafeGameAccess.GetPctHasBlackPaint(ErrorMetrics);
         _creatureMotif = SafeGameAccess.GetPctCreatureMotif(ErrorMetrics);
         _hasWeaponCanvas = SafeGameAccess.GetPctHasWeaponCanvas(ErrorMetrics);
         _hasLandscapeCanvas = SafeGameAccess.GetPctHasLandscapeCanvas(ErrorMetrics);
@@ -210,7 +208,6 @@ public sealed class Iris : BaseCasterDpsRotation<IIrisContext, IIrisModule>
             debugState: _irisDebugState,
             paletteGauge: _paletteGauge,
             whitePaint: _whitePaint,
-            hasBlackPaint: _hasBlackPaint,
             creatureMotif: _creatureMotif,
             hasWeaponCanvas: _hasWeaponCanvas,
             hasLandscapeCanvas: _hasLandscapeCanvas,

@@ -96,12 +96,6 @@ public sealed class PictomancerSection
                 config.Pictomancer.HolyMinPalette, 25, 100,
                 Loc.T(LocalizedStrings.Pictomancer.HolyMinPaletteDesc, "Minimum Palette gauge to spend on Holy in White"), save, v => config.Pictomancer.HolyMinPalette = v);
 
-            ConfigUIHelpers.Toggle(
-                Loc.T(LocalizedStrings.Pictomancer.SavePaletteForComet, "Save Palette for Comet"),
-                () => config.Pictomancer.SavePaletteForComet,
-                v => config.Pictomancer.SavePaletteForComet = v,
-                Loc.T(LocalizedStrings.Pictomancer.SavePaletteForCometDesc, "Reserve Palette for Comet in Black when Subtractive is active"), save);
-
             ConfigUIHelpers.Spacing();
 
             ConfigUIHelpers.EndIndent();

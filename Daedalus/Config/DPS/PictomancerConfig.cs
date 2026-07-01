@@ -142,7 +142,9 @@ public sealed class PictomancerConfig
     }
 
     /// <summary>
-    /// Save Palette for Comet in Black (requires Subtractive).
+    /// Retained for config-file compat; no longer consulted. The "save palette for Comet" hold was
+    /// circular (black paint only exists AFTER pressing Subtractive Palette) and blocked subtractive
+    /// entirely; the correct game rule is the HasMonochromeTones gate in BuffModule.
     /// </summary>
     public bool SavePaletteForComet { get; set; } = true;
 

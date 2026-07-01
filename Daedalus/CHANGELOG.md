@@ -5,6 +5,15 @@ All notable changes to Daedalus will be documented in this file.
 <!-- LATEST-START -->
 ## v0.1.0 — 2026-06-27
 
+### Fix — Casters can now weave abilities after hard casts
+- Ability (oGCD) weaving only ever happened after instant spells — the slot math reserved the whole end of the GCD for the next cast, which ate the ~0.9s gap a hard cast leaves. When a caster had no instants available, cooldowns just piled up unused (Pictomancer muses, Striking/Starry Muse could sit ready for a whole fight). One ability now weaves into the post-cast gap, the same way experienced casters (and RSR) play it — burst tools come out noticeably earlier on every casting job
+
+### Fix — Pictomancer Comet in Black never fired (and locked everything behind it)
+- "Black paint" was read from a wrong gauge bit, so it always registered as missing and **Comet in Black never cast**. That one stuck flag cascaded: Monochrome Tones never got spent, so Holy in White (whose button morphs into Comet) was silently rejected every GCD, Subtractive Palette couldn't be pressed again, and with no instant spells left there were no weave windows — Striking Muse, Starry Muse and the muses all sat unused for entire fights. Black paint is now derived correctly (paint + Monochrome Tones, matching the game), Holy correctly steps aside while Comet is up, and the whole loop — Holy ↔ Comet, Subtractive re-press, hammer and muse weaves — flows again
+
+### Fix — Pictomancer never used Subtractive spells or the Hammer combo
+- Two whole Pictomancer subsystems were dormant. **Subtractive:** the gates were inverted — the free Subtractive Spectrum proc from Starry Muse *blocked* the Subtractive Palette press instead of triggering it, and a "save for Comet" hold waited on black paint that only exists *after* pressing — so Blizzard/Stone/Thunder in Cyan/Yellow/Magenta and Comet in Black never fired at all. Subtractive Palette now presses on the free proc and at 75+ gauge (pooled for burst), matching how the job is meant to play. **Hammer:** motif repainting was blocked whenever a cast was in progress — which for a caster is nearly always — so the weapon canvas never got painted mid-fight and Striking Muse + the Hammer Stamp/Brush/Polish combo never happened. Repainting now slots into the cast-queue window like every other spell. Also stops motifs being painted twice back-to-back during burst
+
 ### Fix — Samurai stopped mid-combo and spammed Jinpu after a target swap
 - On the second mob of a pack (right after the previous target died), Samurai could get stuck casting Jinpu every GCD — never advancing to Gekko, so it built no Sen and lost Midare, Gekko, Kasha and all the burst that follows. The finisher step relied solely on the combo gauge, which can briefly desync after a target swap; the combo-continuation now also keys off the action just cast (the same resilience the combo opener already had), so Gekko/Kasha reliably follow Jinpu/Shifu and the combo never loops
 

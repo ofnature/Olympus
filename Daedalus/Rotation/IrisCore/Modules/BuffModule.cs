@@ -250,18 +250,15 @@ public sealed class BuffModule : IIrisModule
         if (player.Level < PCTActions.SubtractivePalette.MinLevel) return;
         if (!context.SubtractivePaletteReady) return;
         if (context.HasSubtractivePalette) return;
-        if (context.HasSubtractiveSpectrum) return;
+        // Black paint unspent — the game disallows the press until Comet in Black consumes it
+        // (RSR ActionCheck: !HasMonochromeTones).
+        if (context.HasMonochromeTones) return;
         if (!context.CanUseSubtractivePalette) return;
-        // SavePaletteForComet: defer if Comet will be available soon and gauge is not overflowing
-        if (context.Configuration.Pictomancer.SavePaletteForComet
-            && context.Configuration.Pictomancer.EnableCometInBlack
-            && !context.HasBlackPaint
-            && context.PaletteGauge < 90)
-        {
-            context.Debug.BuffState = "Hold Subtractive (saving for Comet)";
-            return;
-        }
-        if (!context.IsInBurstWindow && context.PaletteGauge < 75)
+        // Subtractive Spectrum (from Starry Muse) makes the press FREE — use it, never hold it.
+        // (The old code did the opposite: it RETURNED when Spectrum was up, and separately held for a
+        // "SavePaletteForComet" condition that waited on black paint — which only EXISTS after this
+        // press — so subtractive never fired at all. RSR presses whenever gauge>=50 or Spectrum is up.)
+        if (!context.HasSubtractiveSpectrum && !context.IsInBurstWindow && context.PaletteGauge < 75)
         {
             context.Debug.BuffState = "Hold Subtractive for burst";
             return;
