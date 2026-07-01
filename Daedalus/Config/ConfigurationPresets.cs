@@ -261,7 +261,7 @@ public static class ConfigurationPresets
         config.Sage.AoEHealMinTargets = 2;
         config.Sage.AoEDamageMinTargets = 2;
         config.Sage.AoEHealCountMode = SageAoEHealCountMode.TankCentered;
-        config.Sage.AoEDamageCountMode = SageAoEDamageCountMode.TargetCentered;
+        // AoEDamageCountMode no longer set: Dyskrasia is self-centered, count is always player-centered.
 
         // DPS - lower AoE threshold and no burst pooling delay in dungeons
         ApplyDungeonDpsBurstSettings(config);

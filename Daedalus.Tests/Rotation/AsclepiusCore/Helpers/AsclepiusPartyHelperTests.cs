@@ -96,6 +96,81 @@ public sealed class AsclepiusPartyHelperTests
         Assert.Equal(2, injuredCount);
     }
 
+    // Regression suite (2026-07-01): Dyskrasia is a point-blank SELF AoE — the old TargetCentered
+    // count mode passed the gate off enemies clustered around a distant target while the player hit
+    // nothing (four "Dyskrasia II ×0" zero-damage casts in the validation log). The count must be
+    // player-centered regardless of the (retained-for-compat) config mode.
+
+    [Fact]
+    public void CountEnemiesForAoEDamage_PlayerCentered_EvenWhenConfigSaysTargetCentered()
+    {
+        var (helper, player, targeting) = CreateAoECountHarness(SageAoEDamageCountMode.TargetCentered,
+            enemiesNearPlayer: 0, enemiesNearTarget: 3);
+
+        Assert.Equal(0, helper.CountEnemiesForAoEDamage(player, 5f, targeting.Object));
+    }
+
+    [Fact]
+    public void CountEnemiesForAoEDamage_PlayerCentered_WithPlayerCenteredConfig()
+    {
+        var (helper, player, targeting) = CreateAoECountHarness(SageAoEDamageCountMode.PlayerCentered,
+            enemiesNearPlayer: 2, enemiesNearTarget: 0);
+
+        Assert.Equal(2, helper.CountEnemiesForAoEDamage(player, 5f, targeting.Object));
+    }
+
+    [Fact]
+    public void CountEnemiesForAoEDamage_NeverConsultsTargetCenteredCount()
+    {
+        var (helper, player, targeting) = CreateAoECountHarness(SageAoEDamageCountMode.TargetCentered,
+            enemiesNearPlayer: 1, enemiesNearTarget: 5);
+
+        helper.CountEnemiesForAoEDamage(player, 5f, targeting.Object);
+
+        targeting.Verify(x => x.CountEnemiesInRangeOfTarget(
+            It.IsAny<float>(), It.IsAny<IBattleNpc>(), It.IsAny<IPlayerCharacter>()), Times.Never);
+    }
+
+    [Fact]
+    public void CountEnemiesForAoEDamage_PassesActionRadiusThrough()
+    {
+        var (helper, player, targeting) = CreateAoECountHarness(SageAoEDamageCountMode.PlayerCentered,
+            enemiesNearPlayer: 1, enemiesNearTarget: 0);
+
+        helper.CountEnemiesForAoEDamage(player, 5f, targeting.Object);
+
+        targeting.Verify(x => x.CountEnemiesInRange(5f, player), Times.Once);
+    }
+
+    private static (AsclepiusPartyHelper Helper, IPlayerCharacter Player, Mock<Daedalus.Services.Targeting.ITargetingService> Targeting)
+        CreateAoECountHarness(SageAoEDamageCountMode mode, int enemiesNearPlayer, int enemiesNearTarget)
+    {
+        var config = new Configuration();
+        config.Sage.AoEDamageCountMode = mode;
+
+        var player = MockBuilders.CreateMockPlayerCharacter(currentHp: 10000, maxHp: 10000);
+        player.Setup(x => x.EntityId).Returns(1u);
+        player.Setup(x => x.Level).Returns((byte)100);
+
+        var targeting = MockBuilders.CreateMockTargetingService();
+        targeting.Setup(x => x.CountEnemiesInRange(It.IsAny<float>(), It.IsAny<IPlayerCharacter>()))
+            .Returns(enemiesNearPlayer);
+        targeting.Setup(x => x.CountEnemiesInRangeOfTarget(
+                It.IsAny<float>(), It.IsAny<IBattleNpc>(), It.IsAny<IPlayerCharacter>()))
+            .Returns(enemiesNearTarget);
+
+        var helper = new TestableAsclepiusPartyHelper(
+            MockBuilders.CreateMockObjectTable().Object,
+            MockBuilders.CreateMockPartyList(0).Object,
+            new HpPredictionService(new Mock<ICombatEventService>().Object, config),
+            config,
+            new AsclepiusStatusHelper(),
+            new List<IBattleChara>(),
+            _ => false);
+
+        return (helper, player.Object, targeting);
+    }
+
     private sealed class TestableAsclepiusPartyHelper : AsclepiusPartyHelper
     {
         private readonly IReadOnlyList<IBattleChara> _members;

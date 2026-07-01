@@ -136,7 +136,12 @@ public class AsclepiusPartyHelper : HealerPartyHelper, IPartyHelper
     }
 
     /// <summary>
-    /// Resolves enemy count for Dyskrasia based on <see cref="SageConfig.AoEDamageCountMode"/>.
+    /// Enemy count for Dyskrasia — ALWAYS player-centered. Dyskrasia is a point-blank self AoE
+    /// (5y around the PLAYER), so the target-centered count mode was a correctness bug, not a
+    /// preference: with the pack clustered around a target 20y away the gate passed while the
+    /// player hit nothing (2026-07-01 validation log: four "Dyskrasia II ×0" zero-damage casts,
+    /// caught by the AoE commit counter). <see cref="SageConfig.AoEDamageCountMode"/> is retained
+    /// for config-file compat but no longer consulted.
     /// </summary>
     public int CountEnemiesForAoEDamage(
         IPlayerCharacter player,
@@ -144,17 +149,6 @@ public class AsclepiusPartyHelper : HealerPartyHelper, IPartyHelper
         ITargetingService targetingService,
         IActionService? actionService = null)
     {
-        if (Configuration.Sage.AoEDamageCountMode == SageAoEDamageCountMode.TargetCentered)
-        {
-            var target = targetingService.FindEnemy(
-                Configuration.Targeting.EnemyStrategy,
-                SGEActions.GetDamageGcdForLevel(player.Level, actionService).Range,
-                player);
-
-            if (target is IBattleNpc battleTarget)
-                return targetingService.CountEnemiesInRangeOfTarget(radius, battleTarget, player);
-        }
-
         return targetingService.CountEnemiesInRange(radius, player);
     }
 }

@@ -5,6 +5,9 @@ All notable changes to Daedalus will be documented in this file.
 <!-- LATEST-START -->
 ## v0.1.0 — 2026-06-27
 
+### Fix — Sage no longer casts Dyskrasia while out of range
+- Dyskrasia only hits enemies within 5 yalms of the Sage, but the AoE decision was counting enemies around the *target* — so standing at casting range with a pack clustered ahead, Sage would cast Dyskrasia into empty air (zero damage) instead of Dosis. The count is now always centered on the player, so Dyskrasia fires only when enemies are actually in its radius
+
 ### Fix — Machinist no longer wastes the Automaton Queen on dying packs
 - The Queen could deploy onto a mob at 4% HP moments before combat ended — she needs several seconds of Arm Punches before Pile Bunker, so that's pure Battery down the drain. She's now held on two signals: when even the healthiest enemy in range is nearly dead (default 5% HP), and when the pack's estimated time-to-kill from the recent damage rate is too short (default 8s) — trash packs don't get low, they melt, so a mob at 45% HP dying in 3 seconds is caught by the second check. Both thresholds are sliders in the Automaton Queen section; the Battery simply carries into the next pull
 

@@ -455,9 +455,11 @@ public sealed class SageConfig
     }
 
     /// <summary>
-    /// How to count enemies for AoE damage. TargetCentered uses the current enemy target.
+    /// Retained for config-file compat; no longer consulted. Dyskrasia is a self-centered AoE, so
+    /// the count is always player-centered — the target-centered mode passed the gate while the
+    /// player was out of range (zero-damage casts).
     /// </summary>
-    public SageAoEDamageCountMode AoEDamageCountMode { get; set; } = SageAoEDamageCountMode.TargetCentered;
+    public SageAoEDamageCountMode AoEDamageCountMode { get; set; } = SageAoEDamageCountMode.PlayerCentered;
 
     #endregion
 
