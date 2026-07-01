@@ -335,21 +335,43 @@ public static class SafeGameAccess
     }
 
     /// <summary>
-    /// Checks if the Monk has Lunar Nadi active.
+    /// Checks if the Monk has Lunar Nadi active. Uses the named <c>Nadi</c> flag (like RSR's
+    /// <c>JobGauge.Nadi.HasFlag(Nadi.Lunar)</c>) instead of a hardcoded bit mask, so it can't be wrong.
     /// </summary>
     public static unsafe bool HasMnkLunarNadi(IErrorMetricsService? errorMetrics = null)
     {
-        var nadi = GetMnkNadi(errorMetrics);
-        return (nadi & 0x02) != 0; // Lunar = 0x02
+        var jobGauge = GetJobGaugeManager(errorMetrics);
+        if (jobGauge == null)
+            return false;
+        try
+        {
+            return jobGauge->Monk.Nadi.HasFlag(NadiFlags.Lunar);
+        }
+        catch
+        {
+            errorMetrics?.RecordError("SafeGameAccess", "Failed to read MNK Lunar Nadi");
+            return false;
+        }
     }
 
     /// <summary>
-    /// Checks if the Monk has Solar Nadi active.
+    /// Checks if the Monk has Solar Nadi active. Uses the named <c>Nadi</c> flag (see Lunar) — the previous
+    /// hardcoded mask was wrong and Solar never registered, so Phantom Rush never triggered.
     /// </summary>
     public static unsafe bool HasMnkSolarNadi(IErrorMetricsService? errorMetrics = null)
     {
-        var nadi = GetMnkNadi(errorMetrics);
-        return (nadi & 0x04) != 0; // Solar = 0x04 (was 0x01 — never matched, so Phantom Rush never triggered)
+        var jobGauge = GetJobGaugeManager(errorMetrics);
+        if (jobGauge == null)
+            return false;
+        try
+        {
+            return jobGauge->Monk.Nadi.HasFlag(NadiFlags.Solar);
+        }
+        catch
+        {
+            errorMetrics?.RecordError("SafeGameAccess", "Failed to read MNK Solar Nadi");
+            return false;
+        }
     }
 
     /// <summary>
