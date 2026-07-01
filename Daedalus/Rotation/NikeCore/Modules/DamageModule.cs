@@ -634,14 +634,23 @@ public sealed class DamageModule : INikeModule
         var justFiredStarter = context.ActionService.WasLastGcd(comboStarter.ActionId)
                                || context.ActionService.WasLastGcd(SAMActions.Hakaze.ActionId)
                                || context.ActionService.WasLastGcd(SAMActions.Gyofu.ActionId);
-        var onStarter = (comboStep == 1 &&
+        // Symmetric dual-source detection for the step2->finisher transition. Same failure mode as the
+        // starter->step2 case: the gauge combo-step read can lag or desync (notably right after a target
+        // swap), leaving comboStep stuck at 1 / LastComboAction on the starter. Without this, the Gekko/
+        // Kasha finisher push (which needs comboStep==2 && LastComboAction==Jinpu/Shifu) is dropped and the
+        // onStarter block re-issues Jinpu every GCD forever — the "Jinpu lock" seen on the 2nd pack mob.
+        // Treating "we just cast Jinpu/Shifu" as equivalent guarantees the finisher fires the next GCD, and
+        // it suppresses the onStarter step-2 re-push so the two don't collide at the same priority.
+        var justFiredJinpu = context.ActionService.WasLastGcd(SAMActions.Jinpu.ActionId);
+        var justFiredShifu = context.ActionService.WasLastGcd(SAMActions.Shifu.ActionId);
+        var onStarter = ((comboStep == 1 &&
                          (context.LastComboAction == comboStarter.ActionId ||
                           context.LastComboAction == SAMActions.Hakaze.ActionId))
-                        || justFiredStarter;
+                        || justFiredStarter)
+                        && !justFiredJinpu && !justFiredShifu;
 
         // Step 2 finishers at p6 — no early return; starter at p7 is ActionStatus fallback (PLD parity)
-        if (comboStep == 2 &&
-            context.LastComboAction == SAMActions.Jinpu.ActionId &&
+        if (((comboStep == 2 && context.LastComboAction == SAMActions.Jinpu.ActionId) || justFiredJinpu) &&
             level >= SAMActions.Gekko.MinLevel)
         {
             bool correctPositional = context.IsAtRear || context.HasTrueNorth || context.TargetHasPositionalImmunity;
@@ -667,8 +676,7 @@ public sealed class DamageModule : INikeModule
                 });
         }
 
-        if (comboStep == 2 &&
-            context.LastComboAction == SAMActions.Shifu.ActionId &&
+        if (((comboStep == 2 && context.LastComboAction == SAMActions.Shifu.ActionId) || justFiredShifu) &&
             level >= SAMActions.Kasha.MinLevel)
         {
             bool correctPositional = context.IsAtFlank || context.HasTrueNorth || context.TargetHasPositionalImmunity;

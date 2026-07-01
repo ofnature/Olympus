@@ -5,6 +5,9 @@ All notable changes to Daedalus will be documented in this file.
 <!-- LATEST-START -->
 ## v0.1.0 — 2026-06-27
 
+### Fix — Samurai stopped mid-combo and spammed Jinpu after a target swap
+- On the second mob of a pack (right after the previous target died), Samurai could get stuck casting Jinpu every GCD — never advancing to Gekko, so it built no Sen and lost Midare, Gekko, Kasha and all the burst that follows. The finisher step relied solely on the combo gauge, which can briefly desync after a target swap; the combo-continuation now also keys off the action just cast (the same resilience the combo opener already had), so Gekko/Kasha reliably follow Jinpu/Shifu and the combo never loops
+
 ### Fix — Action log now shows real casts, not queue submissions
 - The debug action log (and GCD-uptime stat) recorded an entry every time the rotation *submitted* a GCD to the game's queue — but the game only casts the last one queued per GCD window, so fast rotations showed several actions crammed into one 2.5s window that never really happened. It now logs a GCD when it actually fires, so the timeline is one entry per real cast. Purely a logging/diagnostic fix — it doesn't change how any rotation plays
 

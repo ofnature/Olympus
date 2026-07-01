@@ -104,6 +104,71 @@ public class NikeComboFallbackTests
         Assert.Contains(gcd, c => c.Behavior == NikeAbilities.Jinpu && c.Priority == 6);
     }
 
+    [Fact]
+    public void StCombo_QueuesGekkoFinisher_WhenComboStepStaleButJinpuJustFired()
+    {
+        // Regression: the "Jinpu lock" (seen on the 2nd pack mob after a target swap). The step2->finisher
+        // transition had no dual-source detection — Gekko required comboStep==2 && LastComboAction==Jinpu
+        // from the gauge alone. When the gauge lags/desyncs, that push is dropped and the onStarter block
+        // re-issues Jinpu every GCD forever. WasLastGcd(Jinpu) must rescue the Gekko finisher.
+        var gcd = CollectWithStaleComboAfterLastGcd(SAMActions.Jinpu.ActionId, packCount: 1);
+        Assert.Contains(gcd, c => c.Behavior == NikeAbilities.Gekko && c.Priority == 6);
+    }
+
+    [Fact]
+    public void StCombo_QueuesKashaFinisher_WhenComboStepStaleButShifuJustFired()
+    {
+        // Same asymmetry on the Shifu->Kasha path.
+        var gcd = CollectWithStaleComboAfterLastGcd(SAMActions.Shifu.ActionId, packCount: 1);
+        Assert.Contains(gcd, c => c.Behavior == NikeAbilities.Kasha && c.Priority == 6);
+    }
+
+    [Fact]
+    public void StCombo_SuppressesJinpuRePush_WhenJinpuJustFired()
+    {
+        // The Gekko finisher and the onStarter step-2 Jinpu re-push both sit at p6. If both queued they
+        // collide at the same priority and the lock can persist. justFiredJinpu must suppress the onStarter
+        // Jinpu push so only the finisher is queued.
+        var gcd = CollectWithStaleComboAfterLastGcd(SAMActions.Jinpu.ActionId, packCount: 1);
+        Assert.DoesNotContain(gcd, c => c.Behavior == NikeAbilities.Jinpu);
+    }
+
+    [Fact]
+    public void StCombo_BreaksJinpuLock_WhenGaugeStuckAtStep1ButJinpuJustFired()
+    {
+        // Exact in-game repro: the gauge stayed at comboStep 1 / LastComboAction Gyofu while Jinpu actually
+        // fired every GCD. Pre-fix, onStarter (comboStep==1 && starter) re-issued Jinpu forever. Now
+        // justFiredJinpu queues Gekko AND suppresses the onStarter Jinpu re-push, breaking the loop.
+        var enemy = CreateMockEnemy();
+        var targeting = MockBuilders.CreateMockTargetingService();
+        targeting.Setup(x => x.FindEnemyForAction(
+                It.IsAny<EnemyTargetingStrategy>(), It.IsAny<uint>(), It.IsAny<IPlayerCharacter>()))
+            .Returns(enemy.Object);
+        targeting.Setup(x => x.FindEnemy(
+                It.IsAny<EnemyTargetingStrategy>(), It.IsAny<float>(), It.IsAny<IPlayerCharacter>()))
+            .Returns(enemy.Object);
+        MockBuilders.SetupEnemyPackCount(targeting, 1);
+
+        var config = NikeTestContext.CreateDefaultSamuraiConfiguration();
+        var actionService = MockBuilders.CreateMockActionService();
+        actionService.Setup(x => x.WasLastGcd(SAMActions.Jinpu.ActionId)).Returns(true);
+
+        var scheduler = SchedulerFactory.CreateForTest(config: config);
+        var context = NikeTestContext.Create(
+            config: config,
+            actionService: actionService,
+            targetingService: targeting,
+            level: 100,
+            comboStep: 1,                              // gauge stuck at step 1
+            lastComboAction: SAMActions.Gyofu.ActionId); // ...still reading the starter
+
+        _module.CollectCandidates(context, scheduler, isMoving: false);
+        var gcd = scheduler.InspectGcdQueue();
+
+        Assert.Contains(gcd, c => c.Behavior == NikeAbilities.Gekko && c.Priority == 6);
+        Assert.DoesNotContain(gcd, c => c.Behavior == NikeAbilities.Jinpu);
+    }
+
     /// <summary>
     /// Builds a context where the gauge combo state is stale (step 0) but the given action was the last
     /// dispatched GCD, then collects candidates. Mirrors the post-oGCD-weave lockup conditions.
