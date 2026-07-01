@@ -5,6 +5,10 @@ All notable changes to Daedalus will be documented in this file.
 <!-- LATEST-START -->
 ## v0.1.0 — 2026-06-27
 
+### New — Short command /dae
+
+- Added `/dae` as a shorter alias for `/daedalus` — same window and subcommands (`toggle`, `debug`, `hardcast`). The full `/daedalus` still works
+
 ### Fix — Missing window no longer flags upgraded abilities
 
 - The Missing window could list a base ability as "not unlocked" even when its trait upgrade was on your bar and being used (e.g. Monk's Howling Fist shown as missing while Enlightenment — its level-74 upgrade — was firing). It now recognizes that a castable upgrade means the ability is available, so only genuinely locked abilities (uncompleted job quests) are listed

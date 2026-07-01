@@ -2449,7 +2449,7 @@
   "ui.welcome.preset_desc": "Choose how aggressively Daedalus should act.",
   "ui.welcome.ready_title": "You're All Set!",
   "ui.welcome.ready_subtitle": "A few tips to help you get started:",
-  "ui.welcome.tip_command": "Use /daedalus to toggle the main window at any time.",
+  "ui.welcome.tip_command": "Use /dae (or /daedalus) to toggle the main window at any time.",
   "ui.welcome.tip_overlay": "The overlay shows your next queued action in real time.",
   "ui.welcome.tip_settings": "Visit Settings to fine-tune behavior for each job.",
   "ui.welcome.open_settings": "Open Settings",

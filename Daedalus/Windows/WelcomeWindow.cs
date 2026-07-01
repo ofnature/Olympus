@@ -153,7 +153,7 @@ public sealed class WelcomeWindow : Window
         ImGui.Spacing();
 
         ImGui.BulletText(Loc.T(LocalizedStrings.Welcome.TipCommand,
-            "Use /daedalus to toggle the main window at any time."));
+            "Use /dae (or /daedalus) to toggle the main window at any time."));
         ImGui.BulletText(Loc.T(LocalizedStrings.Welcome.TipOverlay,
             "The overlay shows your next queued action in real time."));
         ImGui.BulletText(Loc.T(LocalizedStrings.Welcome.TipSettings,

@@ -44,6 +44,7 @@ public sealed class Plugin : IDalamudPlugin
 {
     public const string PluginVersion = "0.1.0";
     private const string CommandName = "/daedalus";
+    private const string CommandAlias = "/dae";
 
     private readonly IDalamudPluginInterface pluginInterface;
     private readonly IFramework framework;
@@ -498,7 +499,11 @@ public sealed class Plugin : IDalamudPlugin
 
         this.commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open Daedalus window. Subcommands: toggle | debug | hardcast [on|off|toggle]"
+            HelpMessage = "Open Daedalus window (short alias: /dae). Subcommands: toggle | debug | hardcast [on|off|toggle]"
+        });
+        this.commandManager.AddHandler(CommandAlias, new CommandInfo(OnCommand)
+        {
+            HelpMessage = "Short alias for /daedalus."
         });
 
         this.framework.Update += OnFrameworkUpdate;
@@ -939,6 +944,7 @@ public sealed class Plugin : IDalamudPlugin
         combatEventService.OnAbilityUsed -= this.onAbilityUsedHandler;
         performanceTracker.OnSessionCompleted -= this.onSessionCompletedHandler;
         commandManager.RemoveHandler(CommandName);
+        commandManager.RemoveHandler(CommandAlias);
 
         pluginInterface.UiBuilder.Draw -= DrawUI;
         pluginInterface.UiBuilder.OpenConfigUi -= OpenConfigUI;
