@@ -54,16 +54,17 @@ public sealed class BuffModule : BaseTankBuffModule<IHephaestusContext>, IHephae
 
     public void CollectCandidates(IHephaestusContext context, RotationScheduler scheduler, bool isMoving)
     {
+        // Royal Guard applies OUT of combat too (duty pop / between pulls) — flipping it on 3s into
+        // the first pull loses early enmity (W2W validation). Out of combat it's gated to instanced
+        // duties. Push before the damage gate so stance applies even if damage is disabled.
+        if (context.InCombat || PlayerSafetyHelper.IsInInstancedDuty())
+            TryPushTankStance(context, scheduler);
+
         if (!context.InCombat)
         {
             context.Debug.BuffState = "Not in combat";
             return;
         }
-
-        // Royal Guard (tank stance) — was never pushed (this override skipped it, unlike the other tanks),
-        // so GNB never auto-enabled its stance. Push before the damage gate so stance applies even if
-        // damage is disabled.
-        TryPushTankStance(context, scheduler);
 
         if (!IsDamageEnabled(context))
         {

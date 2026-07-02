@@ -52,13 +52,16 @@ public sealed class BuffModule : BaseTankBuffModule<IThemisContext>, IThemisModu
 
     public void CollectCandidates(IThemisContext context, RotationScheduler scheduler, bool isMoving)
     {
+        // Iron Will applies OUT of combat too (duty pop / between pulls) — flipping it on 1-3s into
+        // the first pull loses early enmity (W2W validation). Gated to instanced duties out of combat.
+        if (context.InCombat || PlayerSafetyHelper.IsInInstancedDuty())
+            TryPushTankStance(context, scheduler);
+
         if (!context.InCombat)
         {
             context.Debug.BuffState = "Not in combat";
             return;
         }
-
-        TryPushTankStance(context, scheduler);
 
         if (!context.Configuration.Tank.EnableDamage)
         {

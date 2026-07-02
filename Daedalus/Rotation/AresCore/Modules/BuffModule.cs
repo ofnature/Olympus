@@ -37,13 +37,17 @@ public sealed class BuffModule : BaseTankBuffModule<IAresContext>, IAresModule
 
     public void CollectCandidates(IAresContext context, RotationScheduler scheduler, bool isMoving)
     {
+        // Tank stance applies OUT of combat too (duty pop / between pulls) — flipping it on 1-3s
+        // into the first pull loses early enmity (seen on the GNB+WAR W2W validation runs). Out of
+        // combat it's gated to instanced duties so overworld idling doesn't toggle stance.
+        if (context.InCombat || PlayerSafetyHelper.IsInInstancedDuty())
+            TryPushTankStance(context, scheduler);
+
         if (!context.InCombat)
         {
             context.Debug.BuffState = "Not in combat";
             return;
         }
-
-        TryPushTankStance(context, scheduler);
 
         if (!context.Configuration.Tank.EnableDamage)
         {

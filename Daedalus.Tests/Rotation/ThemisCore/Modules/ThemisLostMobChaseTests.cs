@@ -70,8 +70,11 @@ public sealed class ThemisLostMobChaseTests
     }
 
     [Fact]
-    public void NotLostMob_OutOfMelee_StillQueuesIntervene()
+    public void NotLostMob_OutOfMelee_NeverDashes_OnlyShieldLob()
     {
+        // User rule (2026-07-01): gap closers are NOT travel tools — dashing at far targets mid-W2W
+        // fights AutoDuty's pathing (DRK run: Shadowstride ×3 during the gather). Out of melee with
+        // aggro intact = ranged GCD only; movement is AutoDuty's job.
         var enemy = CreateMockEnemy();
         var targeting = BuildOutOfMeleeTargeting(enemy.Object);
         var actionService = MockBuilders.CreateMockActionService();
@@ -83,7 +86,8 @@ public sealed class ThemisLostMobChaseTests
 
         _module.CollectCandidates(context, scheduler, isMoving: false);
 
-        Assert.Contains(scheduler.InspectOgcdQueue(), c => c.Behavior == ThemisAbilities.Intervene);
+        Assert.DoesNotContain(scheduler.InspectOgcdQueue(), c => c.Behavior == ThemisAbilities.Intervene);
+        Assert.Contains(scheduler.InspectGcdQueue(), c => c.Behavior == ThemisAbilities.ShieldLob);
     }
 
     [Fact]

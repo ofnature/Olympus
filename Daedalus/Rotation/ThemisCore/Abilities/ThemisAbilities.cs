@@ -1,4 +1,4 @@
-using Daedalus.Data;
+﻿using Daedalus.Data;
 using Daedalus.Rotation.Common.Scheduling;
 using Daedalus.Rotation.ThemisCore.Context;
 

@@ -194,7 +194,12 @@ public sealed class Nyx : BaseTankRotation<INyxContext, INyxModule>
             module.CollectCandidates(context, _scheduler, isMoving);
         }
 
-        if (inCombat && ActionService.CanExecuteOgcd)
+        // Out of combat the only oGCD candidate is the tank stance (duty-pop stance-on) — every other
+        // module push sits behind an InCombat early-return. Two blockers had to fall: the old
+        // `inCombat &&` gate discarded the candidate outright, and CanExecuteOgcd (weave math) returns
+        // 0 slots when the GCD is fully idle — always the case out of combat — so OOC dispatch must
+        // bypass it entirely. In combat, behavior is unchanged.
+        if (!inCombat || ActionService.CanExecuteOgcd)
         {
             var ogcd = _scheduler.DispatchOgcd(context);
             // Salted Earth diagnosis: if it was evaluated and rejected, surface the reject reason (dispatch

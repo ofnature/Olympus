@@ -5,6 +5,14 @@ All notable changes to Daedalus will be documented in this file.
 <!-- LATEST-START -->
 ## v0.1.0 — 2026-06-27
 
+### Fix — Dark Knight's Unmend was a monster ability
+- Unmend's action id pointed at "Boulder Clap" — a mob skill — so the game rejected every Unmend the plugin ever tried (wrong-job error): ranged pulls, add tagging, and out-of-range filler were all silently dead on Dark Knight. Corrected to the real Unmend
+
+### New — Tanks: ranged filler during wall-to-wall transit + stance on duty pop
+- All four tanks now fire their ranged GCD (Tomahawk / Lightning Shot / Unmend / Shield Lob) at the chasing pack while running between walls, instead of idling — the no-target pause during transit was a 12-14% uptime hole on wall-to-wall pulls. Only enemies already in combat with you are targeted, so nothing new ever gets pulled; toggle in the tank controls ("Transit Ranged Filler", default on)
+- Tank stance (Iron Will / Defiance / Grit / Royal Guard) now enables as soon as you're in an instanced duty, instead of a few seconds into the first pull — no more early-pull enmity gaps
+- Gap closers (Onslaught / Trajectory / Shadowstride / Intervene) are no longer used as travel tools: dashing at far targets mid-pull fought the movement plan. They now fire out-of-melee only to snap back a mob that's peeled onto someone else; in-melee damage weaves are unchanged (except Shadowstride, which deals no damage and is no longer weaved at all)
+
 ### Fix — Sage no longer casts Dyskrasia while out of range
 - Dyskrasia only hits enemies within 5 yalms of the Sage, but the AoE decision was counting enemies around the *target* — so standing at casting range with a pack clustered ahead, Sage would cast Dyskrasia into empty air (zero damage) instead of Dosis. The count is now always centered on the player, so Dyskrasia fires only when enemies are actually in its radius
 

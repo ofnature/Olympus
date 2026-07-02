@@ -648,6 +648,14 @@ public sealed class TankConfig
     public bool PullRangedMobsWithRangedAttack { get; set; } = false;
 
     /// <summary>
+    /// During wall-to-wall transit (aggroed mobs chasing while we run to the next pack), fire the
+    /// job's ranged GCD at the chasing pack instead of idling — the no-hard-target damage pause was
+    /// a 12-14% uptime hole on W2W validation runs. Only in-combat enemies are targeted (via the
+    /// pause-bypassing nearby-enemy lookup), so nothing new ever gets pulled. Default true.
+    /// </summary>
+    public bool TransitRangedFiller { get; set; } = true;
+
+    /// <summary>
     /// When a mob has slipped to another player (we lost aggro, it's now out of melee and targeting
     /// someone else), don't dash after it with the gap-closer. Provoke (25y, auto-fired by the
     /// EnmityModule) plus the ranged GCD reclaim it in place, so the tank stays on the pack and resumes

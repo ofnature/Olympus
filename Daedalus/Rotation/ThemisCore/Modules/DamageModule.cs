@@ -1,6 +1,7 @@
-using Dalamud.Game.ClientState.Objects.SubKinds;
+﻿using Dalamud.Game.ClientState.Objects.SubKinds;
 using Daedalus.Data;
 using Daedalus.Models.Action;
+using Daedalus.Rotation.ApolloCore.Helpers;
 using Daedalus.Rotation.Common;
 using Daedalus.Rotation.Common.Helpers;
 using Daedalus.Rotation.Common.Scheduling;
@@ -45,6 +46,8 @@ public sealed class DamageModule : IThemisModule
 
         if (context.TargetingService.IsDamageTargetingPaused())
         {
+            // W2W transit: mobs still chasing us get the ranged filler (see TryPushTransitRangedFiller).
+            TryPushTransitRangedFiller(context, scheduler);
             context.Debug.DamageState = "Paused (no target)";
             return;
         }
@@ -64,6 +67,12 @@ public sealed class DamageModule : IThemisModule
             PLDActions.FastBlade.ActionId,
             player);
 
+        // FindEnemyForAction can return a sticky/hard target far outside melee (W2W transit stuck
+        // state — the module then pushes combo GCDs that fail range at dispatch forever). Demote
+        // beyond-melee targets to the out-of-melee branch so gap-close + Shield Lob run instead.
+        if (target != null && !TankTargetingHelper.IsWithinMeleeReach(player, target))
+            target = null;
+
         var engageTarget = target ?? context.TargetingService.FindEnemy(
             enemyStrategy,
             20f,
@@ -71,6 +80,7 @@ public sealed class DamageModule : IThemisModule
 
         if (engageTarget == null)
         {
+            TryPushTransitRangedFiller(context, scheduler);
             context.Debug.DamageState = "No target";
             return;
         }
@@ -78,12 +88,11 @@ public sealed class DamageModule : IThemisModule
         // Out-of-melee branch: push Intervene (oGCD gap close) + Shield Lob (ranged filler)
         if (target == null)
         {
-            // Ranged-pull: when enabled, stay put and pull with Shield Lob instead of dashing in.
-            // Lost-mob: when the mob slipped to another player, don't dash after it — Provoke (25y,
-            // auto-fired by EnmityModule) + Shield Lob reclaim it in place.
-            var lostToOther = context.Configuration.Tank.SuppressGapCloserOnLostMob
-                              && context.EnmityService?.HasLostAggroToOther(engageTarget, player.EntityId) == true;
-            if (!context.Configuration.Tank.PullRangedMobsWithRangedAttack && !lostToOther)
+            // Gap closer ONLY to snap aggro back (mob peeled to someone else) — never as a travel
+            // tool: dashing at far targets mid-W2W fights AutoDuty's pathing (user rule; DRK run
+            // showed Shadowstride x3 during the gather). Shield Lob covers the damage at range.
+            var lostToOther = context.EnmityService?.HasLostAggroToOther(engageTarget, player.EntityId) == true;
+            if (lostToOther && !context.Configuration.Tank.SuppressGapCloserOnLostMob)
             {
                 var gapCloseBlocked = context.TargetingService.GapCloserSafety.ShouldBlockGapCloser(engageTarget, player);
                 if (gapCloseBlocked)
@@ -190,6 +199,21 @@ public sealed class DamageModule : IThemisModule
                     .Record();
                 context.TrainingService?.RecordConceptApplication(PldConcepts.BurstWindow, wasSuccessful: true);
             });
+    }
+
+    /// <summary>
+    /// W2W transit filler: ranged GCD at the nearest in-combat enemy (chasing pack) while we have no
+    /// hard target / nothing in engage range. FindNearbyEnemy bypasses the no-target damage pause by
+    /// design and only returns enemies already fighting us.
+    /// </summary>
+    private void TryPushTransitRangedFiller(IThemisContext context, RotationScheduler scheduler)
+    {
+        if (!context.Configuration.Tank.TransitRangedFiller) return;
+        var player = context.Player;
+        if (player.Level < PLDActions.ShieldLob.MinLevel) return;
+        var chasing = context.TargetingService.FindNearbyEnemy(25f, player);
+        if (chasing == null) return;
+        TryPushShieldLob(context, scheduler, chasing.GameObjectId);
     }
 
     private void TryPushShieldLob(IThemisContext context, RotationScheduler scheduler, ulong targetId)

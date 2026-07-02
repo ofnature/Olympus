@@ -1,4 +1,4 @@
-using Daedalus.Data;
+﻿using Daedalus.Data;
 using Daedalus.Rotation.Common.Scheduling;
 
 namespace Daedalus.Rotation.NyxCore.Abilities;
@@ -76,6 +76,9 @@ public static class NyxAbilities
     public static readonly AbilityBehavior Shadowstride = new() { Action = DRKActions.Shadowstride, Toggle = cfg => cfg.Tank.EnableShadowstride };
 
     // --- Ranged ---
+    // NOTE: the long "Unmend: ActionStatus" transit stall was NOT a status-gate bug — Unmend's
+    // ActionId was 2580 ("Boulder Clap", a monster ability; game status 574 wrong-job). The gate was
+    // correctly rejecting an uncastable id. Fixed in DRKActions (3624); no gate bypass needed.
     public static readonly AbilityBehavior Unmend = new() { Action = DRKActions.Unmend, Toggle = cfg => cfg.Tank.EnableDamage };
 
     // --- Buffs ---

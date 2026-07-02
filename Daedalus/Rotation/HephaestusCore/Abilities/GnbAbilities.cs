@@ -1,4 +1,4 @@
-using Dalamud.Plugin.Services;
+﻿using Dalamud.Plugin.Services;
 using Dalamud.Game.ClientState.JobGauge.Types;
 using Daedalus.Data;
 using Daedalus.Rotation.Common.Scheduling;

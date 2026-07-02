@@ -112,6 +112,18 @@ public sealed class ControlWindow : Window
             configuration.Tank.PullRangedMobsWithRangedAttack = pullRanged;
         }
 
+        var transitFiller = configuration.Tank.TransitRangedFiller;
+        if (ConfigUIHelpers.ToggleCheckbox(
+                "Transit Ranged Filler",
+                ref transitFiller,
+                "During wall-to-wall transit (aggroed mobs chasing while you run), fire the ranged GCD "
+                + "at the chasing pack instead of idling. Only hits enemies already in combat with you — "
+                + "never pulls anything new.",
+                saveConfiguration))
+        {
+            configuration.Tank.TransitRangedFiller = transitFiller;
+        }
+
         var ignoreAdds = configuration.Tank.IgnoreAddsWithCoTank;
         if (ConfigUIHelpers.ToggleCheckbox(
                 "Ignore Adds With Co-Tank",

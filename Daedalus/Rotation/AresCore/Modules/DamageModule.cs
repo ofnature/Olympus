@@ -1,4 +1,4 @@
-using Daedalus.Data;
+﻿using Daedalus.Data;
 using Daedalus.Rotation.AresCore.Abilities;
 using Daedalus.Rotation.AresCore.Context;
 using Daedalus.Rotation.ApolloCore.Helpers;
@@ -36,6 +36,10 @@ public sealed class DamageModule : IAresModule
 
         if (context.TargetingService.IsDamageTargetingPaused())
         {
+            // No hard target = damage paused. During W2W transit the mobs are still ON us — give
+            // them the ranged filler (FindNearbyEnemy only returns in-combat enemies, so nothing new
+            // is ever pulled). This pause was a 12-14% uptime hole on tank W2W validation runs.
+            TryPushTransitRangedFiller(context, scheduler);
             context.Debug.DamageState = "Paused (no target)";
             return;
         }
@@ -52,6 +56,12 @@ public sealed class DamageModule : IAresModule
             WARActions.HeavySwing.ActionId,
             player);
 
+        // FindEnemyForAction can return a sticky/hard target far outside melee (W2W transit stuck
+        // state — the module then pushes combo GCDs that fail range at dispatch forever). Demote
+        // beyond-melee targets to the out-of-melee branch so gap-close + Tomahawk run instead.
+        if (target != null && !TankTargetingHelper.IsWithinMeleeReach(player, target))
+            target = null;
+
         var engageTarget = target ?? context.TargetingService.FindEnemy(
             enemyStrategy,
             20f,
@@ -59,6 +69,8 @@ public sealed class DamageModule : IAresModule
 
         if (engageTarget == null)
         {
+            // Nothing within engage range — mobs chasing from further out still get the filler.
+            TryPushTransitRangedFiller(context, scheduler);
             context.Debug.DamageState = "No target";
             return;
         }
@@ -66,12 +78,11 @@ public sealed class DamageModule : IAresModule
         // Out-of-melee: Onslaught (gap close) + Tomahawk (ranged filler)
         if (target == null)
         {
-            // Ranged-pull: when enabled, stay put and pull with Tomahawk instead of dashing in.
-            // Lost-mob: when the mob slipped to another player, don't dash after it — Provoke (25y,
-            // auto-fired by EnmityModule) + Tomahawk reclaim it in place.
-            var lostToOther = context.Configuration.Tank.SuppressGapCloserOnLostMob
-                              && context.EnmityService?.HasLostAggroToOther(engageTarget, player.EntityId) == true;
-            if (!context.Configuration.Tank.PullRangedMobsWithRangedAttack && !lostToOther)
+            // Gap closer ONLY to snap aggro back (mob peeled to someone else) — never as a travel
+            // tool: dashing at far targets mid-W2W fights AutoDuty's pathing (user rule; DRK run
+            // showed Shadowstride x3 during the gather). Tomahawk covers the damage at range.
+            var lostToOther = context.EnmityService?.HasLostAggroToOther(engageTarget, player.EntityId) == true;
+            if (lostToOther && !context.Configuration.Tank.SuppressGapCloserOnLostMob)
                 TryPushOnslaughtGapClose(context, scheduler, engageTarget.GameObjectId, engageTarget);
             TryPushTomahawk(context, scheduler, engageTarget.GameObjectId, engageTarget);
             return;
@@ -143,6 +154,21 @@ public sealed class DamageModule : IAresModule
                 context.Debug.PlannedAction = WARActions.Onslaught.Name;
                 context.Debug.DamageState = "Onslaught (gap close)";
             });
+    }
+
+    /// <summary>
+    /// W2W transit filler: ranged GCD at the nearest in-combat enemy (chasing pack) while we have no
+    /// hard target / nothing in engage range. FindNearbyEnemy bypasses the no-target damage pause by
+    /// design and only returns enemies already fighting us.
+    /// </summary>
+    private void TryPushTransitRangedFiller(IAresContext context, RotationScheduler scheduler)
+    {
+        if (!context.Configuration.Tank.TransitRangedFiller) return;
+        var player = context.Player;
+        if (player.Level < WARActions.Tomahawk.MinLevel) return;
+        var chasing = context.TargetingService.FindNearbyEnemy(25f, player);
+        if (chasing == null) return;
+        TryPushTomahawk(context, scheduler, chasing.GameObjectId, chasing);
     }
 
     private void TryPushTomahawk(IAresContext context, RotationScheduler scheduler, ulong targetId,
@@ -259,7 +285,7 @@ public sealed class DamageModule : IAresModule
             context.Debug.DamageState = $"Onslaught blocked: {context.TargetingService.GapCloserSafety.LastBlockReason}";
             return;
         }
-        if (!DistanceHelper.IsActionInRange(WARActions.HeavySwing.ActionId, player, target)) return;
+        if (!TankTargetingHelper.IsWithinMeleeReach(player, target)) return;
 
         scheduler.PushOgcd(AresAbilities.Onslaught, targetId, priority: 4,
             onDispatched: _ =>

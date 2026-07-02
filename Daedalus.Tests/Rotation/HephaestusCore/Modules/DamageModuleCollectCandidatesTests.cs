@@ -9,6 +9,7 @@ using Daedalus.Rotation.HephaestusCore.Context;
 using Daedalus.Rotation.HephaestusCore.Modules;
 using Daedalus.Services;
 using Daedalus.Services.Action;
+using Daedalus.Services.Tank;
 using Daedalus.Services.Targeting;
 using Daedalus.Services.Training;
 using Daedalus.Tests.Mocks;
@@ -272,7 +273,10 @@ public class DamageModuleCollectCandidatesTests
         var ogcd = scheduler.InspectOgcdQueue();
         var gcd = scheduler.InspectGcdQueue();
 
-        Assert.Contains(ogcd, c => c.Behavior == GnbAbilities.Trajectory);
+        // User rule (2026-07-01): gap closers are NOT travel tools — out of melee with aggro
+        // intact means ranged GCD only (dashing mid-W2W fights AutoDuty's pathing). Trajectory
+        // fires only to snap back a mob that peeled to someone else.
+        Assert.DoesNotContain(ogcd, c => c.Behavior == GnbAbilities.Trajectory);
         Assert.Contains(gcd, c => c.Behavior == GnbAbilities.LightningShot);
 
         // Melee rotation abilities must NOT be pushed (we returned early)
@@ -281,8 +285,10 @@ public class DamageModuleCollectCandidatesTests
     }
 
     [Fact]
-    public void CollectCandidates_OutOfMelee_TrajectoryNotPushed_WhenGapCloseBlocked()
+    public void CollectCandidates_AggroSnapBack_TrajectoryNotPushed_WhenGapCloseBlocked()
     {
+        // The snap-back dash (mob peeled to someone else, suppression off) still respects the
+        // gap-closer safety service (spread markers etc.).
         var enemy = CreateMockEnemy(12345UL);
         var targeting = MockBuilders.CreateMockTargetingService();
 
@@ -305,9 +311,14 @@ public class DamageModuleCollectCandidatesTests
         var actionService = MockBuilders.CreateMockActionService();
         actionService.Setup(x => x.IsActionReady(It.IsAny<uint>())).Returns(true);
 
+        var enmity = new Mock<IEnmityService>();
+        enmity.Setup(x => x.HasLostAggroToOther(It.IsAny<IBattleChara>(), It.IsAny<uint>())).Returns(true);
+        var config = HephaestusTestContext.CreateDefaultGunbreakerConfiguration();
+        config.Tank.SuppressGapCloserOnLostMob = false; // snap-back dash allowed
+
         var scheduler = SchedulerFactory.CreateForTest(actionService: actionService);
         var context = CreateContext(targeting: targeting, actionService: actionService,
-            cartridges: 0, level: 56);
+            cartridges: 0, level: 56, config: config, enmityService: enmity);
 
         _module.CollectCandidates(context, scheduler, isMoving: false);
 
@@ -415,7 +426,8 @@ public class DamageModuleCollectCandidatesTests
         uint lastComboAction = 0,
         Configuration? config = null,
         Mock<IActionService>? actionService = null,
-        Mock<ITargetingService>? targeting = null)
+        Mock<ITargetingService>? targeting = null,
+        Mock<IEnmityService>? enmityService = null)
     {
         config ??= HephaestusTestContext.CreateDefaultGunbreakerConfiguration();
         actionService ??= MockBuilders.CreateMockActionService();
@@ -425,6 +437,8 @@ public class DamageModuleCollectCandidatesTests
         player.Setup(x => x.StatusList).Returns((Dalamud.Game.ClientState.Statuses.StatusList?)null!);
 
         var mock = new Mock<IHephaestusContext>();
+        if (enmityService != null)
+            mock.Setup(x => x.EnmityService).Returns(enmityService.Object);
         mock.Setup(x => x.Player).Returns(player.Object);
         mock.Setup(x => x.InCombat).Returns(inCombat);
         mock.Setup(x => x.IsMoving).Returns(false);

@@ -35,9 +35,12 @@ public sealed class BuffModule : BaseTankBuffModule<INyxContext>, INyxModule
 
     public void CollectCandidates(INyxContext context, RotationScheduler scheduler, bool isMoving)
     {
-        if (!context.InCombat) { context.Debug.BuffState = "Not in combat"; return; }
+        // Grit applies OUT of combat too (duty pop / between pulls) — flipping it on 1-3s into the
+        // first pull loses early enmity (W2W validation). Gated to instanced duties out of combat.
+        if (context.InCombat || PlayerSafetyHelper.IsInInstancedDuty())
+            TryPushTankStance(context, scheduler);
 
-        TryPushTankStance(context, scheduler);
+        if (!context.InCombat) { context.Debug.BuffState = "Not in combat"; return; }
         if (!context.Configuration.Tank.EnableDamage) { context.Debug.BuffState = "Damage disabled"; return; }
 
         TryPushBloodWeapon(context, scheduler);

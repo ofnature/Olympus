@@ -1,4 +1,4 @@
-using Daedalus.Data;
+﻿using Daedalus.Data;
 using Daedalus.Rotation.ApolloCore.Helpers;
 using Daedalus.Rotation.Common.Helpers;
 using Daedalus.Rotation.Common.Scheduling;
@@ -23,7 +23,13 @@ public sealed class DamageModule : INyxModule
     {
         if (!context.Configuration.Tank.EnableDamage) { context.Debug.DamageState = "Disabled"; return; }
         if (!context.InCombat) { context.Debug.DamageState = "Not in combat"; return; }
-        if (context.TargetingService.IsDamageTargetingPaused()) { context.Debug.DamageState = "Paused (no target)"; return; }
+        if (context.TargetingService.IsDamageTargetingPaused())
+        {
+            // W2W transit: mobs still chasing us get the ranged filler (see TryPushTransitRangedFiller).
+            TryPushTransitRangedFiller(context, scheduler);
+            context.Debug.DamageState = "Paused (no target)";
+            return;
+        }
 
         var player = context.Player;
         var enemyStrategy = TankTargetingHelper.ResolveEnemyStrategy(
@@ -33,20 +39,30 @@ public sealed class DamageModule : INyxModule
 
         var target = context.TargetingService.FindEnemyForAction(
             enemyStrategy, DRKActions.HardSlash.ActionId, player);
+        // FindEnemyForAction can return a sticky/hard target far outside melee (W2W transit stuck
+        // state: "Syphon Strike: out of range 16y > 3y" — the module then pushes combo GCDs that
+        // fail range at dispatch forever). Demote beyond-melee targets to the out-of-melee branch
+        // so gap-close + the ranged GCD run instead.
+        if (target != null && !TankTargetingHelper.IsWithinMeleeReach(player, target))
+            target = null;
         var engageTarget = target ?? context.TargetingService.FindEnemy(
             enemyStrategy, 20f, player);
 
-        if (engageTarget == null) { context.Debug.DamageState = "No target"; return; }
+        if (engageTarget == null)
+        {
+            TryPushTransitRangedFiller(context, scheduler);
+            context.Debug.DamageState = "No target";
+            return;
+        }
 
         // Out-of-melee
         if (target == null)
         {
-            // Ranged-pull: when enabled, stay put and pull with Unmend instead of dashing in.
-            // Lost-mob: when the mob slipped to another player, don't dash after it — Provoke (25y,
-            // auto-fired by EnmityModule) + Unmend reclaim it in place.
-            var lostToOther = context.Configuration.Tank.SuppressGapCloserOnLostMob
-                              && context.EnmityService?.HasLostAggroToOther(engageTarget, player.EntityId) == true;
-            if (!context.Configuration.Tank.PullRangedMobsWithRangedAttack && !lostToOther)
+            // Gap closer ONLY to snap aggro back (mob peeled to someone else) — never as a travel
+            // tool: Shadowstride x3 mid-gather fought AutoDuty's pathing (user rule). Unmend covers
+            // the damage at range.
+            var lostToOther = context.EnmityService?.HasLostAggroToOther(engageTarget, player.EntityId) == true;
+            if (lostToOther && !context.Configuration.Tank.SuppressGapCloserOnLostMob)
                 TryPushShadowstrideGapClose(context, scheduler, engageTarget.GameObjectId, engageTarget);
             TryPushUnmend(context, scheduler, engageTarget.GameObjectId);
             return;
@@ -62,7 +78,6 @@ public sealed class DamageModule : INyxModule
         TryPushDarksideMaintenance(context, scheduler, target.GameObjectId, enemyCount);
         TryPushCarveAndSpit(context, scheduler, target.GameObjectId);
         TryPushAbyssalDrain(context, scheduler, target.GameObjectId, enemyCount);
-        TryPushShadowstrideWeave(context, scheduler, target.GameObjectId, target);
 
         // GCDs
         TryPushDeliriumCombo(context, scheduler, target.GameObjectId, enemyCount);
@@ -119,6 +134,21 @@ public sealed class DamageModule : INyxModule
                 context.Debug.PlannedAction = DRKActions.Shadowstride.Name;
                 context.Debug.DamageState = "Shadowstride (gap close)";
             });
+    }
+
+    /// <summary>
+    /// W2W transit filler: ranged GCD at the nearest in-combat enemy (chasing pack) while we have no
+    /// hard target / nothing in engage range. FindNearbyEnemy bypasses the no-target damage pause by
+    /// design and only returns enemies already fighting us.
+    /// </summary>
+    private void TryPushTransitRangedFiller(INyxContext context, RotationScheduler scheduler)
+    {
+        if (!context.Configuration.Tank.TransitRangedFiller) return;
+        var player = context.Player;
+        if (player.Level < DRKActions.Unmend.MinLevel) return;
+        var chasing = context.TargetingService.FindNearbyEnemy(25f, player);
+        if (chasing == null) return;
+        TryPushUnmend(context, scheduler, chasing.GameObjectId);
     }
 
     private void TryPushUnmend(INyxContext context, RotationScheduler scheduler, ulong targetId)

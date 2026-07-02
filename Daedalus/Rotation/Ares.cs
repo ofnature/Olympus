@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Dalamud.Game.ClientState.JobGauge;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Party;
@@ -188,7 +188,11 @@ public sealed class Ares : BaseTankRotation<IAresContext, IAresModule>
             module.CollectCandidates(context, _scheduler, isMoving);
         }
 
-        if (inCombat && ActionService.CanExecuteOgcd)
+        // Out of combat the only oGCD candidate is the tank stance (duty-pop stance-on). Two blockers
+        // had to fall: the old `inCombat &&` gate discarded the candidate outright, and CanExecuteOgcd
+        // (weave math) returns 0 slots when the GCD is fully idle — always the case out of combat — so
+        // OOC dispatch bypasses it entirely. In combat, behavior is unchanged.
+        if (!inCombat || ActionService.CanExecuteOgcd)
         {
             _scheduler.DispatchOgcd(context);
         }
